@@ -391,3 +391,19 @@ it('R16 controller: a claim named before its verb starts that job, a state sente
   for (const text of ['ใบเบิกที่ส่งไปรออนุมัติ', 'ใบเบิกรออนุมัติ', 'ใบเบิกที่ยกเลิกไป', 'ใบเบิกที่ไม่อนุมัติ', 'ใบเบิกที่อนุมัติแล้ว', 'ใบเบิกที่จ่ายคืนแล้ว'])
     assert.equal(lineWorkflowCommand(text), undefined, text);
 });
+
+it('R17 everyday claim and expense verbs choose their own job without noun or negation confusion', async () => {
+  const { lineWorkflowCommand } = await import('./line-ai-classifier.logic');
+  for (const [text, workflow] of [
+    ['ส่งใบเบิก รอบ 2 ให้ผู้อนุมัติ', 'reimbursement_submit'], ['ใบเบิก รอบ 2 ส่งไปให้หัวหน้าอนุมัติ', 'reimbursement_submit'],
+    ['ให้ผ่านใบเบิก รอบ 2', 'approvals'], ['ขอผ่านใบเบิก รอบ 2', 'approvals'],
+    ['ตีกลับใบเบิก รอบ 2', 'reimbursement_reject'], ['ใบเบิก รอบ 2 ไม่ผ่าน', 'reimbursement_reject'],
+    ['ไม่ให้ผ่านใบเบิก รอบ 2', 'reimbursement_reject'], ['ปัดตกใบเบิก รอบ 2', 'reimbursement_reject'],
+    ['บันทึกจ่ายใบเบิก รอบ 2', 'reimbursement_pay'], ['record payment ใบเบิก รอบ 2', 'reimbursement_pay'],
+    ['โอนคืนแล้ว บันทึกให้ด้วย ใบเบิก รอบ 2', 'reimbursement_pay'],
+    ['เอาร่าง ทดสอบ-0003 ออก', 'expense_delete'], ['ขอการ์ดลบ ทดสอบ-0003', 'expense_delete'], ['ลบทิ้ง ทดสอบ-0003', 'expense_delete'],
+    ['ลบร่างใบนี้ ไม่ได้จะยืนยัน', 'expense_delete'], ['ส่งตรวจ ทดสอบ-0003', 'expense_submit'], ['ให้คนตรวจบิล ทดสอบ-0003', 'expense_submit'], ['ส่งให้ตรวจบิล ทดสอบ-0003', 'expense_submit'],
+    ['ส่งใบเตรียมจ่ายร่างให้ผู้อนุมัติ', 'payment_voucher'],
+  ] as const) assert.equal(lineWorkflowCommand(text), workflow, text);
+  for (const text of ['อย่าเอาร่างบิล ทดสอบ-0003 ออก', 'ไม่ต้องขอการ์ดลบ ทดสอบ-0003', 'ไม่ต้องผ่านใบเบิก รอบ 2', 'ไม่ต้องให้ผ่านใบเบิก รอบ 2', 'ใบเบิกที่ไม่ผ่าน', 'ใบเบิกที่บันทึกจ่ายแล้ว', 'ใบเบิกรอบ 2 สถานะถึงไหนแล้ว']) assert.equal(lineWorkflowCommand(text), undefined, text);
+});

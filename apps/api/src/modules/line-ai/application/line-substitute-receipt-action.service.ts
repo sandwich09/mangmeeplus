@@ -15,6 +15,8 @@ import type { ExpenseRecordWithRelations } from '../../expenses/domain/models/ex
 import type { ExpenseActionControl } from './line-expense-action.service';
 import type { LineReplyMessage } from '../infrastructure/line-reply.adapter';
 import { asCompleteLineCard } from '../domain/logic/line-business-card.logic';
+import { drawLineSystemCard } from '../domain/logic/line-system-card-limits.logic';
+import { lineMessagePreview } from '../domain/logic/line-message-preview.logic';
 import { formatThaiDate } from '../domain/logic/line-draft-update-card.logic';
 
 export type SubstituteActionPreview = { language?: LineReplyLanguage; token: string; expiresAt: string; label: string; summary: string; webPath: string; webOnly?: boolean };
@@ -245,6 +247,28 @@ export function buildSubstituteReceiptActionCard(preview: SubstituteActionPrevie
 }
 
 export function buildSubstituteReceiptFactsCard(result: LineSubstituteReceiptContinuationResult, text = result.replyText, language: LineReplyLanguage = 'th'): LineReplyMessage | undefined {
+  if (result.pendingQuestion && result.webPath && URL.canParse(result.webPath)) {
+    const facts = result.questionCard;
+    if (facts) {
+      const { record, amount, question, remainingQuestions: remaining } = facts;
+      const note = language === 'en' ? `${remaining} more questions` : `ยังเหลือ ${remaining} ข้อ`;
+      const payer = result.status === 'BLOCKED' && result.blockers.some(item => item.code === 'payer_required');
+      const contents = drawLineSystemCard({ mascot: 'general',
+        header: { lines: language === 'en' ? ['Substitute receipt', 'Next question'] : ['ใบรับรองแทนใบเสร็จ', 'ข้อมูลที่ต้องตอบ'] },
+        rows: [{ label: language === 'en' ? 'Expense' : 'รายการ', value: record },
+          { label: language === 'en' ? 'Amount' : 'ยอดปัจจุบัน', value: amount, total: true }],
+        text: question, ...(remaining ? { footnotes: [note] } : {}),
+        ...(payer ? { choice: [
+          { type: 'message' as const, label: language === 'en' ? 'I am the payer' : 'ฉันเป็นผู้จ่าย', text: language === 'en' ? 'I am the payer' : 'ฉันเป็นผู้จ่าย' },
+          { type: 'uri' as const, label: language === 'en' ? 'Choose another member' : 'เลือกสมาชิกคนอื่น', uri: result.webPath },
+        ] } : {}),
+      }, new URL(result.webPath).origin);
+      const canonicalText = [language === 'en' ? 'Substitute receipt' : 'ใบรับรองแทนใบเสร็จ',
+        `${language === 'en' ? 'Expense' : 'รายการ'}: ${record}`, `${language === 'en' ? 'Amount' : 'ยอดปัจจุบัน'}: ${amount}`,
+        question, ...(remaining ? [note] : [])].join('\n');
+      return contents && asCompleteLineCard({ type: 'flex', altText: lineMessagePreview(canonicalText), canonicalText, contents });
+    }
+  }
   if (result.status !== 'BLOCKED' || !result.webPath || !result.blockers.some(item => item.code === 'payer_required')) return undefined;
   const self = { type: 'message' as const, label: language === 'en' ? 'I am the payer' : 'ฉันเป็นผู้จ่าย', text: language === 'en' ? 'I am the payer' : 'ฉันเป็นผู้จ่าย' };
   const other = { type: 'uri' as const, label: language === 'en' ? 'Choose another member' : 'เลือกสมาชิกคนอื่น', uri: result.webPath };

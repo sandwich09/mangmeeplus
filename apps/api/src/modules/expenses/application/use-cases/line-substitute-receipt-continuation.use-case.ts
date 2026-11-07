@@ -112,6 +112,7 @@ export type LineSubstituteReceiptContinuationResult = {
   acceptedFields: string[];
   blockers: LineSubstituteReceiptBlocker[];
   pendingQuestion?: string;
+  questionCard?: { record: string; amount: string; question: string; remainingQuestions: number; answer?: string };
   webPath?: string;
   policy?: { configured: boolean; ready: boolean; approvalMode: 'OWNER_SELF' | 'DESIGNATED_APPROVERS' };
   sideQuestionAnswered?: boolean;
@@ -2027,6 +2028,8 @@ export class LineSubstituteReceiptContinuationUseCase {
     // two, and a blocked turn never shows the choices, so it pays for no lookup.
     const hasReusableSignature = state.pendingDecision === 'ISSUE_CONFIRM'
       && Boolean(await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId));
+    const questions = blockers.filter(item => item.collectableInLine)
+      .map(item => questionFor(item.code, categories, language)).filter((question): question is string => Boolean(question));
     return {
       handled: true, status, workflowId: state.workflowId, expenseId: expense.id,
       source: { ...substituteReplySource(expense, producedRevision), categoriesHash: sourceHash(categories),
@@ -2039,6 +2042,9 @@ export class LineSubstituteReceiptContinuationUseCase {
       sideQuestionAnswered: Boolean(sideAnswer),
       resumeCapsule: resumeCapsule(expense, state, acceptedFields, targetPath, language),
       ...(state.pendingQuestion ? { pendingQuestion: state.pendingQuestion } : {}),
+      ...(state.pendingQuestion ? { questionCard: { record: expenseLabel(expense, language), amount: bahtAmount(expense, language),
+        question: questions[0] ?? state.pendingQuestion, remainingQuestions: Math.max(0, questions.length - 1),
+        ...(sideAnswer ? { answer: sideAnswer } : {}) } } : {}),
       replyText: formatResult({ language, status, expense, state, acceptedFields, blockers, webPath: targetPath, policy: policyFacts, sideAnswer, categories, hasReusableSignature }),
     };
   }

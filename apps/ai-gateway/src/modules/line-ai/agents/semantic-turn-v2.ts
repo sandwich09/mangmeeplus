@@ -20,7 +20,7 @@ import { BACKLOG_TOOLS, CODED_ONLY_FAMILY_KEYS, OPEN_WORK_TOOLS, assumedYearNote
 import { draftUpdateCardLayout } from './draft-update-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
-import { MANGMEE_PERSONA_PROMPT, closesWithShopLine, fixMangmeeSelfReference, sanitizeMangmeeComposedText, shapeGeneralAnswer } from './mangmee-persona';
+import { MANGMEE_PERSONA_PROMPT, closesWithShopLine, fixMangmeeSelfReference, sanitizeMangmeeComposedText, shapeGeneralAnswer, shortLineKnowledgeText } from './mangmee-persona';
 import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, isExpenseReadReference, misroutedReadTool, myPendingWorkQuestion, resolveExpenseReadReferences, resolvePeriodKeyAlias } from './read-tool-input';
 import { expenseNameResolutionIssue, expenseNameResolutionReplyText, type ExpenseNameResolutionIssue,
   expensePeriodComparisonSeries, expensePeriodComparisonReplyText, expenseComparisonUnavailableReplyText, aggregationIncomplete,
@@ -261,7 +261,6 @@ function deterministicReadFallback(
 ): { status: 'handled' | 'unsupported'; replyText: string; sourceRefIds: string[]; layout?: LineAiAnswerCardLayout } {
   const sourceRefIds = good.flatMap(result => result.sourceRefs.map(sourceId));
   const documentText = documentAdvisorReadText(good);
-  if (documentText) return { status: 'handled', replyText: documentText, sourceRefIds };
   // tuning-7 (run 7 T-015-a): a why-question's fallback should show the breakdown that explains the
   // amount (planned alongside the list by the why augmentation), not the bare list total.
   // M3 (tuning-8, T-111-b): several breakdown results can exist for a why-question (E5's vendor-
@@ -287,7 +286,8 @@ function deterministicReadFallback(
         ...(formatted.layout && good.length === 1 ? { layout: formatted.layout } : {}) };
     }
   }
-  return { status: 'unsupported', replyText: READ_UNAVAILABLE_TEXT[language], sourceRefIds };
+  return documentText ? { status: 'handled', replyText: documentText, sourceRefIds }
+    : { status: 'unsupported', replyText: READ_UNAVAILABLE_TEXT[language], sourceRefIds };
 }
 
 type RetainedSelection = {
@@ -414,7 +414,7 @@ const MY_PENDING_WORK_TOOLS = ['expense.list_substitute_receipts_to_sign', 'reim
 const COUNTERPARTY_LIST_QUESTION = /รายชื่อ|มีใครบ้าง|มีกี่ราย|ทั้งหมด|\blist\b|\ball\b/iu;
 const CODED_READ_TOOLS: ReadonlySet<string> = new Set(['expense.list_recent', 'expense.get_breakdown', 'expense.get_daily_closing', 'counterparty.search',
   // Owner 2026-11-06: "ใบเบิกที่รอจ่าย" in a chat with history composed for 8.8 s (19.6 s turn).
-  'reimbursement.get_summary', 'reimbursement.list_pending_approvals']);
+  'reimbursement.get_summary', 'reimbursement.get_detail', 'reimbursement.list_pending_approvals', 'voucher.list_recent', 'company.get_roles', 'billing.get_package_catalog']);
 
 /** A router-decided period/window hint is a business-level guess made before any specific tool is
  *  chosen — see the drop-vs-reject note in `bindRequestedReadFilters` below. */
@@ -1226,7 +1226,7 @@ export async function runSemanticTurnV2(input: {
   // wants that field), or a shape the formatter cannot draw still composes.
   const codedReads = new Map<number, ReturnType<typeof deterministicReadFallback>>();
   if (!followUp && !WHY_OR_COMPARE_PATTERN.test(req.messageText) && !myPendingWorkQuestion(req.messageText)) for (const item of inventory) {
-    if (item.kind !== 'read' || forced.has(item.index) || questions.has(item.index) || nameIssues.has(item.index)
+    if (item.kind !== 'read' && !results.some(entry => entry.index === item.index && ['billing.get_package_catalog', 'company.get_roles'].includes(entry.result.toolName)) || forced.has(item.index) || questions.has(item.index) || nameIssues.has(item.index)
       || comparisonByIndex.has(item.index) || emptyBacklogText.has(item.index)) continue;
     const assigned = results.filter(entry => entry.index === item.index).map(entry => entry.result);
     if (assigned.length !== 1 || assigned[0]!.status !== 'ok' || !CODED_READ_TOOLS.has(assigned[0]!.toolName)) continue;
@@ -1388,7 +1388,7 @@ export async function runSemanticTurnV2(input: {
       else if (composed?.status === 'handled' && preservesGrounding(sourceText, composed.text)
         && preservesSemanticGrounding([sourceText, 'ตัวอย่าง เช่น สมมติ หมายถึง'], composed.text)) body = composed.text;
       const reviewed = knowledge.presentation.cards[item.index]!;
-      followUpCards.push({ ...reviewed, text: body });
+      followUpCards.push({ ...reviewed, text: shortLineKnowledgeText(body) });
       answer = { index: item.index, status: 'handled', text: `${card.title}\n${body}`,
         sourceRefIds: [sourceId(knowledge.sourceRefs[item.index]!)] };
       modelComposed = false;
@@ -1449,7 +1449,7 @@ export async function runSemanticTurnV2(input: {
       modelComposed = false;
     }
     else if (capabilityIndices.has(item.index)) {
-      answer = { index: item.index, status: 'handled', text: capabilityHelp };
+      answer = { index: item.index, status: 'handled', text: shortLineKnowledgeText(capabilityHelp) };
       modelComposed = false;
     }
     // E4 (tuning-6a, run 5 dead ends: T-005-a t3 "ทำไมเดือนนี้ค้างจ่ายเยอะจังคะ", T-015-a t1 "ทำไมมี
@@ -1632,6 +1632,7 @@ export async function runSemanticTurnV2(input: {
     const explanation = documentExplanationReply(itemText.get(item.index) ?? '', entitledFeatureKeys, req.userContext.permissions, language, req.packageOffers);
     if (explanation && !scopePolicyForcedIndices.has(item.index)) answer = { index: item.index, status: 'handled', text: explanation };
     if (!followUp) answer.text = lineCustomerWording(answer.text);
+    if (modelComposed && ['general', 'help'].includes(item.kind)) answer.text = shortLineKnowledgeText(answer.text);
     if (!comparisonFollowers.has(item.index)) texts.push(answer.text);
     coverage.push({ index: item.index, status: answer.status, ...(answer.reasonCode ? { reasonCode: answer.reasonCode } : {}),
       ...(answer.sourceRefIds ? { sourceRefIds: answer.sourceRefIds } : {}), ...(answer.status === 'needs_user' ? { question: answer.text.slice(0, 500) } : {}) });

@@ -848,3 +848,15 @@ it('W2 compares seed target references with observed database ids', () => {
   turn.targetId = 'other';
   assert.deepEqual(scoreWorkflowCorpus(input).W2, { passed: 0, total: 1 });
 });
+
+it('R17 W1 credits deterministic routes and preserves an actual classifier decision', () => {
+  const corpus: any = { version: 2, seed: 'r17', conversations: [{ id: 'c', category: 'claim', actors: [], tasks: [], turns: [
+    { user: 'ส่งใบเบิก', expect: { label: 'reimbursement_submit' } }, { user: 'ดูยอด', expect: { label: 'read' } }, { user: 'ทำยังไง', expect: { label: 'howto' } },
+  ] }] };
+  const turns: any[] = ['reimbursement_submit', 'advisor', 'advisor'].map((workflowKind, turnIndex) => ({ turnIndex, workflowKind, inputKind: 'message', calls: [], effects: [], unintendedEffects: [], deliveredActions: [], businessSnapshot: { business: {}, collectionState: {} } }));
+  const input: any = { corpus, classifierLabels: 'messages', attempts: [{ attemptId: 'one', conversationId: 'c', complete: true, turns }] };
+  assert.deepEqual(scoreWorkflowCorpus(input).W1, { passed: 3, total: 3 });
+  turns[0].workflowKind = 'approvals'; assert.deepEqual(scoreWorkflowCorpus(input).W1, { passed: 2, total: 3 });
+  turns[0].workflowKind = 'reimbursement_submit'; turns[0].classifier = { label: 'approvals' };
+  assert.deepEqual(scoreWorkflowCorpus(input).W1, { passed: 2, total: 3 });
+});

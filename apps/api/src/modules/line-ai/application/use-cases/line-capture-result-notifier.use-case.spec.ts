@@ -211,7 +211,7 @@ function makeNotifier(scenario: Scenario = {}) {
   return { notifier, freeNoticeMonth: () => freeNoticeMonth, published, failed, pushes, attemptUpdates, closes, handoffCalls, expenses, draftDeletes, linkDeletes, attachmentDeletes, auditEntries };
 }
 
-const pushedText = (h: ReturnType<typeof makeNotifier>): string => h.pushes[0]?.messages[0]?.canonicalText ?? h.pushes[0]?.messages[0]?.text ?? '';
+const pushedText = (h: ReturnType<typeof makeNotifier>): string => h.pushes[0]?.messages[0]?.canonicalText ?? h.pushes[0]?.messages[0]?.text ?? JSON.stringify(h.pushes[0]?.messages[0]?.contents ?? '');
 
 const EXPENSE_LINK = 'https://app.example.com/companies/company-1/expenses/expense-1';
 const RECEIPT_TEXT = `🧾 อ่านเอกสารแล้ว บันทึกเป็นร่างรายการให้แล้วค่ะ\nร้าน: ร้านค้าดี\nยอดในใบเสร็จ: 250.00 บาท\nประเภทเอกสาร: ใบเสร็จรับเงิน\nวันที่: 25 ก.ค. 2569\nยังไม่ยืนยันรายการ\n\n✅ ตรวจสอบและยืนยันในเว็บแอป:\n${EXPENSE_LINK}`;
@@ -391,7 +391,7 @@ describe('LINE capture result push (appendix §3)', () => {
     assert.deepEqual(h.expenses, ['expense-9'], 'only the first one creates');
     assert.deepEqual(h.published, ['outbox-1', 'outbox-2']);
     assert.match(pushedText(h), /ตรวจสอบและยืนยันในเว็บแอป/);
-    assert.match(h.pushes[1]?.messages[0]?.text ?? '', /companies\/company-1\/expenses/, 'appendix §25: the withdrawn group page is replaced by the expense list');
+    assert.match(h.pushes[1]?.messages[0]?.canonicalText ?? h.pushes[1]?.messages[0]?.text ?? '', /companies\/company-1\/expenses/, 'appendix §25: the withdrawn group page is replaced by the expense list');
   });
 
   it('CI09/DI10 blocks a private capture group before reading the finished result, even with flags off', async () => {
@@ -590,11 +590,12 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
     ['unknown document', { classification: { contentKind: 'AMBIGUOUS', documentKind: 'NEEDS_REVIEW' } }, `ยังไม่แน่ใจว่าเป็นเอกสารประเภทใดค่ะ\nเก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้: ${EXPENSE_LINK}`],
     ['non-business', { classification: { contentKind: 'DOCUMENT', documentKind: 'NON_FINANCIAL_IMAGE' } }, 'ภาพนี้ไม่ใช่เอกสารค่าใช้จ่ายค่ะ จึงไม่ได้สร้างรายการ ส่งเอกสารค่าใช้จ่ายที่ต้องการบันทึกได้เลยค่ะ'],
   ] as const) {
-    it(`pins ${name} as today's text notice byte for byte`, async () => {
+    it(`pins ${name} as a card with the same canonical notice byte for byte`, async () => {
       const h = makeNotifier({ payload: expensePayload({ jobId: 'job-1', ...payload }) });
       await h.notifier.execute();
       assert.equal(h.pushes.length, 1);
-      assert.equal(h.pushes[0].messages[0].type, name === 'failed' ? 'flex' : 'text');
+      assert.equal(h.pushes[0].messages[0].type, 'flex');
+      if (name !== 'failed') assert.deepEqual(readLineSystemCard(h.pushes[0].messages[0]).header, ['เอกสารที่ส่งมา', 'ผลการอ่าน']);
       assert.equal(pushedText(h), text);
     });
   }
@@ -829,7 +830,7 @@ describe('free capture completion notice', () => {
   it('appends the third successful result notice once, without a separate push', async () => {
     const h = makeNotifier({ free: true, payload, events: 2 });
     await h.notifier.execute();
-    assert.match(h.pushes[0]?.messages[0]?.text, /ใช้สิทธิ์อ่านฟรีครบ 3 ใบ/);
+    assert.match(h.pushes[0]?.messages[0]?.canonicalText, /ใช้สิทธิ์อ่านฟรีครบ 3 ใบ/);
     assert.doesNotMatch(JSON.stringify(h.pushes[1]?.messages ?? []), /ใช้สิทธิ์อ่านฟรีครบ 3 ใบ/);
     assert.equal(h.freeNoticeMonth(), CURRENT_MONTH);
     assert.equal(h.handoffCalls.length, 0);

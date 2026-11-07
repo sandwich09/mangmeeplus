@@ -657,7 +657,12 @@ export function scoreWorkflowCorpus(input: {
     .filter(row => row.turn.expect.label !== undefined && (input.classifierLabels !== 'messages' || !row.turn.press));
   const buttonTurns = conversations.flatMap(conversation => conversation.turns.map((turn, turnIndex) => ({ turn, turnIndex, attempt: latest.get(conversation.id) }))).filter(row => row.turn.press);
   const buttonsPassed = buttonTurns.filter(row => row.attempt?.turns.find(turn => turn.turnIndex === row.turnIndex)?.pressedLabel === row.turn.press).length;
-  const W1Passed = labelTurns.filter(row => row.attempt?.turns.find(turn => turn.turnIndex === row.turnIndex)?.classifier?.label === row.turn.expect.label).length;
+  const W1Passed = labelTurns.filter(row => {
+    const evidence = row.attempt?.turns.find(turn => turn.turnIndex === row.turnIndex);
+    if (evidence?.classifier) return evidence.classifier.label === row.turn.expect.label;
+    return evidence?.workflowKind === row.turn.expect.label || ['read', 'howto'].includes(row.turn.expect.label ?? '')
+      && ['advisor', 'read', 'howto'].includes(evidence?.workflowKind ?? '');
+  }).length;
   const W2Tasks = tasks.filter(({ task }) => task.kind !== 'advisor');
   const W2Passed = W2Tasks.filter(({ conversation, task, turns }) => {
     const start = turns.find(turn => turn.turnIndex === task.startTurn), reference = conversation.turns[task.startTurn]?.expect.target;

@@ -194,7 +194,7 @@ snapshot เดียวต่อบทสนทนาบรรจุ **ทุ�
 
 | รหัส | ตัวชี้วัด | สูตร | เกณฑ์ (held-out) |
 |---|---|---|---|
-| W1 | ความแม่นยำการแยกงาน (Tier 1) | label ถูก / turn ที่ gold มี `label` | ≥ 95% (ชุดจูน ≥ 97%) |
+| W1 | ความแม่นยำการแยกงาน (Tier 1) | label ถูก / turn ที่ gold มี `label` โดยใช้ label ของ classifier เมื่อเรียก classifier มิฉะนั้นใช้ชนิด workflow ที่กฎเริ่ม หรือทาง advisor สำหรับ gold `read`/`howto` | ≥ 95% (ชุดจูน ≥ 97%) |
 | W2 | เริ่ม workflow ถูก | workflow ถูก และ (เป้าหมายถูก หรือ picker มีเป้าหมาย gold) / งาน workflow | ≥ 95% |
 | W3 | จบงานโดยไม่ตัน | งาน `completable` ที่ได้ gold terminal ตรงทุก field และ `deadEnd = false` / งาน `completable` | ≥ 95%; ปุ่มล้วน 100% |
 | W4 | turn ต่องานที่เสร็จ | (พิมพ์ + กด) เทียบ `minimalTurns` | median ≤ minimal + 1, p90 ≤ minimal + 2 |

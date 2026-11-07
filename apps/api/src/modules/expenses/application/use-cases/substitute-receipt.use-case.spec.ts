@@ -1,3 +1,4 @@
+import { readLineSystemCard } from '../../../line-ai/domain/logic/line-system-card.fixture';
 import { assertSubstitutePaymentDetails } from '../../domain/logic/substitute-funding.logic';
 import { ctx as lineCtx, expense as lineExpense, harness as lineHarness, readyHarness as lineReadyHarness } from './line-substitute-receipt-continuation.use-case.spec';
 import { SUBSTITUTE_PHOTO_ASK_WINDOW_MS, substituteAwaitsCaptionlessPhoto } from './line-substitute-receipt-continuation.use-case';
@@ -2313,10 +2314,11 @@ it('Fix-up 9 R2/R3: a slip refreshes its own pending question; the facts card se
   assert.equal(await flow.waitingSourcesCurrent(selfEvent, actor, [refreshed]), true, 'own evidence does not trap the next payer answer behind LINE_DELIVERY_SOURCE_CHANGED');
   const current = flow.deliverySubstituteContinuations.get(media);
   const card: any = buildSubstituteReceiptFactsCard(current, reply);
-  assert.deepEqual(card.contents.footer.contents.map((button: any) => button.action.label), ['ฉันเป็นผู้จ่าย', 'เลือกสมาชิกคนอื่น']);
-  assert.equal(card.contents.footer.contents[0].action.text, 'ฉันเป็นผู้จ่าย');
+  const cardActions = readLineSystemCard(card).actions;
+  assert.deepEqual(cardActions.map(action => action.label), ['ฉันเป็นผู้จ่าย', 'เลือกสมาชิกคนอื่น']);
+  assert.equal(cardActions[0]!.text, 'ฉันเป็นผู้จ่าย');
   assert.equal(card.quickReply, undefined, 'the payer action appears once in the body, without a duplicate quick reply');
-  assert.equal(card.contents.footer.contents[1].action.uri, current.webPath, 'other-person choice uses the existing guarded web member selector');
+  assert.equal(cardActions[1]!.uri, current.webPath, 'other-person choice uses the existing guarded web member selector');
   assert.doesNotMatch(card.canonicalText, /ยืนยันผู้จ่ายเงินจริง|ตอบ “ฉันเป็นผู้จ่าย”/);
   const assertPlan = (message: any, token?: string) => {
     const createdAt = new Date().toISOString(), expiresAt = new Date(Date.now() + 600_000).toISOString(), producerId = token ? 'prepare' : 'facts';
@@ -2330,7 +2332,7 @@ it('Fix-up 9 R2/R3: a slip refreshes its own pending question; the facts card se
     assert.doesNotThrow(() => validateLineDeliveryPlan(plan)); assert.deepEqual(plan.batches[0]!.primary.messages.map(message => message.type), ['flex']);
   };
   assertPlan(card);
-  const selected = await h.useCase.execute(actor, { messageText: card.contents.footer.contents[0].action.text, chatKeyHash: chat, recentCandidates: [] });
+  const selected = await h.useCase.execute(actor, { messageText: cardActions[0]!.text, chatKeyHash: chat, recentCandidates: [] });
   assert.equal(selected.status, 'READY_FOR_WEB'); assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.payerUserId, actor.userId);
   const service = new LineSubstituteReceiptActionService({ aiGatewayInternalSecret: 'test-secret', webBaseUrl: 'https://app.example.com', isProduction: false } as any,
     { client: { aiConversation: { findFirst: async () => ({ id: 'conversation', lifecycleEpoch: 1 }) } } } as any,

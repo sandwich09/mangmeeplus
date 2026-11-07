@@ -23,9 +23,9 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { AuditService } from '../../audit/application/audit.service';
 import { LineReplyAdapter, type LineDeliveryResult } from '../infrastructure/line-reply.adapter';
-import { ProcessLineWebhookUseCase } from './use-cases/process-line-webhook.use-case';
+import { toCanonicalTextMessages, ProcessLineWebhookUseCase } from './use-cases/process-line-webhook.use-case';
 import type { LineTextEvent, LineReceiptUploadEvent, LineMediaTurnOutcome } from './use-cases/process-line-webhook.use-case';
-import { buildLegalAcceptanceRequiredMessage } from '../domain/logic/line-business-card.logic';
+import { asLineSystemReply, buildLegalAcceptanceRequiredMessage } from '../domain/logic/line-business-card.logic';
 import { hashMessagePreview, parseLineCompanyCommand } from '../domain/logic/line-ai-classifier.logic';
 import { staffMenuCommand } from '../domain/logic/line-staff-menu.logic';
 import {
@@ -208,9 +208,9 @@ export class LineMessageBufferService implements OnModuleDestroy {
     if (publicChat && !publicAdmission) {
       const accepted = await this.acceptEvent(envelope, false);
       if (accepted !== null) {
-        const messages = [{ type: 'text' as const, text: 'แชตนี้ยังไม่พร้อมตอบด้วย AI ค่ะ งานเอกสารหรือข้อมูลบริษัทกรุณาส่งในแชตส่วนตัว' }];
-        const delivery = await this.lineReply.sendReply(envelope.item.replyToken, messages);
-        if (delivery === 'failed_token') await this.lineReply.sendPush(envelope.chatId, messages, `public-unavailable:${envelope.item.webhookEventId}`);
+        await this.deliverNotice(envelope.item.replyToken,
+          'แชตนี้ยังไม่พร้อมตอบด้วย AI ค่ะ งานเอกสารหรือข้อมูลบริษัทกรุณาส่งในแชตส่วนตัว',
+          { target: envelope.chatId, operationId: `public-unavailable:${envelope.item.webhookEventId}` });
         await this.prisma.client.lineWebhookEventLog.updateMany({ where: { webhookEventId: envelope.item.webhookEventId, status: 'received' }, data: { status: 'public_unavailable', processedAt: new Date(), payloadJson: Prisma.DbNull } });
       }
       return;
@@ -363,6 +363,19 @@ export class LineMessageBufferService implements OnModuleDestroy {
       data: claimed,
     });
     return updated.count === 1;
+  }
+
+  private async deliverNotice(replyToken: string, text: string, push?: { target: string; operationId: string }): Promise<LineDeliveryResult> {
+    const messages = [asLineSystemReply(this.lineReply.buildTextMessage(text), this.config.webBaseUrl)];
+    let result = await this.lineReply.sendReply(replyToken, messages).catch(() => 'failed_other' as const);
+    if (result === 'failed_flex') {
+      return this.lineReply.sendReply(replyToken, toCanonicalTextMessages(messages)).catch(() => 'failed_other' as const);
+    }
+    if (result === 'failed_token' && push) {
+      result = await this.lineReply.sendPush(push.target, messages, push.operationId).catch(() => 'failed_other' as const);
+      if (result === 'failed_flex') return this.lineReply.sendPush(push.target, toCanonicalTextMessages(messages), `${push.operationId}:text-fallback`).catch(() => 'failed_other' as const);
+    }
+    return result;
   }
 
   private async deliverLegalAcceptanceReply(
@@ -689,9 +702,8 @@ export class LineMessageBufferService implements OnModuleDestroy {
     if (!state.overflowNotified) {
       state.overflowNotified = true;
       const last = dropped[dropped.length - 1];
-      void this.lineReply
-        .sendReply(last.replyToken, [this.lineReply.buildTextMessage((last.language ?? state.language) === 'en' ? inputTooLarge ? 'This request is too long; please split it into smaller requests.' : 'A previous request is still processing; please wait a moment.' : inputTooLarge ? 'ข้อความชุดนี้ยาวเกินขอบเขตที่รับได้ค่ะ ยังไม่ได้ดำเนินการ กรุณาแบ่งคำขอเป็นชุดเล็กลง' : RATE_LIMIT_REPLY)])
-        .catch(() => {});
+      const text = (last.language ?? state.language) === 'en' ? inputTooLarge ? 'This request is too long; please split it into smaller requests.' : 'A previous request is still processing; please wait a moment.' : inputTooLarge ? 'ข้อความชุดนี้ยาวเกินขอบเขตที่รับได้ค่ะ ยังไม่ได้ดำเนินการ กรุณาแบ่งคำขอเป็นชุดเล็กลง' : RATE_LIMIT_REPLY;
+      void this.deliverNotice(last.replyToken, text);
     }
   }
 
@@ -913,15 +925,9 @@ export class LineMessageBufferService implements OnModuleDestroy {
     }
     if (claimedIds.length === 0) return;
 
-    const messages = [this.lineReply.buildTextMessage((source.language ?? state.language) === 'en' ? 'This request could not be processed; please try again.' : DISPATCH_ERROR_REPLY)];
-    let result: LineDeliveryResult = await this.lineReply
-      .sendReply(source.replyToken, messages)
-      .catch(() => 'failed_other' as const);
-    if (result === 'failed_token') {
-      result = await this.lineReply
-        .sendPush(state.chatId, messages)
-        .catch(() => 'failed_other' as const);
-    }
+    const text = (source.language ?? state.language) === 'en' ? 'This request could not be processed; please try again.' : DISPATCH_ERROR_REPLY;
+    const result = await this.deliverNotice(source.replyToken, text,
+      { target: state.chatId, operationId: `buffer:${source.webhookEventId}:dispatch-error` });
     for (const webhookEventId of claimedIds) {
       const terminalStatus = result === 'ok' ? 'unavailable_delivered' : 'delivery_pending';
       const errorCode = result === 'ok' ? null : 'RETRYABLE_LINE_BUFFER_DISPATCH_FAILED';

@@ -2273,7 +2273,11 @@ export type ReimbursementClaimFormPreview = {
 
 export type ReimbursementAiSummaryItem = { requestNo: string | null; title: string | null; requesterDisplayName: string | null; amount: string };
 
+export type ReimbursementAiReadFilters = { requesterName?: string; categoryName?: string; round?: string; status?: ReimbursementRequestStatus | 'APPROVED_UNPAID'; paymentStatus?: string };
+
 export type ReimbursementAiSummary = {
+  matchedCount?: number;
+  matchedItems?: Array<ReimbursementAiSummaryItem & { id: string; status: string }>;
   pendingApprovalCount: number;
   unpaidApprovedCount: number;
   overdueApprovalCount: number;

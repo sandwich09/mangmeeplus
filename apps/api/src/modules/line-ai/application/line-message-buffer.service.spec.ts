@@ -1744,3 +1744,30 @@ it('R23 fresh frozen replay and company switch retain control order', async () =
     }
   }
 });
+
+it('R17 buffer rate-limit and dispatch notices use validated locked cards', async () => {
+  const { readLineSystemCard } = await import('../domain/logic/line-system-card.fixture');
+  const { lineFlexBodyProblems } = await import('../domain/logic/line-system-card-limits.logic');
+  for (const text of ['คำขอก่อนหน้ายังทำอยู่ รอสักครู่ค่ะ', 'ยังทำรายการนี้ไม่สำเร็จ ลองอีกครั้งค่ะ']) {
+    const h = makeHarness();
+    await (h.service as any).deliverNotice('reply-token', text);
+    const card = h.replyMessages[0];
+    assert.deepEqual(readLineSystemCard(card).header, ['น้องมั่งมี', 'แจ้งให้ทราบ']);
+    assert.equal(card.canonicalText, text);
+    assert.deepEqual(lineFlexBodyProblems(card.contents), []);
+  }
+});
+
+it('R17 a rejected buffer notice retains the text fallback on reply and token-expired push', async () => {
+  for (const tokenExpired of [false, true]) {
+    const h = makeHarness();
+    const service = h.service as any;
+    const calls: any[] = [];
+    service.lineReply.sendReply = async (_token: string, messages: any[]) => { calls.push(messages); return tokenExpired ? 'failed_token' : calls.length === 1 ? 'failed_flex' : 'ok'; };
+    service.lineReply.sendPush = async (_target: string, messages: any[], operation: string) => { calls.push(messages); return operation.endsWith(':text-fallback') ? 'ok' : 'failed_flex'; };
+    const text = 'ยังทำรายการนี้ไม่สำเร็จ ลองอีกครั้งค่ะ';
+    assert.equal(await service.deliverNotice('reply-token', text, { target: 'user', operationId: 'notice' }), 'ok');
+    assert.deepEqual(calls.at(-1), [{ type: 'text', text }]);
+    assert.equal(calls.length, tokenExpired ? 3 : 2);
+  }
+});

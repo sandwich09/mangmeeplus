@@ -80,10 +80,10 @@ const READ_MEMORY_ANSWER_SHAPE: Record<string, 'single_metric' | 'list'> = {
   'reimbursement.get_approval_backlog': 'list',
 };
 
-const READ_MEMORY_MAX_SHOWN_ITEMS = 10;
+const READ_MEMORY_MAX_SHOWN_ITEMS = 5;
 /** Matches the gateway's own R-A2 cap (prepared-simple-read-formatter.ts) so "the first group" means
  *  the same thing in memory as in the reply that was actually shown. */
-const READ_MEMORY_MAX_BREAKDOWN_GROUPS = 8;
+const READ_MEMORY_MAX_BREAKDOWN_GROUPS = 5;
 
 function readMemoryAmountNumber(value: unknown): number {
   return typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/,/g, '')) : NaN;
@@ -118,7 +118,8 @@ function readMemoryBreakdownGroups(data: Record<string, unknown>, axis: 'categor
   const rows = data[dataKey!];
   if (!Array.isArray(rows)) return [];
   const sorted = [...rows].sort((a, b) => readMemoryAmountNumber((b as Record<string, unknown>)?.['totalAmount']) - readMemoryAmountNumber((a as Record<string, unknown>)?.['totalAmount']));
-  return sorted.slice(0, READ_MEMORY_MAX_BREAKDOWN_GROUPS).flatMap((raw, index) => {
+  const shownCount = sorted.length > READ_MEMORY_MAX_BREAKDOWN_GROUPS ? READ_MEMORY_MAX_BREAKDOWN_GROUPS - 1 : READ_MEMORY_MAX_BREAKDOWN_GROUPS;
+  return sorted.slice(0, shownCount).flatMap((raw, index) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
     const row = raw as Record<string, unknown>;
     const id = row[idKey!];
@@ -440,7 +441,8 @@ export class LineReadEvidenceService {
       && !(ref.module === 'reimbursements' && ref.entityType === 'reimbursement_draft_action' && ref.sourceType === 'ACTION'
         && reported.some(name => name.startsWith('reimbursement.draft.')))
       && !(ref.module === 'knowledge' && ref.entityType === 'approved_product_help' && request.approvedKnowledge === true
-        && request.selectedKnowledgeCardIds?.length));
+        && (request.selectedKnowledgeCardIds?.length || request.conversationContext?.lastKnowledgeCards?.some(card =>
+          ref.entityId?.endsWith(`:${card.id}:${card.version}`)))));
     if (privateReadRefs.length && !rows.length && !reported.some(name => LINE_TOOL_REGISTRY.find(tool => tool.name === name)?.category === 'draft_update')) return null;
     return rows.map(row => row.id);
   }

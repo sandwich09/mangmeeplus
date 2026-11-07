@@ -103,7 +103,7 @@ function makeUseCase(opts: {
   const lineReply = {
     buildTextMessage: (text: string) => ({ type: 'text', text }),
     sendPush: async (to: string, messages: any[], operationId?: string) => {
-      pushes.push({ to, message: messages[0], text: messages[0]?.text ?? messages[0]?.altText ?? '', operationId });
+      pushes.push({ to, message: messages[0], text: messages[0]?.canonicalText ?? messages[0]?.text ?? messages[0]?.altText ?? '', operationId });
       return opts.pushResults?.shift() ?? opts.pushResult ?? 'ok';
     },
   } as any;
@@ -932,4 +932,27 @@ describe('drain: a permanent money refusal is an answer, not a retry (§9.4)', (
     assert.equal(result.parked, 1, 'the cap check runs before the model, exactly as before');
     assert.equal(h.turnRequests.length, 0);
   });
+});
+
+it('R17 a stored refusal card with altered body is refused even when its canonical sentence is unchanged', async () => {
+  const opts = { claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 10_000 }],
+    turnFn: () => {
+      const error: any = new Error('AI_MONTHLY_BUDGET_EXCEEDED');
+      error.getStatus = () => 429;
+      error.getResponse = () => ({ code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' });
+      throw error;
+    }, pushResult: 'failed_other' as 'failed_other' | 'ok' };
+  const h = makeUseCase(opts);
+  (h.useCase as any).readEvidence.verifyDelivery = async () => false;
+  await h.useCase.execute(20, NOW);
+  const saved = [...h.deliveryRows.values()][0]!;
+  assert.equal(saved.status, 'UNKNOWN');
+  const card: any = saved.messagesJson[0];
+  assert.equal(card.type, 'flex');
+  card.contents.body.contents[1].contents.push({ type: 'text', text: 'ข้อมูลที่แทรกเข้ามา', wrap: true });
+  opts.pushResult = 'ok';
+  await h.useCase.execute(20, NOW);
+  assert.equal(saved.status, 'REFUSED');
+  assert.equal(JSON.stringify(h.pushes.slice(1)).includes('ข้อมูลที่แทรกเข้ามา'), false);
+  assert.equal(h.turnRequests.length, 1);
 });

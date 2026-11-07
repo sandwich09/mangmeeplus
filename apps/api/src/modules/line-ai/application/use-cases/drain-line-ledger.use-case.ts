@@ -27,7 +27,7 @@ import { LaunchShadowProbe } from '../../../feature-launch/application/launch-sh
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
 import { AiGatewayClient } from '../../infrastructure/ai-gateway.client';
 import { LineReplyAdapter, parseOutcomeMessages, type LineReplyMessage } from '../../infrastructure/line-reply.adapter';
-import { buildLineBusinessAnswerMessage } from '../../domain/logic/line-business-card.logic';
+import { asLineSystemReply, buildLineBusinessAnswerMessage } from '../../domain/logic/line-business-card.logic';
 import { LineAiLedgerService, type LedgerEntry } from '../line-ai-ledger.service';
 import { formatLineReply, lineAssistantDisabledFor, toCanonicalTextMessages } from './process-line-webhook.use-case';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
@@ -454,7 +454,7 @@ export class DrainLineLedgerUseCase {
       reason: budget ? budget.code : reason === 'feature_disabled' || reason === 'original_answer_unavailable' ? reason : 'identity_or_permission_revoked',
       ...(budget?.budgetScope ? { budgetScope: budget.budgetScope } : {}),
     };
-    if (!await this.saveDelivery(claim, [this.lineReply.buildTextMessage(text)], { v: 1, staticRefusal: reason, ...(language === 'en' ? { language } : {}) }, completion)) throw new LedgerEntryHeldError('queued refusal producer lease expired');
+    if (!await this.saveDelivery(claim, [asLineSystemReply(this.lineReply.buildTextMessage(text), this.config.webBaseUrl, entry.companyId)], { v: 1, staticRefusal: reason, ...(language === 'en' ? { language } : {}) }, completion)) throw new LedgerEntryHeldError('queued refusal producer lease expired');
     return this.sendSavedDelivery(entry, claim, deliveryCount);
   }
 
@@ -472,8 +472,11 @@ export class DrainLineLedgerUseCase {
     }
     const messages = parseOutcomeMessages(claim.row.messagesJson);
     const marker = (claim.row.authorizationJson as { staticRefusal?: unknown } | null)?.staticRefusal;
-    const staticRefusal = isStaticRefusalReason(marker) && messages?.length === 1
-      && messages[0].type === 'text' && messages[0].text === staticRefusalText(marker, (claim.row.authorizationJson as { language?: unknown } | null)?.language === 'en' ? 'en' : 'th') && !messages[0].quickReply;
+    const refusalText = isStaticRefusalReason(marker)
+      ? staticRefusalText(marker, (claim.row.authorizationJson as { language?: unknown } | null)?.language === 'en' ? 'en' : 'th') : undefined;
+    const staticRefusal = refusalText !== undefined && messages?.length === 1 && !messages[0].quickReply
+      && (messages[0].type === 'text' ? messages[0].text === refusalText
+        : deliveryHash(messages[0]) === deliveryHash(asLineSystemReply(this.lineReply.buildTextMessage(refusalText), this.config.webBaseUrl, entry.companyId)));
     const current = messages && (freshlyVerified || staticRefusal || await this.readEvidence.verifyDelivery(claim.row.authorizationJson, {
       webhookEventId: entry.webhookEventId || entry.id, lineUserId: entry.chatKey, chatId: entry.chatKey,
       channelId: entry.messagingChannelId ?? this.config.lineMessagingChannelId ?? '',
@@ -628,8 +631,10 @@ export class DrainLineLedgerUseCase {
     await this.finalizeSourceEvent(entry, 'forbidden', 'LINE_DELIVERY_SOURCE_CHANGED');
     await this.ledger.ack(entry, 'refused', { reason: 'delivery_source_changed' });
     if (await this.canReceiveFollowup(entry)) {
-      const notice = this.lineReply.buildTextMessage('ยังยืนยันข้อมูลของคำตอบเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ');
-      await this.lineReply.sendPush(entry.chatKey, [notice], `ledger:${claim.row.id}:source-denied`).catch(() => 'failed_other');
+      const text = 'ยังยืนยันข้อมูลของคำตอบเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ';
+      const notice = asLineSystemReply(this.lineReply.buildTextMessage(text), this.config.webBaseUrl, entry.companyId);
+      const result = await this.lineReply.sendPush(entry.chatKey, [notice], `ledger:${claim.row.id}:source-denied`).catch(() => 'failed_other');
+      if (result === 'failed_flex') await this.lineReply.sendPush(entry.chatKey, [this.lineReply.buildTextMessage(text)], `ledger:${claim.row.id}:source-denied:text-fallback`).catch(() => 'failed_other');
     }
     return 'refused';
   }

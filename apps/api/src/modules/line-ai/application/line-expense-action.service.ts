@@ -55,7 +55,7 @@ class CategoryPreviewRollback extends Error {
 export const EXPENSE_ACTIONS = LINE_WORKFLOW_OPEN_ACTIONS;
 export type ExpenseAction = typeof EXPENSE_ACTIONS[number] | TeamAction;
 export const EXPENSE_ACTION_LABELS: Record<ExpenseAction, string> = { ...TEAM_ACTION_LABELS, MARK_READY: 'ส่งตรวจ', CONFIRM: 'ยืนยัน', DELETE_DRAFT: 'ลบร่าง', VOID: 'ยกเลิกรายการ', REIMBURSEMENT_SUBMIT: 'ส่งอนุมัติ', REIMBURSEMENT_CANCEL: 'ยกเลิกใบเบิก', REIMBURSEMENT_APPROVE: 'อนุมัติ', REIMBURSEMENT_REJECT: 'ไม่อนุมัติ', REIMBURSEMENT_RECORD_PAYMENT: 'บันทึกจ่ายคืน', RECORD_PAYMENT: 'บันทึกจ่าย', VOUCHER_CREATE: 'สร้างใบเตรียมจ่าย', VOUCHER_SUBMIT: 'ส่งอนุมัติ', VOUCHER_APPROVE: 'อนุมัติใบเตรียมจ่าย', VOUCHER_RETURN: 'ส่งกลับแก้ไข', VOUCHER_PAY: 'บันทึกจ่าย', VOUCHER_CANCEL: 'ยกเลิกใบเตรียมจ่าย', WHT_CERTIFICATE_ISSUE: 'ออก 50 ทวิ' };
-export type ExpenseActionControl = { action: 'expense_action_confirm' | 'expense_action_cancel' | 'expense_action_approve' | 'expense_action_reject' | 'expense_action_submit' | 'expense_action_wht' | 'expense_action_payment' | 'expense_action_next' | 'expense_action_transfer' | 'expense_action_cheque'; token: string };
+export type ExpenseActionControl = { act?: ExpenseAction; action: 'expense_action_confirm' | 'expense_action_cancel' | 'expense_action_approve' | 'expense_action_reject' | 'expense_action_submit' | 'expense_action_wht' | 'expense_action_payment' | 'expense_action_next' | 'expense_action_transfer' | 'expense_action_cheque'; token: string };
 export type ExpenseActionPreview = {
   resultId?: string;
   language?: LineReplyLanguage;
@@ -217,16 +217,17 @@ const PERMISSION: Record<ExpenseAction, string> = {
 export function parseExpenseActionControl(raw: unknown): ExpenseActionControl | null {
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     const obj = raw as Record<string, unknown>;
-    if (Object.keys(obj).length !== 2 || typeof obj.action !== 'string' || typeof obj.token !== 'string') return null;
-    raw = new URLSearchParams({ action: obj.action, token: obj.token }).toString();
+    if (Object.keys(obj).some(key => !['action', 'token', 'act'].includes(key)) || typeof obj.action !== 'string' || typeof obj.token !== 'string' || obj.act !== undefined && typeof obj.act !== 'string') return null;
+    raw = new URLSearchParams({ action: obj.action, token: obj.token, ...(typeof obj.act === 'string' ? { act: obj.act } : {}) }).toString();
   }
   if (typeof raw !== 'string' || raw.length > 400) return null;
   const p = new URLSearchParams(raw), keys = [...p.keys()];
-  const action = p.get('action'), token = p.get('token');
-  if (keys.length !== 2 || new Set(keys).size !== 2 || keys.some(k => !['action', 'token'].includes(k))
+  const action = p.get('action'), token = p.get('token'), act = p.get('act');
+  if (keys.length !== (act === null ? 2 : 3) || new Set(keys).size !== keys.length || keys.some(k => !['action', 'token', 'act'].includes(k))
+    || act !== null && !EXPENSE_ACTIONS.includes(act as typeof EXPENSE_ACTIONS[number]) && !Object.hasOwn(TEAM_ACTION_LABELS, act)
     || !['expense_action_confirm', 'expense_action_cancel', 'expense_action_approve', 'expense_action_reject', 'expense_action_submit', 'expense_action_wht', 'expense_action_payment', 'expense_action_next', 'expense_action_transfer', 'expense_action_cheque'].includes(action ?? '')
     || !token || !/^[A-Za-z0-9_-]{1,200}\.[A-Za-z0-9_-]{43}$/u.test(token)) return null;
-  return { action: action as ExpenseActionControl['action'], token };
+  return { action: action as ExpenseActionControl['action'], token, ...(act ? { act: act as ExpenseAction } : {}) };
 }
 
 /** Preview is model-reachable; apply is called only by the signature-verified private webhook. */
@@ -471,8 +472,9 @@ export class LineExpenseActionService {
     return { ...(paymentMethod ? { paymentMethod } : {}), ...(amounts.length === 1 ? { paidAmount: amounts[0]!.value } : {}), ...(dates.length === 1 ? { paidAt: dates[0]! } : {}) };
   }
   async openWorkflow(ctx: RequestContext, chat: string, control: Extract<LineWorkflowControl, { action: 'wf_open' }>, language: LineReplyLanguage = 'th', reason?: string, typedPayment?: Partial<RecordExpensePaymentInput>): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string; question?: boolean }> {
-    if (ctx.freeExpenseDrafts || !verifyLineWorkflowOpenSig(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId,
-      control.act, control.id, control.pm ?? '', control.pd ?? '', control.pa ?? '', control.sig)) return { reply: EXPIRED };
+    if (ctx.freeExpenseDrafts) return { reply: EXPIRED };
+    if (!verifyLineWorkflowOpenSig(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId,
+      control.act, control.id, control.pm ?? '', control.pd ?? '', control.pa ?? '', control.sig)) return { reply: language === 'en' ? 'This card belongs to another account. Open your menu to choose a task.' : 'การ์ดนี้เป็นของบัญชีอื่น เปิดเมนูของคุณเพื่อเลือกงานค่ะ' };
     return this.preview(ctx, chat, { action: control.act, ...(control.act === 'RECORD_PAYMENT' ? { ...typedPayment, requirePaymentMethod: true } : control.act === 'CONFIRM' && (typedPayment || control.pm || control.pd || control.pa) ? { ...typedPayment, offerPaymentAfterConfirm: true } : {}),
       ...(this.isClaim(control.act) ? { reimbursementId: control.id } : this.isVoucher(control.act) && control.act !== 'VOUCHER_CREATE'
         ? { voucherId: control.id } : { expenseId: control.id }),

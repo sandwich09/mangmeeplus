@@ -1,7 +1,7 @@
-import { Injectable, ForbiddenException } from '@nestjs/common';
+import { Injectable, ForbiddenException, BadRequestException } from '@nestjs/common';
 import {
   reimbursementDuplicateWait, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, THAI_SYSTEM_ROLE_NAMES, civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL,
-  type RequestContext, type ReimbursementAiSummary, type ReimbursementAiSummaryItem,
+  type RequestContext, type ReimbursementAiSummary, type ReimbursementAiSummaryItem, type ReimbursementAiReadFilters,
 } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -19,7 +19,8 @@ import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from
 export class GetReimbursementAiSummaryUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository, private readonly audit: AuditService) {}
 
-  async execute(ctx: RequestContext): Promise<ReimbursementAiSummary> {
+  async execute(ctx: RequestContext, filters: ReimbursementAiReadFilters = {}): Promise<ReimbursementAiSummary> {
+    if (filters.round !== undefined && !/^\d{1,4}$/u.test(filters.round)) throw new BadRequestException('ระบุรอบใบเบิกเป็นตัวเลข');
     const canReadAll = ctx.permissions.includes('reimbursement.read');
     const canReadOwn = ctx.permissions.includes('reimbursement.read_own');
     const canReadRelated = ctx.permissions.includes('reimbursement.read_related');
@@ -28,13 +29,20 @@ export class GetReimbursementAiSummaryUseCase {
     const requesterUserId = canReadAll || canReadRelated ? undefined : ctx.userId;
     const relatedUserId = !canReadAll && canReadRelated ? ctx.userId : undefined;
     const currentPolicy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
-    const all = await this.repo.listRequests({
+    const approvedUnpaid = filters.status === 'APPROVED_UNPAID';
+    const scoped = await this.repo.listRequests({
       companyId: ctx.companyId,
       requesterUserId,
       relatedUserId,
       scopes: ctx.scopes ?? {},
       withDuplicateCandidates: true,
+      requesterName: filters.requesterName, categoryName: filters.categoryName,
+      status: approvedUnpaid ? undefined : filters.status,
+      statuses: approvedUnpaid ? ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'] : undefined,
+      paymentStatus: filters.paymentStatus,
     });
+    const all = scoped.filter(row => (!approvedUnpaid || row.paymentStatus !== 'PAID')
+      && (!filters.round || new RegExp(`รอบ\\s*(?:ที่\\s*)?${filters.round}(?![0-9])`, 'u').test(`${row.title ?? ''} ${row.reason}`)));
     const now = new Date();
 
     let pendingApproval = 0;
@@ -75,6 +83,8 @@ export class GetReimbursementAiSummaryUseCase {
     });
 
     return {
+      ...(Object.values(filters).some(value => value !== undefined) ? { matchedCount: all.length,
+        matchedItems: all.slice(0, 5).map(row => ({ ...item(row, decStr(d(row.amount))), id: row.id, status: row.status })) } : {}),
       pendingApprovalCount: pendingApproval,
       unpaidApprovedCount: unpaidApproved,
       overdueApprovalCount: overdueApproval,

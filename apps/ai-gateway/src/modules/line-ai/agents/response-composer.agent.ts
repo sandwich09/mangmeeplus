@@ -12,7 +12,7 @@ import type { AgentIntentPlan, SpecialistOutput, SourceRef, LineAiWebLink, LineA
 import { LINE_CAPABILITY_NO_ACCESS_TH, LINE_FEATURE_DISABLED_HELP_TH, LINE_CAPABILITY_GROUPS, LINE_TOOL_REGISTRY, canAdvertiseReceiptCapture, hasToolFeature, hasToolPermissions, usableCapabilityGroupIds, toolFeatureKeys } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
-import { MANGMEE_PERSONA_PROMPT, sanitizeMangmeeComposedText } from './mangmee-persona';
+import { MANGMEE_PERSONA_PROMPT, sanitizeMangmeeComposedText, shortLineKnowledgeText } from './mangmee-persona';
 import { reimbursementReadScopeWording } from '../domain/logic/business-read-result-semantics';
 import { formatExpenseSummary } from './prepared-simple-read-formatter';
 import { ADVISOR_CONVERSATION_GUIDANCE, ADVISOR_TAX_GUIDANCE } from './advisor-domain-guidance';
@@ -437,7 +437,7 @@ export class ResponseComposerAgent {
   composeCapabilityHelp(messageText = '', planLanguage = 'th', locale = 'th-TH', access?: CapabilityAccess): string {
     const language = detectReplyLanguage(messageText, planLanguage, locale);
     // Spec §8.1: a request to be TAUGHT gets the walkthrough; every other capability question keeps the card.
-    return isTeachingRequest(messageText) ? buildCapabilityTeaching(language, access) : buildCapabilityHelp(language, access);
+    return isTeachingRequest(messageText) ? buildCapabilityTeaching(language, access) : shortLineKnowledgeText(buildCapabilityHelp(language, access));
   }
 
   async composeCasual(

@@ -1949,7 +1949,14 @@ it('credit P1/P2: approved-v6 offers stay bounded with the calibrated constant d
     assert.equal(entry.bytes, parts!.bytes);
     // Historical role-reach evidence keeps its measured reservation; C72 has this reviewed constant digest.
     assert.equal(parts!.digest, '10a36aeb41e500cbac41dc6e4237b95ced82879366d6c2622e9fcbeab308f691');
-    assert.equal(v2RenderedInput(input, creditModel).inputTokenBound, row.boundAfter);
+    const readFilterBounds: Record<string, number> = { 'STARTER_249/OWNER': 56320, 'STARTER_249/STAFF': 47104,
+      'STARTER_249/ACCOUNTANT': 51200, 'STARTER_249/AUDITOR_READONLY': 49152, 'PRO_999/OWNER': 56320,
+      'PRO_999/MANAGER': 50176, 'ENTERPRISE_1999/OWNER': 57344 };
+    // R17 adds declared claim/voucher/age filters. Keep the historical evidence and pin the new byte-counted bound.
+    const currentBound = v2RenderedInput(input, creditModel).inputTokenBound;
+    assert.equal(currentBound, readFilterBounds[`${row.tier}/${row.role}`]);
+    assert.ok(currentBound < row.unboundedV6Bound);
+    assert.ok(currentBound <= row.approvedV4BoundAfter);
     const offered = JSON.parse(input.messages[0]!.text).approvedKnowledge;
     assert.ok(offered.length <= 12 && Buffer.byteLength(JSON.stringify(offered)) <= 12 * 1024);
     assert.ok(row.boundAfter <= row.approvedV4BoundAfter, 'the ordinary intake sample stays below its prior v4 reservation');

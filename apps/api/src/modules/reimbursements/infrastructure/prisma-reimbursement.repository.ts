@@ -209,6 +209,8 @@ function withPayoutCorrectionStep(row: { payoutCorrectionLogJson?: unknown }, en
 }
 
 export type ListRequestsWhere = {
+  requesterName?: string;
+  categoryName?: string;
   order?: 'newest' | 'oldest';
   correctionUserId?: string;
   companyId: string;
@@ -3290,6 +3292,12 @@ export class PrismaReimbursementRepository {
     if (where.relatedUserId) {
       predicates.push(await this.relatedRequestPredicate(where.companyId, where.relatedUserId, where.scopes));
     }
+    if (where.requesterName) predicates.push({ requesterDisplayNameSnapshot: { contains: where.requesterName, mode: 'insensitive' } });
+    if (where.categoryName) predicates.push({ OR: [
+      { categoryLabelSnapshot: { contains: where.categoryName, mode: 'insensitive' } },
+      { title: { contains: where.categoryName, mode: 'insensitive' } },
+      { lines: { some: { description: { contains: where.categoryName, mode: 'insensitive' } } } },
+    ] });
     return {
       companyId: where.companyId,
       requesterUserId: where.requesterUserId,

@@ -508,3 +508,13 @@ it('R16 voucher payment allows only expense and payment effects linked by its ow
   business.DisbursementVoucherLine[0].expenseId = 'bill'; business.ExpenseRecord[0].companyId = 'foreign';
   assert.equal(score().wrongApplied, 2);
 });
+
+it('R17 gold reasons ignore only trailing Thai politeness particles', () => {
+  const task: any = { id: 'reject', kind: 'reimbursement_reject', startTurn: 0, endTurn: 1, confirmTurn: 1, minimalTurns: 2, completable: true,
+    goldTerminal: { effect: 'REIMBURSEMENT_REJECTED', records: [{ table: 'ReimbursementRequest', ref: '$seed:claim', status: 'REJECTED', reason: 'บันทึกซ้ำค่ะ' }] } };
+  const business: any = { ReimbursementRequest: [{ id: 'claim', status: 'REJECTED', reason: 'บันทึกซ้ำ' }] };
+  const turns: any = [{ turnIndex: 0, businessSnapshot: { business: {}, collectionState: {} }, unintendedEffects: [] },
+    { turnIndex: 1, businessSnapshot: { business, collectionState: {} }, unintendedEffects: [{ kind: 'ReimbursementRequest.update', recordId: 'claim' }] }];
+  assert.equal(checkWorkflowGold(task, turns).terminalMatches, true);
+  business.ReimbursementRequest[0].reason = 'บันทึกคนละรายการ'; assert.equal(checkWorkflowGold(task, turns).terminalMatches, false);
+});

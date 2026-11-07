@@ -18,7 +18,7 @@ import { canonicalizeReadToolEnums, myPendingWorkQuestion, nameFilterGroundedInT
 
 // Spec item 2(b): categoryName/vendorName are free text the model must have echoed from what the user
 // typed, not a value proven by an id/date/enum shape. Checked by normalized substring, not raw equality.
-const NAME_FILTER_GROUNDING_FIELDS = new Set(['categoryName', 'vendorName']);
+const NAME_FILTER_GROUNDING_FIELDS = new Set(['categoryName', 'vendorName', 'requesterName']);
 
 const DECISION_KEYS = new Set(['subrequests', 'simpleRead']);
 const SUBREQUEST_KEYS = new Set([
@@ -241,6 +241,7 @@ function isGroundedFilterValue(
   }
   const literal = String(value);
   if (literal && messageText.includes(literal)) return true;
+  if (key === 'round' || key === 'olderThanMonths') return canonicalizeReadToolEnums(tool, { [key]: value }, messageText) !== undefined;
   if (typeof value === 'string' && NAME_FILTER_GROUNDING_FIELDS.has(key) && nameFilterGroundedInText(value, messageText)) return true;
   // Item 1: paymentStatus needs its own word-level check — see paymentStatusGroundedInText — before
   // the generic enum-membership fallback below, which would otherwise wave through ANY listed value.
@@ -394,7 +395,7 @@ function simpleReadPlan(input: {
   const subject = tool.businessSubjects[0]!;
   const agent = tool.supportedAgents[0]!;
 
-  const rawCanonicalFilters = canonicalizeReadToolEnums(tool, only.requestedFilters) as Record<string, string | number | boolean | null> | undefined;
+  const rawCanonicalFilters = canonicalizeReadToolEnums(tool, only.requestedFilters, messageText) as Record<string, string | number | boolean | null> | undefined;
   if (!rawCanonicalFilters) return { rejection: 'filter_not_grounded' };
   const allowedFilters = new Set([...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? [])]);
   const canonicalFilters = withoutRemovedStatusFilters(

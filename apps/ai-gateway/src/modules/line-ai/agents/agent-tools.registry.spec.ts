@@ -78,7 +78,7 @@ describe('LINE_TOOL_REGISTRY – drift guard', () => {
       'accounting.get_receivable_summary': { subjects: ['accounting_document', 'payment'] },
       'expense.get_detail': { subjects: ['expense'], required: ['expenseId'] },
       'reimbursement.get_summary': { subjects: ['reimbursement'] },
-      'reimbursement.get_detail': { subjects: ['reimbursement'], required: ['reimbursementId'] },
+      'reimbursement.get_detail': { subjects: ['reimbursement'] },
     };
     for (const [name, metadata] of Object.entries(expected)) {
       const tool = LINE_TOOL_REGISTRY.find((entry) => entry.name === name);

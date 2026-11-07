@@ -304,7 +304,7 @@ describe('read memory extraction (spec §4 R-M1)', () => {
     assert.equal(memory.shownItems, undefined);
   });
 
-  it('expense.get_breakdown: groups by the effective groupBy, sorted descending, top 8, null-id group dropped', () => {
+  it('expense.get_breakdown: groups by the effective groupBy, sorted descending, four groups plus remainder, null-id group dropped', () => {
     const groups = Array.from({ length: 9 }, (_, i) => ({ categoryId: `c${i}`, category: `หมวด${i}`, totalAmount: String(100 - i) }));
     groups.push({ categoryId: null as any, category: 'ไม่ระบุหมวด', totalAmount: '999' });
     const memory = readMemoryEvidence({
@@ -313,10 +313,9 @@ describe('read memory extraction (spec §4 R-M1)', () => {
       queryApplied: queryApplied({ filters: { groupBy: 'category' } }),
     } as any)!;
     assert.equal(memory.groupBy, 'category');
-    // The 999-amount null-id row sorts first and fills one of the top-8 DISPLAY slots (the gateway
-    // formatter shows it too, just with no id to remember) — so only 7 of the 10 groups end up
-    // referenceable: c0..c6 (display positions 2-8). c7/c8 never entered the top-8 window at all.
-    assert.equal(memory.shownItems?.length, 7);
+    // The null-id row occupies the first display slot. Three named groups and the remainder
+    // complete the five rows, so only c0..c2 are referenceable at display positions 2–4.
+    assert.equal(memory.shownItems?.length, 3);
     assert.equal(memory.shownItems?.[0]?.id, 'c0');
     assert.equal(memory.shownItems?.[0]?.ordinal, 2, 'true display position, after the dropped null-id row');
     assert.equal(memory.shownItems?.every(item => item.kind === 'category'), true);

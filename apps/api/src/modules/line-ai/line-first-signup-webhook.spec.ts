@@ -397,7 +397,7 @@ const event = (text: string) => ({
 
 const rendered = (h: Harness) => JSON.stringify(h.replies);
 /** Every reply's text as the customer reads it — quotes unescaped, for pinning exact printed words. */
-const spoken = (h: Harness) => h.replies.flat().map((message: any) => message.text ?? '').join('\n');
+const spoken = (h: Harness) => h.replies.flat().map((message: any) => message.canonicalText ?? message.text ?? '').join('\n');
 /** The status this turn settled on — the last write, after the claim's own CAS. */
 const outcome = (h: Harness) => h.eventLog.at(-1)!.data.status;
 
@@ -409,7 +409,7 @@ describe('P10-L webhook doors', () => {
     assert.match(rendered(h), /เปิดร้านใหม่/);
     assert.equal(outcome(h), 'line_follow');
     // R-C4: the how-to picture is withdrawn (it showed no package step); the hello and the door stay.
-    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['text', 'flex']);
+    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['flex', 'flex']);
     assert.doesNotMatch(rendered(h), /welcome-how-to-start/);
     // 049aa51de shortened the hello (no price or paid-first steps once free source drafts exist).
     assert.match(spoken(h), /^สวัสดีค่ะ ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\n/);
@@ -439,8 +439,8 @@ describe('P10-L webhook doors', () => {
     const entry = h.audits.find((row: any) => row.action === 'ai.line.unlinked_access');
     assert.equal(entry.result, 'DENIED', 'reaching for the assistant without an account still is');
     // Owner 2026-11-05 explains the missing link before the door, without repeating the follow greeting.
-    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['text', 'flex']);
-    assert.equal(h.replies.flat()[0].text, 'น้องมั่งมีจะตอบได้หลังเปิดร้านหรือเชื่อมบัญชีแล้วค่ะ เลือกจากการ์ดด้านล่างได้เลย');
+    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['flex', 'flex']);
+    assert.equal(h.replies.flat()[0].canonicalText, 'น้องมั่งมีจะตอบได้หลังเปิดร้านหรือเชื่อมบัญชีแล้วค่ะ เลือกจากการ์ดด้านล่างได้เลย');
     assert.equal(spoken(h).includes('ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อน'), false);
   });
 
@@ -524,8 +524,8 @@ describe('P10-L webhook doors', () => {
   it('owner 2026-11-05 gives an English typed stranger the explanation before the door', async () => {
     const h = harness({ identity: null, pendingSignup: null });
     await h.useCase.execute({ ...event('Hello'), language: 'en' });
-    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['text', 'flex']);
-    assert.equal(h.replies.flat()[0].text, 'I can help once you open a shop or link your account. Choose below.');
+    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['flex', 'flex']);
+    assert.equal(h.replies.flat()[0].canonicalText, 'I can help once you open a shop or link your account. Choose below.');
   });
 
   it('owner 2026-11-05 keeps an open application status alone for typed and media turns', async () => {
@@ -542,8 +542,8 @@ describe('P10-L webhook doors', () => {
     const h = harness({ identity: null, pendingSignup: null });
     (h.useCase as any).downloadLineMedia = () => assert.fail('unlinked media cannot download');
     await h.useCase.executeReceiptUpload({ ...event(''), messageType: 'image', lineMessageId: 'guest-image' } as any);
-    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['text', 'flex']);
-    assert.equal(h.replies.flat()[0].text, 'น้องมั่งมีจะตอบได้หลังเปิดร้านหรือเชื่อมบัญชีแล้วค่ะ เลือกจากการ์ดด้านล่างได้เลย');
+    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['flex', 'flex']);
+    assert.equal(h.replies.flat()[0].canonicalText, 'น้องมั่งมีจะตอบได้หลังเปิดร้านหรือเชื่อมบัญชีแล้วค่ะ เลือกจากการ์ดด้านล่างได้เลย');
   });
 
   it('sends the staff door to the owner-issued link, never a self-serve signup', async () => {

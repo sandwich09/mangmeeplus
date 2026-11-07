@@ -1,9 +1,9 @@
 import { isPendingFieldAnswer } from '../domain/logic/line-ai-classifier.logic';
-import { lineDisplayDate, type LineReplyLanguage } from '../domain/logic/line-language.logic';
+import { lineDisplayDate, lineUiLabel, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { formatThaiDate } from '../domain/logic/line-draft-update-card.logic';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { DISBURSEMENT_VOUCHER_MAX_LINES, disbursementVoucherError, E_WHT_WORDS, E_WHT_REDUCED_RATE, WHT_HANDOFF_PAYEE_ADDRESS_MAX, mapThaiDigits, todayCivilDate, scrubRecordText, whtPayeeAddress, type CreateDisbursementVoucherDraftInput, type PayDisbursementVoucherInput, type RequestContext, type ReimbursementRequestDetail } from '@watchdog-bms/contracts';
+import { EXPENSE_PAYMENT_METHOD_LABELS, DISBURSEMENT_VOUCHER_MAX_LINES, disbursementVoucherError, E_WHT_WORDS, E_WHT_REDUCED_RATE, WHT_HANDOFF_PAYEE_ADDRESS_MAX, mapThaiDigits, todayCivilDate, scrubRecordText, whtPayeeAddress, type CreateDisbursementVoucherDraftInput, type PayDisbursementVoucherInput, type RequestContext, type ReimbursementRequestDetail } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { assertFeatureEnabled, loadEntitledFeatureKeys } from '../../employee-access/application/entitlement.helper';
@@ -177,7 +177,7 @@ export class LineVoucherActionService {
         if ((action === 'VOUCHER_RETURN' || action === 'VOUCHER_CANCEL') && !payload.reason) awaitingField = 'reason';
         if (action === 'VOUCHER_PAY') payload.payment = { commandId: 'line-preview', expectedVersion: voucher.header.version,
           paidDate: typeof input.paidAt === 'string' ? input.paidAt : todayCivilDate('Asia/Bangkok'),
-          ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod as PayDisbursementVoucherInput['paymentMethod'] } : eWht && !voucher.header.plannedMethod ? { paymentMethod: 'BANK_TRANSFER' as const } : {}) };
+          ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod as PayDisbursementVoucherInput['paymentMethod'] } : voucher.header.plannedMethod ? { paymentMethod: voucher.header.plannedMethod } : eWht ? { paymentMethod: 'BANK_TRANSFER' as const } : {}) };
         if (payload.payment && !payload.payment.paymentMethod && !voucher.header.plannedMethod) awaitingField = 'paymentMethod';
         try {
           await this.vouchers.previewLineAction(ctx, operation(action), { id, reason: awaitingField === 'reason' ? 'รอเหตุผลจากผู้ใช้' : payload.reason, payment: awaitingField === 'paymentMethod' ? { ...payload.payment!, paymentMethod: 'CASH' } : payload.payment });
@@ -192,7 +192,10 @@ export class LineVoucherActionService {
           if (voucher.lines.some(line => line.whtRemittance === 'E_WHT' && line.eWhtReducedRateApplied)
             && !E_WHT_REDUCED_RATE.windows.some(({ from, to }) => payload.payment!.paidDate! >= from && payload.payment!.paidDate! <= to)) details.push(E_WHT_WORDS['L-9']);
         }
-        if (payload.payment) details.push(`${en ? 'Payment date' : 'วันที่จ่าย'} ${lineDisplayDate(payload.payment.paidDate!, language)} · ${((payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CASH' ? (en ? 'Cash' : (en ? 'Cash' : 'เงินสด')) : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'BANK_TRANSFER' ? (en ? 'Bank transfer' : (en ? 'Bank transfer' : 'โอนเงิน')) : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CARD' ? (en ? 'Card' : (en ? 'Card' : 'บัตร')) : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CHEQUE' ? (en ? 'Cheque' : (en ? 'Cheque' : 'เช็ค')) : (en ? 'Other' : 'วิธีอื่น'))}`);
+        if (payload.payment) {
+          const method = payload.payment.paymentMethod ?? voucher.header.plannedMethod;
+          details.push(`${en ? 'Payment date' : 'วันที่จ่าย'} ${lineDisplayDate(payload.payment.paidDate!, language)}${method ? ` · ${en ? 'Payment method' : 'วิธีจ่าย'} ${lineUiLabel(EXPENSE_PAYMENT_METHOD_LABELS[method], language)}` : ''}`);
+        }
       }
     }
     return { payload, details, awaitingField, allowedPaymentMethods, record: await this.read(ctx, payload), nextStatus: action === 'VOUCHER_CREATE' || action === 'VOUCHER_RETURN' ? 'DRAFT' : action === 'VOUCHER_SUBMIT' ? 'PENDING_APPROVAL' : action === 'VOUCHER_APPROVE' ? 'APPROVED' : action === 'VOUCHER_PAY' ? 'PAID' : action === 'VOUCHER_CANCEL' ? 'CANCELLED' : 'PAID' };

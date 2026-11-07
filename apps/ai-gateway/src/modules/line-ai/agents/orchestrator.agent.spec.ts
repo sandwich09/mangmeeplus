@@ -1,5 +1,33 @@
 import { BILLING_PAID_TIERS as testPaidTiers, billingOffer as testBillingOffer } from '@watchdog-bms/contracts';
 import '../domain/logic/line-ai-scope-policy.logic.spec';
+
+it('R17 reviewed knowledge uses approved summaries within 350 visible characters', async () => {
+  const { activeProductHelpPack } = await import('./approved-product-help');
+  const { renderApprovedKnowledge, productKnowledgeAccess } = await import('./approved-knowledge');
+  const pack = activeProductHelpPack();
+  const cards = [...pack.cards].sort((a, b) => b.body.length - a.body.length).slice(0, 3);
+  const access = productKnowledgeAccess([...new Set(pack.cards.flatMap(card => [...card.permissionAnyOf, ...card.requiredPermissions]))], null, true);
+  access.capabilities = pack.cards.flatMap(card => card.requiredCapabilities);
+  const result = renderApprovedKnowledge(pack, cards.map(card => card.id), access, 'shop')!;
+  const visible = [...new Intl.Segmenter('th', { granularity: 'grapheme' }).segment(result.replyText)].length;
+  assert.ok(visible <= 350, String(visible));
+  assert.ok(result.webLinks.every(link => link.label === 'อ่านต่อในคู่มือ'));
+});
+
+it('R17 who-can-do-this reads the permission catalogue without composed facts', async () => {
+  const { runSemanticTurnV2 } = await import('./semantic-turn-v2');
+  const req: any = { ...makeReq('ต้องให้ใครทำให้'), userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', 'access.role.read'] },
+    conversationContext: { recentTurns: [{ refused: true, userMessagePreview: 'อนุมัติใบเบิก', userMessagePreviewComplete: true, at: new Date().toISOString() }] },
+    semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ต้องให้ใครทำให้', requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+  const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+    provider: { generateText: async () => assert.fail('catalogue facts need no model') },
+    invoke: async (meta, _ctx, input) => {
+      assert.equal(meta.name, 'company.get_roles'); assert.deepEqual(input, { permissionKey: 'reimbursement.approve' });
+      return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(), data: { roles: [{ name: 'ผู้จัดการ', menus: ['อนุมัติใบเบิก'] }] },
+        sourceRefs: [{ module: 'employee-access', entityType: 'role_permissions', label: 'หน้าที่', permissionChecked: true }] };
+    } });
+  assert.equal(result.replyText, 'ผู้จัดการ: อนุมัติใบเบิก');
+});
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
 import { scopePolicyOverride, featureLimitReplyText, permissionAlternative } from '../domain/logic/line-ai-scope-policy.logic';
 import { afterEach, beforeEach, describe, it } from 'node:test';
@@ -302,7 +330,7 @@ describe('OrchestratorAgent', () => {
     assert.match(result.replyText, /สินค้าและสต็อก/);
     assert.match(result.replyText, /การเงิน บัญชี และรายงาน/);
     assert.doesNotMatch(result.replyText, /ยอดขาย/);
-    assert.match(result.replyText, /เตรียมการ์ดให้กดยืนยันเองค่ะ/);
+    assert.equal(result.replyText.split('\n').length, 3);
   });
 
   // UAT 2026-09-06: "สอนฉันใช้งานเบื้องต้น…" got the capability card, which lists WHAT and never HOW.
@@ -3410,4 +3438,17 @@ describe('semantic turn v2: code-built answers for reads that a card holds', () 
     assert.ok(!tags.includes('line.compose'), tags.join(','));
     assert.match(result.replyText, /^งานค้าง ณ 5 ต\.ค\. 2569\n• รอตรวจสอบ: 21 รายการ/u);
   });
+});
+
+it('R17 named claim and age filters are grounded in the customer words', async () => {
+  const { canonicalizeReadToolEnums } = await import('./read-tool-input');
+  const { LINE_TOOL_REGISTRY } = await import('@watchdog-bms/contracts');
+  const claim = LINE_TOOL_REGISTRY.find(tool => tool.name === 'reimbursement.get_detail')!;
+  assert.deepEqual(canonicalizeReadToolEnums(claim, { requesterName: 'สมศรี', categoryName: 'ค่าเดินทาง', round: '4' },
+    'ใบเบิกค่าเดินทางของสมศรีรอบ 4 จ่ายแล้วหรือยัง'), { requesterName: 'สมศรี', categoryName: 'ค่าเดินทาง', round: '4' });
+  assert.equal(canonicalizeReadToolEnums(claim, { round: '14' }, 'ใบเบิกรอบ 4'), undefined);
+  assert.equal(canonicalizeReadToolEnums(claim, { requesterName: 'คนอื่น' }, 'ใบเบิกของสมศรี'), undefined);
+  const expense = LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.list_recent')!;
+  assert.deepEqual(canonicalizeReadToolEnums(expense, { olderThanMonths: 2 }, 'ค้างจ่ายเกินสองเดือน'), { olderThanMonths: 2 });
+  assert.equal(canonicalizeReadToolEnums(expense, { olderThanMonths: 3 }, 'ค้างจ่ายเกินสองเดือน'), undefined);
 });

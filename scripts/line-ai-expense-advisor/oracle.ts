@@ -1,3 +1,4 @@
+import { stripLineFieldParticles } from '../../packages/contracts/src/line-ai';
 /**
  * Runs a gold `{tool, input}` call through the REAL, in-process, compiled API tool executor — the
  * same classes `InternalToolsController` dispatches to — against the seeded DB, with the same
@@ -104,6 +105,7 @@ function goldValue(row: Record<string, any>, key: string): unknown {
     whtAmount: row.whtAmount ?? row.withheldAmount ?? snapshot.whtAmount,
   };
   const value = Object.hasOwn(aliases, key) ? aliases[key] : row[key];
+  if (key === 'reason' && typeof value === 'string') return stripLineFieldParticles(value);
   // Snapshot timestamps carry no zone; they are UTC (a Bangkok-midnight payment reads 17:00 the day before).
   if ((key === 'date' || key === 'paidDate') && value != null) return todayCivilDate('Asia/Bangkok', new Date(/T[\d:.]+$/u.test(String(value)) ? `${value}Z` : String(value)));
   if (['amount', 'paidAmount', 'whtAmount'].includes(key) && value != null) return String(value).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');

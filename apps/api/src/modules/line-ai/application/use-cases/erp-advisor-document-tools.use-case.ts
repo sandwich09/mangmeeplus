@@ -2,7 +2,7 @@ import { lineReplyLanguage, lineDisplayDate, lineUiLabel } from '../../domain/lo
 /** Sold-pack document reads. No preparation, issuance, filing or payment. */
 import { BadRequestException, Injectable } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { E_WHT_WORDS, eWhtReducedRateOn, DISBURSEMENT_VOUCHER_STATUS_LABELS, civilPeriodKey, todayCivilDate, resolvePeriodCandidates, PERIOD_ASSUMPTIONS, isAmbiguousPeriodCandidate, type RequestContext, type ToolResult, type WhtCertificateHandoffListRowDto } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, eWhtReducedRateOn, DISBURSEMENT_VOUCHER_STATUS_LABELS, civilPeriodKey, todayCivilDate, resolvePeriodCandidates, PERIOD_ASSUMPTIONS, isAmbiguousPeriodCandidate, type DisbursementVoucherStatus, type RequestContext, type ToolResult, type WhtCertificateHandoffListRowDto } from '@watchdog-bms/contracts';
 import { DisbursementVoucherUseCase } from '../../../expenses/application/use-cases/disbursement-voucher.use-case';
 import { calcLineTotals } from '../../../expenses/domain/logic/expense-totals.logic';
 import { ListWhtIncomeCategoriesUseCase } from '../../../procurement/application/use-cases/wht-income-category.use-case';
@@ -31,14 +31,14 @@ const sum = (values: string[]) => values.reduce((total, value) => total.plus(val
 export class VoucherListRecentTool implements ErpReadToolPort {
   toolName = 'voucher.list_recent';
   constructor(private readonly vouchers: DisbursementVoucherUseCase) {}
-  async execute(ctx: ErpToolContext, input: { q?: string; branchId?: string } = {}): Promise<ToolResult> {
+  async execute(ctx: ErpToolContext, input: { q?: string; branchId?: string; status?: DisbursementVoucherStatus } = {}): Promise<ToolResult> {
     if (!ctx.permissions.includes('expense.disbursement.read')) return denied(this.toolName);
-    const page = await this.vouchers.list(requestContext(ctx), { q: input.q, branchId: input.branchId, page: 1, pageSize: 10 });
+    const page = await this.vouchers.list(requestContext(ctx), { q: input.q, branchId: input.branchId, status: input.status, page: 1, pageSize: 5 });
     const language = lineReplyLanguage(ctx.groundingText ?? '', ctx.locale?.startsWith('en') ? 'en' : 'th');
     const items = page.data.map(({ id, documentNumber, status, payeeName, totalAmount, paidDate, plannedPayDate, lineCount }) =>
       ({ id, documentNumber, status, payeeName, totalAmount, paidDate, plannedPayDate, lineCount }));
     return result(ctx, this.toolName, { total: page.total, items, message: language === 'en' ? (page.total ? `${page.total} payment vouchers.\n${items.map(v => `• ${v.documentNumber ?? 'Draft'} · ${v.payeeName} · ${money(v.totalAmount)} THB · ${lineUiLabel(DISBURSEMENT_VOUCHER_STATUS_LABELS[v.status] ?? 'รอตรวจสอบ', language)}`).join('\n')}` : 'No payment vouchers are available within your access.') : page.total
-      ? `พบใบเตรียมจ่าย/ใบสำคัญจ่าย ${page.total} ใบค่ะ\n${items.map((v, i) => `• ${v.documentNumber ?? 'ฉบับร่าง'} · ${v.payeeName} · ${money(v.totalAmount)} บาท · ${DISBURSEMENT_VOUCHER_STATUS_LABELS[v.status] ?? 'รอตรวจสอบ'}`).join('\n')}${page.total > items.length ? '\nแสดง 10 ใบล่าสุดค่ะ' : ''}`
+      ? `พบใบเตรียมจ่าย/ใบสำคัญจ่าย ${page.total} ใบค่ะ\n${items.map((v, i) => `• ${v.documentNumber ?? 'ฉบับร่าง'} · ${v.payeeName} · ${money(v.totalAmount)} บาท · ${DISBURSEMENT_VOUCHER_STATUS_LABELS[v.status] ?? 'รอตรวจสอบ'}`).join('\n')}${page.total > items.length ? '\nแสดง 5 ใบล่าสุดค่ะ' : ''}`
       : 'ยังไม่มีใบเตรียมจ่าย/ใบสำคัญจ่ายที่คุณมีสิทธิ์ดูค่ะ' }, 'expenses/disbursement-vouchers', 'ใบเตรียมจ่าย/ใบสำคัญจ่าย');
   }
 }

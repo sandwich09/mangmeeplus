@@ -452,16 +452,7 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     });
     assert.deepEqual(invoked, ['billing.get_package_catalog']);
     assert.match(calls[0]!.systemPrompt, /call billing\.get_package_catalog with input \{\} whatever the clause kind/);
-    const compose = calls.find((call) => call.usageTag === 'line.compose');
-    assert.ok(compose);
-    assert.match(compose.systemPrompt, /comes only from billing\.get_package_catalog in this turn — this shop's own usage and room come from billing\.get_package_usage — never from memory, a guess or your own arithmetic/);
-    assert.match(compose.systemPrompt, /a price with vat is said as the price plus that VAT and its payable total; about VAT say only what vatNote says/);
-    assert.match(compose.systemPrompt, /Selling prices are the only money you may name: never state, estimate or hint at what anything costs to provide/);
-    assert.match(compose.systemPrompt, /never turn credits or receipts into money or into a number of messages/);
-    assert.match(compose.systemPrompt, /its savingVersusMonthly said as 'ประหยัด N บาท'.*never call a package or a payment term คุ้มกว่า or better value\./);
-    assert.match(compose.systemPrompt, /never say how many packages there are or how many are bigger: list them, never 'มี 3 แบบ'/);
-    assert.match(compose.systemPrompt, /Asking prices, contents or a comparison is not asking how to buy: end with what was asked, never with a line such as 'หากต้องการซื้อหรือเปลี่ยนแพ็กเกจ ทำได้ที่หน้าแพ็กเกจบนเว็บ'\./);
-    assert.match(compose.systemPrompt, /say you can only share the prices packages are sold at, as a handled answer that still cites billing\.get_package_catalog's sourceRefIds when it ran\./);
+    assert.equal(calls.some(call => call.usageTag === 'line.compose'), false);
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.match(result.replyText, /266\.43/);
     assert.doesNotMatch(result.replyText, /หากต้องการซื้อแพ็กเกจ/, 'an unasked buy line is dropped');
@@ -1161,14 +1152,14 @@ describe('advisor S0: general answers are shaped in code, and a stock clause is 
   });
 
   // G-04, G-11, G-23: business knowledge closed with the shop line; six answers gave an agency website from memory.
-  it('a business-knowledge answer keeps its length and loses the shop line and any web address', async () => {
+  it('R17 business knowledge keeps three short points and loses the shop line and any web address', async () => {
     const body = 'การตั้งราคาขายให้มีกำไร มีหลักคิดดังนี้ค่ะ\n\n• คำนวณต้นทุนให้ครบ\n• กำหนดกำไรที่ต้องการ\n• เทียบราคาตลาด\n\nแนะนำให้หารือกับนักบัญชีหรือกรมสรรพากร';
     const text = `${body} (rd.go.th) นะคะ\n\nถ้ามีเรื่องค่าใช้จ่ายหรือข้อมูลร้านให้ช่วย บอกได้เลยค่ะ 😊`;
     for (const [intent, topic] of [['ADVISOR_CONVERSATION', 'business'], ['BUSINESS_READ_QUESTION', 'business'],
       // The router's own business route outranks a composer that marked a business answer "other".
       ['BUSINESS_READ_QUESTION', 'other'], ['ADVISOR_CONVERSATION', undefined]] as const) {
       const answer = await general('ตั้งราคาขายยังไงให้มีกำไร', intent, { ...(topic ? { topic } : {}), text });
-      assert.equal(answer.replyText, `${body} นะคะ`, `${intent} ${topic}`);
+      assert.equal(answer.replyText, 'การตั้งราคาขายให้มีกำไร มีหลักคิดดังนี้ค่ะ\n• คำนวณต้นทุนให้ครบ\n• กำหนดกำไรที่ต้องการ', `${intent} ${topic}`);
     }
   });
 
@@ -1406,4 +1397,19 @@ describe('design lock: the v2 turn attaches a card layout built from the tool re
     assert.equal(composed.replyText, 'ร้านสมใจค่ะ');
     assert.equal(composed.presentation, undefined);
   });
+});
+
+it('R17 VAT records and bank reconciliation use the package refusal with no model or tool calls', async () => {
+  for (const messageText of ['ดูรายการ ภ.พ.30 เดือนนี้', 'กระทบยอดธนาคาร']) {
+    const req: LineAiTurnRequest = { requestId: 'r17-unsold', webhookEventId: 'r17-unsold', messageText, messagePreviewHash: 'a'.repeat(16),
+      userContext: baseUserContext(['ai.tool.invoke', 'expense.read']),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: messageText, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }] };
+    req.entitledFeatureKeys = ['expenses', 'ai_line_assistant'];
+    const result = await runSemanticTurnV2({ req, provider: neverCalledProvider(), draftEditEnabled: false,
+      reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      invoke: async () => assert.fail('an unsold read invokes no tools') });
+    assert.equal(result.replyText, 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+    assert.deepEqual(result.outputs.flatMap(output => output.toolCalls), []);
+  }
 });

@@ -16,6 +16,15 @@ import {
 
 const baseCtx = { companyId: 'c1', userId: 'u1', locale: 'th-TH', permissions: ['expense.read'] } as any;
 
+it('R17 older unpaid expenses use a cutoff instead of the current month', async () => {
+  const { todayCivilDate } = await import('@watchdog-bms/contracts');
+  const h = makeFilterCapturingTool();
+  await h.tool.execute(baseCtx, { olderThanMonths: 2, paymentStatus: 'UNPAID' } as any);
+  const cutoff = new Date(`${todayCivilDate()}T00:00:00Z`); cutoff.setUTCMonth(cutoff.getUTCMonth() - 2);
+  assert.equal(h.filters[0].toDate, cutoff.toISOString().slice(0, 10));
+  assert.equal(h.filters[0].fromDate, '0001-01-01');
+});
+
 const expense = (over: Record<string, unknown>) => ({
   id: 'e1',
   expenseNumber: 'EXP-2026-0001',
@@ -789,4 +798,11 @@ it('the web link opens the month, tab and unpaid view the answer counted', async
   assert.equal(expenseListWebPath('c1', { period: nov, documentStatus: 'NEEDS_REVIEW' }), '/companies/c1/expenses?month=2026-11&chip=pending');
   assert.equal(expenseListWebPath('c1', { period: nov, documentStatus: 'CONFIRMED', paymentStatus: 'UNPAID', branchId: 'b 1' }), '/companies/c1/expenses?month=2026-11&chip=confirmed&view=unpaid&branchId=b+1');
   assert.equal(expenseListWebPath('c1', { period: { fromDate: '2026-10-01', toDate: '2026-11-06' } }), '/companies/c1/expenses');
+});
+
+it('R17 older unpaid expenses support periods longer than ten years', async () => {
+  const h = makeFilterCapturingTool();
+  const result = await h.tool.execute(baseCtx, { olderThanMonths: 121, paymentStatus: 'UNPAID' } as any);
+  assert.equal(result.status, 'ok');
+  assert.equal(h.filters.length, 1);
 });

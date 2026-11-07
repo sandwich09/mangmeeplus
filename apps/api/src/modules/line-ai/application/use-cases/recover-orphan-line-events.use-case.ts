@@ -1,3 +1,4 @@
+import { asLineSystemReply } from '../../domain/logic/line-business-card.logic';
 import { parsePackagePurchaseControl } from '../line-package-purchase.service';
 import { parseExpenseActionControl } from '../line-expense-action.service';
 import { LineDocumentQaWorker } from '../line-document-qa.worker';
@@ -331,8 +332,10 @@ export class RecoverOrphanLineEventsUseCase {
       await this.audit.log({ actorType: 'SYSTEM', actorRefId: 'line-orphan-sweep', action: 'ai.line.delivery.denied',
         targetType: 'LineWebhookEvent', targetId: row.webhookEventId, requestId: row.webhookEventId,
         result: 'DENIED', riskLevel: 'HIGH', metadataJson: { reason: 'outcome_reauthorization_required' } }).catch(() => {});
-      const notice = [this.lineReply.buildTextMessage('ยังยืนยันข้อมูลหรือสิทธิ์ของคำตอบเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ')];
-      await this.lineReply.sendPush(envelope.chatId, notice, `${row.webhookEventId}:reauthorize`).catch(() => 'failed_other');
+      const text = 'ยังยืนยันข้อมูลหรือสิทธิ์ของคำตอบเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ';
+      const notice = [asLineSystemReply(this.lineReply.buildTextMessage(text), this.config.webBaseUrl)];
+      const result = await this.lineReply.sendPush(envelope.chatId, notice, `${row.webhookEventId}:reauthorize`).catch(() => 'failed_other');
+      if (result === 'failed_flex') await this.lineReply.sendPush(envelope.chatId, [this.lineReply.buildTextMessage(text)], `${row.webhookEventId}:reauthorize:text-fallback`).catch(() => 'failed_other');
       return 'skipped';
     }
 

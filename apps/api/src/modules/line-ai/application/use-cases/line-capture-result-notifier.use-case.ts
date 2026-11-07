@@ -24,7 +24,7 @@ import { loadEntitledFeatureKeys } from '../../../employee-access/application/en
 import { absoluteWebLink } from '../../../../common/http/web-link';
 import { hashMessagePreview } from '../../domain/logic/line-ai-classifier.logic';
 import { buildStaffCompletionQuickReply } from '../../domain/logic/line-staff-menu.logic';
-import { asCompleteLineCard, buildExpenseDraftReviewCard, buildLineAssistantTextCardMessage, inheritCompleteLineBusinessAnswerPresentation, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { asLineSystemReply, asCompleteLineCard, buildExpenseDraftReviewCard, buildLineAssistantTextCardMessage, inheritCompleteLineBusinessAnswerPresentation, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 import {
   CAPTURE_READ_FAILED_REPLY,
   CAPTURE_READ_PARTIAL_REPLY,
@@ -196,9 +196,9 @@ export class LineCaptureResultNotifierUseCase {
     if (handed) text = handed.text;
     text += await this.freeNotice(companyId, payload, access.freeExpenseDrafts);
 
-    const source = handed?.message ?? (readString(payload, 'status') === 'FAILED'
+    const source = asLineSystemReply(handed?.message ?? (readString(payload, 'status') === 'FAILED'
       ? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId)
-      : this.lineReply.buildTextMessage(text));
+      : this.lineReply.buildTextMessage(text)), this.config.webBaseUrl, companyId, { lines: ['เอกสารที่ส่งมา', 'ผลการอ่าน'] });
     const message = inheritCompleteLineBusinessAnswerPresentation(source, {
       ...source,
       quickReply: buildStaffCompletionQuickReply({
@@ -301,7 +301,7 @@ export class LineCaptureResultNotifierUseCase {
       await this.recordExpenseDelivery(companyId, expenseId, snapshot.jobs, result.kind === 'accepted');
       return result;
     }
-    const source = composed.message ?? this.lineReply.buildTextMessage(composed.text);
+    const source = asLineSystemReply(composed.message ?? this.lineReply.buildTextMessage(composed.text), this.config.webBaseUrl, companyId, { lines: ['เอกสารที่ส่งมา', 'ผลการอ่าน'] });
     const message = inheritCompleteLineBusinessAnswerPresentation(source, {
       ...source,
       quickReply: evidenceRecordIds.length ? source.quickReply : buildStaffCompletionQuickReply({
@@ -352,7 +352,7 @@ export class LineCaptureResultNotifierUseCase {
             requestId: preparation.context.requestId, previewHash: deliveryHash(confirmation), applied: false }] : [])] },
       businessResult: businessEffect === 'EMPTY_DRAFT_DELETED' ? null : { kind: 'EXPENSE_CAPTURE', operationKey: `capture:${expenseId}`, committedAt: record.createdAt.toISOString(), recordIds, resultingRevisions: proof.records.map(row => row.updatedAt.toISOString()) },
       answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text, required: true, sourceProofIds: ['capture'] }] },
-      preferredMessages: [confirmation ? null : message ?? null], ...(confirmation ? { controlMessage: message } : {}) });
+      preferredMessages: [confirmation ? null : asLineSystemReply(message ?? this.lineReply.buildTextMessage(text), this.config.webBaseUrl, preparation.owner.companyId, { lines: ['เอกสารที่ส่งมา', 'ผลการอ่าน'] })], ...(confirmation ? { controlMessage: message } : {}) });
     const saved = await this.plans.savePlan({ kind: 'CAPTURE_OUTBOX', id: preparation.event.id, token: preparation.event.claimToken }, plan, new Date(createdAt.getTime() + this.config.aiDataRetentionDays * 86400000));
     if (!saved) return { kind: 'retryable', code: 'CAPTURE_LEASE_CHANGED' };
     return this.replayCapturePlan({ ...preparation.event, headersJson: { lineDeliveryPlanVersion: 2, lineDeliveryPlanId: saved.id } });

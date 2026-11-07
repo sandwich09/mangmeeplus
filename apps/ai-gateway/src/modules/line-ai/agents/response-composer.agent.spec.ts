@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_CAPABILITY_REPLY_PREFIXES } from '@watchdog-bms/contracts';
-import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent, safeModelLineText, featureDisabledReply, isExplicitJokeAsk, isJokeRequest, isTeachingRequest } from './response-composer.agent';
+import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent, buildCapabilityHelp, safeModelLineText, featureDisabledReply, isExplicitJokeAsk, isJokeRequest, isTeachingRequest } from './response-composer.agent';
 import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
 import type { IModelProvider, ProviderOutput } from '../infrastructure/provider/provider.port';
 
@@ -26,7 +26,8 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
   it('describes capabilities without claiming that every feature is available', () => {
     const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH', { permissions: ['accounting.document.read', 'expense.read'] });
     assert.match(reply, /ยอดขาย/);
-    assert.match(reply, /อนุมัติใบเบิกหรือบันทึกจ่าย น้องจะเตรียมการ์ดให้กดยืนยันเองค่ะ/);
+    assert.equal(reply.split('\n').length, 3);
+    assert.match(buildCapabilityHelp('th', { permissions: ['accounting.document.read', 'expense.read'] }), /อนุมัติใบเบิกหรือบันทึกจ่าย น้องจะเตรียมการ์ดให้กดยืนยันเองค่ะ/);
   });
 
   // UAT 2026-08-18: the answer listed every module the product has, so a company that never
@@ -34,7 +35,8 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
   it('offers only the capabilities this member can actually reach', () => {
     const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH', { permissions: ['expense.read', 'expense.receipt.line_upload'] });
     assert.match(reply, /ค่าใช้จ่ายและใบเสร็จ/);
-    assert.match(reply, /ส่งรูปใบเสร็จ/);
+    assert.equal(reply.split('\n').length, 3);
+    assert.match(buildCapabilityHelp('th', { permissions: ['expense.read', 'expense.receipt.line_upload'] }), /ส่งรูปใบเสร็จ/);
     assert.doesNotMatch(reply, /ยอดขาย/);
     assert.doesNotMatch(reply, /ภาษี/);
     assert.doesNotMatch(reply, /ลูกค้า/);
@@ -762,7 +764,8 @@ describe('ResponseComposerAgent – capability help', () => {
   const EXPENSES_ONLY = ['expenses', 'expenses.list', 'expenses.upload', 'dashboard_notifications'];
   const STAFF = ['expense.read', 'expense.receipt.line_upload', 'dashboard.read'];
   const ask = (permissions: string[], entitledFeatureKeys?: string[], text = 'ทำอะไรได้บ้าง') =>
-    agent.composeCapabilityHelp(text, 'th', 'th-TH', { permissions, ...(entitledFeatureKeys && { entitledFeatureKeys }) });
+    isTeachingRequest(text) ? agent.composeCapabilityHelp(text, 'th', 'th-TH', { permissions, ...(entitledFeatureKeys && { entitledFeatureKeys }) })
+      : buildCapabilityHelp(text === 'what can you do' ? 'en' : 'th', { permissions, ...(entitledFeatureKeys && { entitledFeatureKeys }) });
 
   it('mirrors reachable counterparties, team, sold tax documents, and package purchases in both languages', () => {
     const cases: Array<[string[], string[], RegExp, RegExp]> = [
@@ -891,7 +894,7 @@ describe('ResponseComposerAgent – capability help', () => {
   });
 
   it('keeps the pre-entitlement full text when no caller context is supplied', () => {
-    const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH');
+    const reply = buildCapabilityHelp('th');
     assert.match(reply, /ยอดขายและเอกสารขาย/);
     assert.match(reply, /ส่งรูปใบเสร็จ/);
   });

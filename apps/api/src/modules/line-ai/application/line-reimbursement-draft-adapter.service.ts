@@ -138,8 +138,8 @@ export class LineReimbursementDraftAdapterService {
   ) {}
 
   async startUpdateFromText(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; evidence: LineAiInputEvidenceV2; text: string }): Promise<LineReimbursementDraftResult | null> {
-    const match = /^(แก้ยอด|แก้เหตุผล)\s*(ใบเบิก.+?)เป็น\s*(.+)$/u.exec(input.text.trim())
-      ?? /^(แก้(?:ไข)?|edit)\s*(ใบเบิก.+)$/iu.exec(input.text.trim());
+    const match = /^(แก้ยอด|แก้เหตุผล|แก้หมวด)(?:ของ)?\s*(ใบเบิก.+?)เป็น\s*(.+)$/u.exec(input.text.trim())
+      ?? /^(แก้(?:ไข|ยอด|เหตุผล|หมวด)?|edit)(?:ของ)?\s*(ใบเบิก.+)$/iu.exec(input.text.trim());
     if (!match || input.ctx.freeExpenseDrafts || input.evidence.parts.map(part => part.rawText).join('\n') !== input.text
       || lineWorkflowPickerText(input.text).question || !input.ctx.permissions.includes('ai.tool.invoke')) return null;
     const owner = this.actionOwner(input.owner, input.ownerEpoch);
@@ -379,6 +379,13 @@ export class LineReimbursementDraftAdapterService {
         if (fragment?.fields.reason) { proposal.fields.reason = fragment.fields.reason; return this.proposeCollected(input, active, { ...accepted, proposal }); }
       }
       const lines = accepted.options.choices.filter(choice => choice.kind === 'LINE');
+      const categoryName = /^(?:แก้|เปลี่ยน)หมวด(?:เป็น)?\s*(.+)$/u.exec(input.text)?.[1];
+      const categories = categoryName ? accepted.options.choices.filter(choice => choice.kind === 'CATEGORY' && choice.label === stripLineFieldParticles(categoryName)) : [];
+      if (lines.length === 1 && categories.length === 1) {
+        await this.currentChoice(input.ctx, categories[0]!, accepted.options);
+        const fragment: LineReimbursementDraftProposalV1 = { schemaVersion: 1, taskId: active.taskId, taskRevision: accepted.options.taskRevision, operation: 'UPDATE', targetRef: accepted.pickedTargetRef, fields: {}, lineChanges: [{ operation: 'SET', lineRef: lines[0]!.choiceId, values: { categoryChoiceId: categories[0]!.choiceId } }] };
+        return this.proposeCollected(input, active, { ...accepted, proposal: this.mergeProposal(proposal, fragment) });
+      }
       if (/แก้ยอด|เปลี่ยนยอด/u.test(input.text) && lines.length === 1) {
         const candidates = await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok'));
         const amounts = candidates?.amounts.filter(amount => {
@@ -1570,6 +1577,11 @@ export class LineReimbursementDraftAdapterService {
       if (current.linkedExpenseId && changesLinkedFacts && change.values.linkedExpenseChoiceId !== null) throw new Error('LINKED_SOURCE_REQUIRES_DETACH');
       const updated = await this.hydrateLine(ctx, options, change.values, current, index, missing);
       if (updated) lines[lineIndex] = { ...updated, lineNo: current.lineNo };
+      if (change.values.categoryChoiceId) {
+        const category = this.findChoice(options, change.values.categoryChoiceId, 'CATEGORY');
+        receipts = this.mergeReceipts(receipts, [{ fieldPath: `lineChanges.${index}.categoryChoiceId`, valueDigest: digest(category.raw['key']),
+          proof: { kind: 'USER_CHOICE', choiceId: category.choiceId, choiceRevision: category.revision }, validatedAt: new Date().toISOString() }]);
+      }
     }
     lines = lines.map((line, index) => ({ ...line, lineNo: index + 1 }));
     if (!lines.length) missing.push('lines');

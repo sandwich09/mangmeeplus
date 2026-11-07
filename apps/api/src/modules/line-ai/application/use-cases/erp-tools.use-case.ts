@@ -370,7 +370,7 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
   constructor(private readonly listExpenses: ListExpensesUseCase, private readonly prisma: PrismaService) {}
 
   async execute(ctx: ErpToolContext, input: {
-    periodKey?: string; fromDate?: string; toDate?: string; branchId?: string;
+    periodKey?: string; fromDate?: string; toDate?: string; olderThanMonths?: number; branchId?: string;
     categoryId?: string; vendorId?: string; categoryName?: string; vendorName?: string;
     documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus;
     limit?: number; cursor?: string;
@@ -379,6 +379,19 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     if (!ctx.permissions.includes('expense.read') && !ctx.permissions.includes('expense.review')
       && !ctx.permissions.includes('expense.read_related') && !ctx.permissions.includes('expense.read_own')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
+    }
+    if (input.olderThanMonths !== undefined) {
+      const cutoff = new Date(`${todayCivilDate()}T00:00:00Z`);
+      const availableMonths = (cutoff.getUTCFullYear() - 1) * 12 + cutoff.getUTCMonth();
+      if (!Number.isSafeInteger(input.olderThanMonths) || input.olderThanMonths < 1 || input.olderThanMonths > availableMonths) {
+        return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', sourceRefs: [], asOf };
+      }
+      const day = cutoff.getUTCDate();
+      cutoff.setUTCDate(1);
+      cutoff.setUTCMonth(cutoff.getUTCMonth() - input.olderThanMonths);
+      const lastDay = new Date(Date.UTC(cutoff.getUTCFullYear(), cutoff.getUTCMonth() + 1, 0)).getUTCDate();
+      cutoff.setUTCDate(Math.min(day, lastDay));
+      input = { ...input, periodKey: undefined, fromDate: '0001-01-01', toDate: cutoff.toISOString().slice(0, 10) };
     }
     const resolved = resolveBusinessReadPeriod(input);
     if (!resolved.ok) return periodError(this.toolName, asOf, resolved);

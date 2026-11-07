@@ -207,12 +207,25 @@ export function closesWithShopLine(text: string): boolean {
   return SHOP_LINE.test(text.trimEnd().split('\n').pop()!.trim());
 }
 
+export function shortLineKnowledgeText(text: string, limit = 350): string {
+  const lines = text.split('\n');
+  const content = lines.filter(line => line.trim());
+  const points = content.length <= 3 ? text.trim() : content.slice(0, 3).join('\n');
+  const graphemes = [...new Intl.Segmenter('th', { granularity: 'grapheme' }).segment(points)];
+  if (graphemes.length <= limit) return points;
+  const prefix = graphemes.slice(0, Math.max(0, limit - 1)).map(part => part.segment).join('');
+  const words = [...new Intl.Segmenter('th', { granularity: 'word' }).segment(prefix)];
+  return words.slice(0, -1).map(part => part.segment).join('').trimEnd() + '…';
+}
+
+
 /**
  * A general answer never keeps the composer's own shop line or a web address. A non-business one is also cut to two
  * short lines with no list, whatever was asked for, and then gets the shop line from code.
  * ponytail: the cut keeps the first two lines that are not a list's heading, within 300 characters; a model that
  * follows the two-line rule is never cut, so this only bounds the shape of one that did not.
  */
+
 export function shapeGeneralAnswer(text: string, nonBusiness: boolean, permissions: readonly string[], english: boolean): string {
   const lines = text.replace(WEB_ADDRESS, '').split('\n').map((line) => line.replace(/[ \t]{2,}/gu, ' ').trim());
   while (lines.length && !lines[lines.length - 1]) lines.pop();

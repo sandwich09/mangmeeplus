@@ -134,7 +134,7 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   const alternativeQuestion = /หรือ/u.test(text) && /(?:คะ|จ๊ะ|ครับ|คับ|ฮะ|งับ)[าะ]*$/u.test(questionTail)
     && stripLineFieldParticles(questionTail) !== questionTail && !/\d[\d,.]*\s*(?:บาท|บ\.?)?\s*หรือ\s*\d/u.test(text)
     && !/ก็ได้/u.test(text) && !/^(?:เงินสด|โอน|บัตร|เช็ค)/u.test(text);
-  const question = /สถานะ|ถึงไหนแล้ว|อยู่ขั้นไหน|ใครถืออยู่|ไหน\s*(?:คะ|ค่ะ|ครับ|จ้ะ|จ๊ะ|นะ|แล้ว)?[.!ๆ]*$/u.test(questionText) || alternativeQuestion || /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|ตรงไหน|ช่องไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
+  const question = /^(?:(?:ช่วย|ขอ)\s*)*(?:บอก|แสดง|ทราบ)|สถานะ|ถึงไหนแล้ว|อยู่ขั้นไหน|ใครถืออยู่|ไหน\s*(?:คะ|ค่ะ|ครับ|จ้ะ|จ๊ะ|นะ|แล้ว)?[.!ๆ]*$/u.test(questionText) || alternativeQuestion || /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|ตรงไหน|ช่องไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
     .test((ordinal !== undefined || documents.length || /^(?:(?:ช่วย|ขอ)\s*)?(?:อนุมัติ|ส่ง|ยกเลิก|ลบ|บันทึก|ทำ|สร้าง|จ่าย|เลือก|เอา|ใช้)/u.test(text)) ? questionText.replace(/(?:หน่อย)?ได้(?:ไหม|มั้ย|ปะ)/gu, '') : questionText);
   const rounds = [...text.matchAll(/รอบ\s*(?:ที่\s*)?(\d+|แรก|[ก-๙]+)/gu)].flatMap(match => {
     const number = match[1] === 'แรก' ? '1' : extractValueCandidates(match[1]!).amounts[0]?.value;
@@ -154,15 +154,21 @@ export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/cont
     .replace(/\breject\s*(?:claim|ใบเบิก)/giu, 'ไม่อนุมัติใบเบิก').replace(/\bsubmit\s*(?:claim|ใบเบิก)/giu, 'ส่งใบเบิกอนุมัติ')
     .replace(/\bpay\s*(?:claim|ใบเบิก)/giu, 'จ่ายคืนใบเบิก').replace(/\s+(?=ใบเบิก)/gu, '').trim().replace(/^(?:หมายถึง|ขอทำอย่างเดียวก่อน)[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ)\s*)+/u, '');
   // "อย่าลบร่าง", "ไม่ต้องยกเลิกใบเบิก": a negated verb never starts that job.
-  if (/(?:อย่า|ไม่ต้อง|ห้าม)\s*(?:ลบ|ยกเลิก|ยืนยัน|อนุมัติ|ส่ง|จ่าย|บันทึก|สร้าง|ทำ)/u.test(text)) return;
+  if (/(?:อย่า|ไม่ต้อง|ห้าม)\s*(?:เอาร่าง|(?:ขอ)?การ์ดลบ|ลบ|ยกเลิก|ยืนยัน|อนุมัติ|ให้ผ่าน|ผ่าน|ตีกลับ|ปัดตก|ส่ง|จ่าย|บันทึก|สร้าง|ทำ)/u.test(text)) return;
+  if (/ใบเบิก/u.test(text)) {
+    if (/ส่ง(?:ไป)?(?:ให้)?(?:ผู้อนุมัติ|หัวหน้า)|ส่ง.*ใบเบิก.*(?:ผู้อนุมัติ|หัวหน้า)/u.test(text)) return 'reimbursement_submit';
+    if (/(?<!ที่|ถูก|โดน)(?:ตีกลับ|ไม่ให้ผ่าน|ไม่ผ่าน|ปัดตก)(?!แล้ว)/u.test(text)) return 'reimbursement_reject';
+    if (/(?<!ที่|ถูก|รอ)ให้ผ่าน|(?<!ไม่|ที่|ถูก)ผ่านใบเบิก|ใบเบิก.*(?<!ไม่|ที่|ถูก|ให้)ผ่าน(?:เลย|ด้วย|$)/u.test(text)) return 'approvals';
+    if (/(?<!ที่|ถูก)บันทึกจ่าย(?!แล้ว)|record\s+payment|(?:โอนคืน|จ่ายคืน)แล้ว.*บันทึก/iu.test(text)) return 'reimbursement_pay';
+  }
   if (/ส่ง(?:ใบเบิก.*อนุมัติ|อนุมัติใบเบิก)|ใบเบิก.*(?<!ที่|ถูก)ส่ง(?:ให้|เข้า(?:คิว)?)?อนุมัติ/u.test(text)) return 'reimbursement_submit';
-  if (/ใบเตรียมจ่าย/u.test(text) && (/^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u.test(text) || lineVoucherWorkflowAction(text))) return 'payment_voucher';
+  if (/ใบเตรียมจ่าย/u.test(text) && (/^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u.test(text) || lineVoucherWorkflowAction(text) || /ใบเตรียมจ่ายที่มีบิล/u.test(text))) return 'payment_voucher';
   if (/^(?:ออก|ทำ)(?:(?:หนังสือรับรอง)?(?:หัก\s*ณ\s*ที่จ่าย)?\s*50\s*ทวิ|หนังสือรับรองหัก\s*ณ\s*ที่จ่าย)/u.test(text)) return 'wht_certificate';
   return ([
     ['reimbursement_reject', /ไม่อนุมัติใบเบิก|ใบเบิก.*(?<!ที่|ถูก|โดน)ไม่อนุมัติ(?!แล้ว)/u], ['approvals', /(?<!ไม่)อนุมัติใบเบิก|ใบเบิก.*(?<!ไม่|รอ|ที่|ผ่าน|ได้รับ|ถูก)อนุมัติ(?!แล้ว)/u],
     ['reimbursement_submit', /ส่งใบเบิก.*อนุมัติ/u], ['reimbursement_cancel', /(?:ยกเลิก|ถอน|ดึงกลับ)ใบเบิก|ใบเบิก.*(?<!ที่|ถูก|โดน)(?:ยกเลิก|ถอน|ดึงกลับ)(?!แล้ว|ไป)/u],
-    ['expense_confirm', /ยืนยัน(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_submit', /ส่ง(?:ตรวจ(?:บิล|รายจ่าย|ค่าใช้จ่าย)|(?:บิล|รายจ่าย|ค่าใช้จ่าย).*ให้ตรวจ)/u],
-    ['expense_delete', /ลบ(?:ร่าง|บิล|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_void', /^ยกเลิก(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u],
+    ['expense_confirm', /ยืนยัน(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_submit', /^(?:ส่งตรวจ|ให้คนตรวจ|ส่งให้ตรวจ)|ส่ง(?:ตรวจ(?:บิล|รายจ่าย|ค่าใช้จ่าย)|(?:บิล|รายจ่าย|ค่าใช้จ่าย).*ให้ตรวจ)/u],
+    ['expense_delete', /ลบ(?:ทิ้ง|ร่าง|บิล|รายจ่าย|ค่าใช้จ่าย)|เอาร่าง.*ออก|การ์ดลบ/u], ['expense_void', /^ยกเลิก(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u],
     ['reimbursement_pay', /^(?:บันทึกจ่ายคืน|จ่ายคืนใบเบิก|โอนคืน(?:ผู้เบิก|ใบเบิก))|ใบเบิก.*(?<!ที่|ถูก|ได้รับเงิน)(?:จ่ายคืน|โอนคืน)(?!แล้ว)/u], ['expense_pay', /^(?:บันทึกจ่าย|จ่ายเงิน)/u],
     ['payment_voucher', /^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u], ['substitute_receipt', /^(?:ทำ|สร้าง|เตรียม)?ใบรับรองแทนใบเสร็จ/u],
   ] as Array<[import('@watchdog-bms/contracts').LineWorkflowId, RegExp]>).find(([, pattern]) => pattern.test(text))?.[0];
@@ -211,7 +217,7 @@ export async function parseManualClaimLine(
         descriptions.push({ value, proof: { kind: 'USER_TEXT', refs: [{ partId: part.partId, rawSha256: part.rawSha256,
           startUtf16: offset, endUtf16: offset + value.length }] } });
         if (amount) amountDescriptions.push({ amount: amount.value, description: descriptions.at(-1)! });
-      } else if (amount && value === 'หรือ' && amountDescriptions.length) {
+      } else if (amount && (!value || value === 'หรือ') && amountDescriptions.length) {
         amountDescriptions.push({ amount: amount.value, description: amountDescriptions.at(-1)!.description });
       }
       start = Math.max(start, span.endUtf16);

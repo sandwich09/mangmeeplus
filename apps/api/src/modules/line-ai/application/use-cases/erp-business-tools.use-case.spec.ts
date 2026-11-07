@@ -993,10 +993,13 @@ describe('Round 7 B company.get_roles', () => {
     const ctx = { ...baseCtx, permissions: ['access.role.read', 'access.employee.read'], roles: ['OWNER'] };
     return { calls, role, tool, ctx, setEntitlements: (rows: any[]) => { entitlements = rows; } };
   }
-  it('fails closed before reading roles/people without permission; holders require employee.read', async () => {
+  it('R17 role holders use role-read permission while people retain employee-read permission', async () => {
     const h = harness();
     assert.equal((await h.tool.execute({ ...h.ctx, permissions: [] })).status, 'forbidden');
-    assert.equal((await h.tool.execute({ ...h.ctx, permissions: ['access.role.read'] }, { permissionKey: 'reimbursement.approve' })).status, 'forbidden');
+    const result = await h.tool.execute({ ...h.ctx, permissions: ['access.role.read'] }, { permissionKey: 'reimbursement.approve' });
+    assert.equal(result.status, 'ok');
+    assert.equal((result.data as any).message, 'หน้าที่ที่มีสิทธิ์ทำเรื่องนี้คือ ผู้จัดการค่ะ');
+    assert.equal((result.data as any).employees, undefined);
     assert.equal(h.calls.length, 0);
   });
   it('answers who can approve using company-bound active memberships and registry descriptions', async () => {

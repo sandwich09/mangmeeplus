@@ -32,6 +32,7 @@ const openLaunchGate = { assertLaunchRouteOpen: async () => undefined } as any;
 function replyAssertionText(message: unknown): string {
   if (!message || typeof message !== 'object') return '';
   const record = message as Record<string, unknown>;
+  if (record.type === 'flex' && typeof record.canonicalText === 'string') return record.canonicalText;
   if (record.type === 'text' && typeof record.text === 'string') return record.text;
 
   const strings: string[] = [];
@@ -4814,12 +4815,12 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
 
     const messages = sent(h);
     assert.equal(messages.length, 4);
-    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'text', 'flex']);
-    assert.deepEqual(messages.slice(0, 3).map((m) => m.text), texts, 'no requested information is truncated');
+    assert.deepEqual(messages.map((m) => m.type), ['flex', 'flex', 'flex', 'flex']);
+    assert.deepEqual(messages.slice(0, 3).map((m) => m.canonicalText), texts, 'no requested information is truncated');
     assert.deepEqual(messages.map((m) => m.quickReply !== undefined), [false, false, false, true]);
   });
 
-  it('with a short terminal keeps earlier parts lossless and turns the terminal into the Flex card', async () => {
+  it('with a short terminal keeps all parts lossless on cards and keeps the terminal completion menu', async () => {
     const texts = ['ส่วนที่ 1', 'ส่วนที่ 2', '🧾 สรุปร่างเรียบร้อยค่ะ'];
     const h = multipartHarness(texts);
 
@@ -4827,8 +4828,8 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
 
     const messages = sent(h);
     assert.equal(messages.length, 3);
-    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'flex']);
-    assert.deepEqual(messages.slice(0, 2).map((m) => m.text), ['ส่วนที่ 1', 'ส่วนที่ 2']);
+    assert.deepEqual(messages.map((m) => m.type), ['flex', 'flex', 'flex']);
+    assert.deepEqual(messages.slice(0, 2).map((m) => m.canonicalText), ['ส่วนที่ 1', 'ส่วนที่ 2']);
     assert.match(replyAssertionText(messages[2]), /สรุปร่างเรียบร้อยค่ะ/);
     assert.equal(messages[2].quickReply !== undefined, true);
   });
@@ -4839,8 +4840,8 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
     await h.useCase.execute(ANSWER);
 
     const messages = sent(h);
-    assert.deepEqual(messages.map((m) => m.type), ['text', 'flex']);
-    assert.equal(messages[0].text, LONG_TERMINAL, 'not one character of the canonical reply is dropped');
+    assert.deepEqual(messages.map((m) => m.type), ['flex', 'flex']);
+    assert.equal(messages[0].canonicalText, LONG_TERMINAL, 'not one character of the canonical reply is dropped');
     // The card is server-owned closing copy, never a 1200-character slice of the answer.
     const card = replyAssertionText(messages[1]);
     assert.doesNotMatch(card, /กกกก/, 'the long canonical text is never fed to the 1200-char Flex body');
@@ -4856,8 +4857,8 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
 
     const messages = sent(h);
     assert.equal(messages.length, 4);
-    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'text', 'flex']);
-    assert.deepEqual(messages.slice(0, 3).map((m) => m.text), texts);
+    assert.deepEqual(messages.map((m) => m.type), ['flex', 'flex', 'flex', 'flex']);
+    assert.deepEqual(messages.slice(0, 3).map((m) => m.canonicalText), texts);
     assert.match(replyAssertionText(messages[3]), /ข้อความเต็มอยู่ด้านบน/);
   });
 
@@ -4868,16 +4869,16 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
     await h.useCase.execute(ANSWER);
 
     const messages = sent(h);
-    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'flex'], 'a slot was free, so the card is appended');
-    assert.equal(messages[1].text, OVER_4800_TERMINAL, 'every one of the 4,900 code points is delivered');
-    assert.equal(Array.from(messages[1].text).length, 4_900, 'nothing is sliced at 1,200 or anywhere else');
+    assert.deepEqual(messages.map((m) => m.type), ['flex', 'flex', 'flex'], 'a slot was free, so the card is appended');
+    assert.equal(messages[1].canonicalText, OVER_4800_TERMINAL, 'every one of the 4,900 code points is delivered');
+    assert.equal(Array.from(messages[1].canonicalText).length, 4_900, 'nothing is sliced at 1,200 or anywhere else');
     const card = replyAssertionText(messages[2]);
     assert.doesNotMatch(card, /กกกก/, 'the card is closing copy, never a second shorter version of the answer');
     assert.match(card, /ข้อความเต็มอยู่ด้านบน/);
     assert.equal(messages[2].quickReply !== undefined, true);
   });
 
-  it('at the five-part cap prefers five lossless text messages over a card', async () => {
+  it('at the five-part cap prefers five lossless cards within the reply limit', async () => {
     const texts = ['1', '2', '3', '4', LONG_TERMINAL];
     const h = multipartHarness(texts);
 
@@ -4885,8 +4886,8 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
 
     const messages = sent(h);
     assert.equal(messages.length, 5, 'LINE accepts at most five messages in one reply');
-    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'text', 'text', 'text']);
-    assert.deepEqual(messages.map((m) => m.text), texts, 'no truncation and no dropped part to make room for a card');
+    assert.deepEqual(messages.map((m) => m.type), ['flex', 'flex', 'flex', 'flex', 'flex']);
+    assert.deepEqual(messages.map((m) => m.canonicalText), texts, 'no truncation and no dropped part to make room for a card');
     assert.equal(messages[4].quickReply !== undefined, true, 'the completion menu still rides the terminal message');
   });
 

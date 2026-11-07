@@ -378,3 +378,16 @@ it('E44 e-WHT definitions precede withholding and form definitions on every pack
   }
   assert.equal(documentExplanationTopic('บันทึกจ่ายผ่าน e-WHT ให้รายการนี้'), undefined);
 });
+
+it('R17 VAT filing-date knowledge stays separate from unsold shop VAT records', () => {
+  for (const month of ['เดือนนี้', 'เดือนที่แล้ว']) {
+    assert.equal(scopePolicyOverride(`ภ.พ.30 ${month}ยื่นวันไหน`, 'help', [], ['expenses'], 'th'), undefined);
+    assert.equal(scopePolicyOverride(`ดูรายการ ภ.พ.30 ${month}`, 'read', [], ['expenses'], 'th')?.text,
+      'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
+  }
+});
+
+it('R17 controller: a shop that bought VAT or bank reconciliation is not refused', () => {
+  assert.equal(scopePolicyOverride('ดูรายการ ภ.พ.30 เดือนนี้', 'read', [], ['expenses', 'thai_tax'], 'th')?.reasonCode === 'PACKAGE_FEATURE_NOT_ENABLED', false);
+  assert.equal(scopePolicyOverride('ช่วยกระทบยอดธนาคารหน่อย', 'read', [], ['expenses', 'bank_reconciliation'], 'th')?.reasonCode === 'PACKAGE_FEATURE_NOT_ENABLED', false);
+});

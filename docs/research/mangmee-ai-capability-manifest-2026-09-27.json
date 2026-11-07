@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "696b9a757ae1764291ed083127c6041134187365",
-  "checkoutBranch": "land/expense-goal-20261104",
+  "sourceRevision": "ef5ce25a1d1d4588f94acd983098b78c3b8144e5",
+  "checkoutBranch": null,
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -13,7 +13,7 @@
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.ts",
-      "sha256": "24633d1525ac21539ac68943a4265f5d9b0c07fbffdd555e605b4f79ca204cc2"
+      "sha256": "02a55c61393c6b84d2d809bce37ad7183523f850d0848613b06e001488ae6df2"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-product-help.ts",
@@ -49,11 +49,11 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "e2a950207f6b8078f20b50ca4fac3226622d4c186d01bbecf7cebb9c596fec22"
+      "sha256": "3f8545952365a70573b0f2b710757693a260942a5e2894ffae8185cac87a157e"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-message-buffer.service.ts",
-      "sha256": "bf16ab72a58ecbd8b2189f95d768c606f35da2f512a8636bd33612b4499736ed"
+      "sha256": "a48efd74cd4449ea4bde100409515c7bfd55aa1aab5135d2bbcb28fab27c563a"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-quoted-message.service.ts",
@@ -61,7 +61,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
-      "sha256": "beb3481d824791c3281c41c19623c0b64956e38543e6ce314e77e6731016d271"
+      "sha256": "600880e916df64d73c42eecffaf2d5fefeee8a5084e068041f29f178c2a339b9"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-reimbursement-draft.service.ts",
@@ -73,11 +73,11 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-voucher-action.service.ts",
-      "sha256": "b2d09f65caf6169ed7112e9a41c4bf946be19a084f106011ad6267af6f834635"
+      "sha256": "fb6a5dec77dcecfae8995a5f4e68d3e4ada2bd52b294fe5ba3dd8a24eaa29e6f"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
-      "sha256": "581fa93507a20ed4b6fa53802acf1be8edcb92d88538a71f830b7b27cdfb17c4"
+      "sha256": "22d1a4e061ed891d92477706afa2449bb7e586c86a2d3630d9b14e143497497a"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-banking-tools.use-case.ts",
@@ -89,7 +89,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
-      "sha256": "ec9ab335f11639348afff1cb172e6694230ef0907bb9f0ae1cdf3d2462e8fe1d"
+      "sha256": "238036128a7d56ce76dd8b1c4ef6e4198bb7defdb8919f9792dbcdd48e4c5b29"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-crm-operational-tools.use-case.ts",
@@ -137,11 +137,11 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-team-tools.use-case.ts",
-      "sha256": "9ab7663972e0850139456b2095e72e7b207393361462e0c079ec8a810e25c054"
+      "sha256": "0078ece3107661885424580d071b421e601d5097bb7151e6f2727e1e1fce368f"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts",
-      "sha256": "d1a1513519d1f165ae0190a1694277435c0add7999dbfb56cb46c62eb91affda"
+      "sha256": "688037574e0cdb7bb18a7484dd8ebe09310e2e8b655f92040afc167796fa1c96"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-workflow-tools.use-case.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "8b7a26d81234a54447521eb03580540c4733cc02e15b8c7768a0fb4622e53f23"
+      "sha256": "fba9b92d25f5d546a9dda82d0436a4aab786122df052a9bcc8b213c524aded1e"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -241,7 +241,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "1d2e61d2e88e995f800278ccbd0c0cff89df49a4c620415f5afa899438a49c05"
+      "sha256": "1ed288cab8c5337ef7c4ec30c0f33090ca0b50bce4fabff98f493fd2afa7e0a5"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -1464,6 +1464,7 @@
           "documentStatus",
           "fromDate",
           "limit",
+          "olderThanMonths",
           "paymentStatus",
           "periodKey",
           "toDate",
@@ -1478,6 +1479,7 @@
           "documentStatus",
           "fromDate",
           "limit",
+          "olderThanMonths",
           "paymentStatus",
           "periodKey",
           "toDate",
@@ -6255,8 +6257,20 @@
       "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
       "supportedFields": {
         "required": [],
-        "optional": [],
-        "allowed": []
+        "optional": [
+          "categoryName",
+          "paymentStatus",
+          "requesterName",
+          "round",
+          "status"
+        ],
+        "allowed": [
+          "categoryName",
+          "paymentStatus",
+          "requesterName",
+          "round",
+          "status"
+        ]
       },
       "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
       "authorization": {
@@ -6335,12 +6349,22 @@
       "apiIntakeRef": null,
       "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
       "supportedFields": {
-        "required": [
-          "reimbursementId"
+        "required": [],
+        "optional": [
+          "categoryName",
+          "paymentStatus",
+          "reimbursementId",
+          "requesterName",
+          "round",
+          "status"
         ],
-        "optional": [],
         "allowed": [
-          "reimbursementId"
+          "categoryName",
+          "paymentStatus",
+          "reimbursementId",
+          "requesterName",
+          "round",
+          "status"
         ]
       },
       "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
@@ -6678,11 +6702,13 @@
         "required": [],
         "optional": [
           "branchId",
-          "q"
+          "q",
+          "status"
         ],
         "allowed": [
           "branchId",
-          "q"
+          "q",
+          "status"
         ]
       },
       "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
@@ -10259,6 +10285,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-07T16:47:26.560Z",
-  "manifestDigest": "59f0f849be116e9a5ecc2533036ac355751f07dd31b63a95a2dfd928853e22c5"
+  "generatedAt": "2026-11-07T23:26:47.823Z",
+  "manifestDigest": "263acbbed3809371edf3d920a63693aa6845570e4966d69b49d8e6cee81a475f"
 }

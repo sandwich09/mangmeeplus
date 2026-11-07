@@ -8,7 +8,7 @@ import { scrubRecordText, scrubRecordIdentifier, AI_BUDGET_REFUSAL_CODES, mayOff
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import type { ExpenseActionPreview } from '../../application/line-expense-action.service';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
-import { lineSystemCardAvailable, type LineSystemCard, type LineSystemCardIcon, type LineSystemCardAction, type LineSystemCardRow } from './line-system-card.logic';
+import { lineSystemCardTexts, lineSystemCardAvailable, type LineSystemCard, type LineSystemCardIcon, type LineSystemCardAction, type LineSystemCardRow } from './line-system-card.logic';
 import { drawLineSystemCard, LINE_FLEX_ACTION_LABEL_MAX, LINE_SYSTEM_CARD_BUTTONS_MAX, lineSystemCardPillHolds } from './line-system-card-limits.logic';
 import type { ReceiptProgress } from './line-receipt-status.logic';
 import {
@@ -481,6 +481,15 @@ export function buildLineSystemTextCardMessage(input: {
       : buttons.length === 1 ? { button: buttons[0]! } : buttons.length ? { buttons } : {}),
   }, input.webBaseUrl);
   return contents && asCompleteLineCard({ type: 'flex', altText: preview(body, 400), canonicalText: input.text, contents });
+}
+
+/** Apply the locked presentation before a producer saves its delivery payload. */
+export function asLineSystemReply(message: LineReplyMessage, webBaseUrl: string | undefined, companyId = '',
+  header: LineSystemCard['header'] = { lines: lineReplyLanguage(message.type === 'text' ? message.text : '') === 'en' ? ['Nong Mangmee', 'Notice'] : ['น้องมั่งมี', 'แจ้งให้ทราบ'] }): LineReplyMessage {
+  if (message.type !== 'text') return message;
+  const card = buildLineSystemTextCardMessage({ text: message.text, header, webBaseUrl, companyId });
+  if (card?.type !== 'flex' || lineSystemCardTexts(card.contents).some(line => /https?:\/\//iu.test(line))) return message;
+  return inheritCompleteLineBusinessAnswerPresentation(card, { ...card, ...(message.quickReply ? { quickReply: message.quickReply } : {}) });
 }
 
 /**
@@ -1297,7 +1306,7 @@ export function buildExpenseWorkflowPicker(result: LineWorkflowRecordTargets, wo
     : sellerName ? `ไม่พบผู้ขายชื่อ ${sellerName} ในรายชื่อคู่ค้าค่ะ` : 'ไม่พบผู้ขายชื่อนี้ในรายชื่อคู่ค้าค่ะ';
   const text = !result.exhaustive ? [result.total > 300 ? `${LINE_CLAIM_PICKER_COPY.incomplete} พิมพ์เลขที่เอกสารหรือยอดเพื่อค้นให้แคบลงค่ะ` : 'ยังค้นรายการไม่ครบค่ะ กดค้นในเว็บ',
     ...(sellerText && result.total > 1 ? [sellerText] : [])].join('\n')
-    : voucherAction ? `เลือกใบเตรียมจ่ายที่จะ${voucherAction === 'VOUCHER_SUBMIT' ? 'ส่งอนุมัติ' : voucherAction === 'VOUCHER_APPROVE' ? 'อนุมัติ' : 'บันทึกจ่าย'}ค่ะ` : sellerText ?? (result.targets.length ? result.latestOnly ? 'เลือกจากรายการล่าสุดได้เลยค่ะ' : LINE_EXPENSE_PICKER_COPY.choose[workflow]
+    : voucherAction ? result.targets.length ? `เลือกใบเตรียมจ่ายที่จะ${voucherAction === 'VOUCHER_SUBMIT' ? 'ส่งอนุมัติ' : voucherAction === 'VOUCHER_APPROVE' ? 'อนุมัติ' : 'บันทึกจ่าย'}ค่ะ` : `ไม่พบใบเตรียมจ่ายที่${voucherAction === 'VOUCHER_SUBMIT' ? 'ส่งอนุมัติ' : voucherAction === 'VOUCHER_APPROVE' ? 'อนุมัติ' : 'บันทึกจ่าย'}ได้ เปิดรายการในเว็บ` : sellerText ?? (result.targets.length ? result.latestOnly ? 'เลือกจากรายการล่าสุดได้เลยค่ะ' : LINE_EXPENSE_PICKER_COPY.choose[workflow]
       : workflow === 'wht_certificate' && result.latestPaidWithoutWithholding ? 'ใบเตรียมจ่ายที่จ่ายล่าสุดไม่ได้หักภาษี ณ ที่จ่าย จึงไม่มี 50 ทวิให้ออกค่ะ' : LINE_EXPENSE_PICKER_COPY.empty[workflow]);
   const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map((target, index) => ({
     label: `${scrubRecordText(target.label, 60) || `รายการ ${index + 1}`} · ${formatClaimMoney(target.amount, target.currency, 'th')}`,

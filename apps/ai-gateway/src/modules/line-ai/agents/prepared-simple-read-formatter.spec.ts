@@ -13,6 +13,30 @@ const REIMBURSEMENT_APPROVALS = 'reimbursement.list_pending_approvals::list';
 const REIMBURSEMENT_SUMMARY = 'reimbursement.get_summary::single_metric';
 // Item 3 (spec §3 row 8): the two ordinal-follow-up detail families.
 const EXPENSE_DETAIL = 'expense.get_detail::single_metric';
+
+it('R17 filtered claims render exact tool counts and at most five rows', () => {
+  const output = readOutput('reimbursement.get_summary', { matchedCount: 7, matchedItems: Array.from({ length: 5 }, (_, i) => ({
+    id: `r${i}`, requestNo: `เบิก-${i + 1}`, title: 'ค่าเดินทาง', requesterDisplayName: 'สมศรี', amount: '100.00', status: 'DRAFT' })) },
+  { module: 'reimbursements', entityType: 'reimbursement_summary', label: 'รายการใบเบิก', permissionChecked: true, webPath: '/companies/shop/reimbursements' });
+  const result = formatPreparedSimpleRead('reimbursement.get_summary::single_metric', output, { language: 'th', locale: 'th-TH' });
+  assert.equal(result.kind, 'answer');
+  if (result.kind !== 'answer') return;
+  assert.equal(result.replyText.split('\n')[0], 'พบใบเบิก 7 ใบค่ะ');
+  assert.equal(result.layout?.rows.length, 5); assert.equal(result.layout?.linkLabel, 'ดูทั้งหมดในเว็บ');
+});
+
+it('R17 one-claim approval and payment facts come from that claim records', () => {
+  const output = readOutput('reimbursement.get_detail', { requestNo: 'เบิก-4', incurredDate: '2026-11-01', amount: '100', status: 'PAID', paymentStatus: 'PAID',
+    approvalSteps: [{ status: 'APPROVED', approverName: 'สมใจ', actedAt: '2026-11-05T03:00:00Z' }],
+    payments: [{ status: 'RECORDED', paidAt: '2026-11-06T03:00:00Z' }] },
+  { module: 'reimbursements', entityType: 'reimbursement', label: 'ใบเบิก', permissionChecked: true });
+  const result = formatPreparedSimpleRead('reimbursement.get_detail::single_metric', output,
+    { language: 'th', locale: 'th-TH', messageText: 'ใบเบิกรอบ 4 ใครอนุมัติ อนุมัติเมื่อไร จ่ายเมื่อไร' });
+  assert.equal(result.kind, 'answer');
+  if (result.kind !== 'answer') return;
+  assert.equal(result.replyText, 'ผู้อนุมัติ: สมใจ\nวันที่อนุมัติ: 5 พฤศจิกายน 2569\nการจ่าย: จ่ายแล้ว\nวันที่จ่าย: 6 พฤศจิกายน 2569');
+  assert.ok(result.layout!.rows.length <= 5);
+});
 const REIMBURSEMENT_DETAIL = 'reimbursement.get_detail::single_metric';
 const ACCOUNTING = 'accounting.get_summary::list';
 const DAILY = 'expense.get_daily_closing::single_metric';
@@ -38,7 +62,7 @@ function salesOutput(data: Record<string, unknown>): SpecialistOutput {
 describe('prepared-simple-read compiled formatter registry', () => {
   it('exposes exactly the compiled families (sales, F1 expense, R-L4 list/breakdown/reimbursement, F2 accounting, F3 daily, F4–F7 R5 — compiled ≠ active)', () => {
     assert.deepEqual([...COMPILED_PREPARED_FAMILY_KEYS],
-      [SALES, EXPENSE, EXPENSE_LIST, EXPENSE_DETAIL, BREAKDOWN, REIMBURSEMENT_APPROVALS, REIMBURSEMENT_SUMMARY, REIMBURSEMENT_DETAIL,
+      ['company.get_roles::list', 'voucher.list_recent::list', 'billing.get_package_catalog::list', SALES, EXPENSE, EXPENSE_LIST, EXPENSE_DETAIL, BREAKDOWN, REIMBURSEMENT_APPROVALS, REIMBURSEMENT_SUMMARY, REIMBURSEMENT_DETAIL,
         ACCOUNTING, DAILY, VAT, LOW_STOCK, 'counterparty.search::list', AP, AP_LIST, CRM, CRM_LIST]);
     // Compiling a family does NOT enable it: the operator allowlist is empty by default, so the lane
     // stays dormant until each family passes its own blind pairwise eval (plan Phase 5 gate).
@@ -1235,15 +1259,15 @@ describe('R-L4 F8 expense.list_recent::list — ค่าใช้จ่าย�
     }
   });
 
-  it('caps the numbered list at 10 and states how many more exist (R-A3)', () => {
+  it('caps the numbered list at 5 and states how many more exist (R-A3)', () => {
     const items = Array.from({ length: 12 }, (_, i) => expenseListItem({
       id: `e${i}`, expenseNumber: `EXP-${i}`, expenseDate: `2026-08-${String(i + 1).padStart(2, '0')}T10:00:00.000Z`,
     }));
     const r = formatPreparedSimpleRead(EXPENSE_LIST, expenseOutput(expenseListData({ total: 12, items })), TH);
     assert.equal(r.kind, 'answer');
     if (r.kind !== 'answer') return;
-    assert.match(r.replyText, /\nแสดง 10 จาก 12 รายการ/);
-    assert.doesNotMatch(r.replyText, /\n11\. /);
+    assert.match(r.replyText, /\nแสดง 5 จาก 12 รายการ/);
+    assert.doesNotMatch(r.replyText, /\n6\. /);
   });
 
   // Item 2 (eval: "ขอดูรายการ 5 อันล่าสุดเดือนที่แล้วครับ" — an explicit limit=5 against a 14-record
@@ -1426,13 +1450,13 @@ describe('R-L4 F9 expense.get_breakdown::list — แยกค่าใช้จ
     if (overridden.kind === 'answer') assert.match(overridden.replyText, /^ค่าใช้จ่ายแยกตามสาขา/);
   });
 
-  it('folds groups beyond the top 8 into one "อื่นๆ" row with an exact summed amount and count (R-A2)', () => {
+  it('R17 folds groups beyond the top four into one "อื่นๆ" row with an exact summed amount and count (R-A2)', () => {
     const many = Array.from({ length: 10 }, (_, i) => ({ categoryId: `c${i}`, category: `หมวด${i}`, currency: 'THB', count: 1, totalAmount: '100.00' }));
     const r = formatPreparedSimpleRead(BREAKDOWN, breakdownOutput(breakdownData({ totalCount: 10, totalAmount: '1000.00', byCategory: many })), TH);
     assert.equal(r.kind, 'answer');
     if (r.kind !== 'answer') return;
-    assert.match(r.replyText, /\n• อื่นๆ \(2\): 200\.00 บาท \(2 รายการ\)/);
-    assert.doesNotMatch(r.replyText, /หมวด8|หมวด9/);
+    assert.match(r.replyText, /\n• อื่นๆ \(6\): 600\.00 บาท \(6 รายการ\)/);
+    assert.doesNotMatch(r.replyText, /หมวด4|หมวด5|หมวด6|หมวด7|หมวด8|หมวด9/);
   });
 
   it('answers in English with the same grounded numbers', () => {
@@ -2201,15 +2225,15 @@ describe('design lock context 1 — the expense list and the grouped summary as 
       queryApplied: { statusBasis: 'CONFIRMED', accessScope: 'related', filters: { vendorName: 'ร้าน 1' } } };
     const result = formatPreparedSimpleRead(EXPENSE_LIST, listed(data), { ...TH, ...asked });
     const layout = layoutOf(EXPENSE_LIST, listed(data), asked)!;
-    assert.equal(layout.rows.length, 15, 'the total, the count, ten records, the filter, the period and the day: inside what a card holds');
+    assert.equal(layout.rows.length, 10, 'the total, the count, five records, the filter, the period and the day: inside what a card holds');
     assert.deepEqual(layout.rows[2], { label: '1 ต.ค.', value: 'ร้าน 1 · 100.50 บาท · ร่าง' });
-    assert.deepEqual(layout.rows[11], { label: '5 ต.ค.', value: 'ร้าน 10 · 1,000.50 บาท · ยืนยันแล้ว' });
+    assert.deepEqual(layout.rows[6], { label: '5 ต.ค.', value: 'ร้าน 5 · 500.50 บาท · ร่าง' });
     assert.deepEqual(row(layout, 'ตัวกรอง'), { label: 'ตัวกรอง', value: 'เฉพาะที่ยืนยันแล้ว, เฉพาะร้านร้าน 1' });
-    assert.deepEqual(layout.notes, ['แสดง 10 จาก 30 รายการ', 'แสดงเฉพาะรายการที่เกี่ยวข้องกับคุณ']);
+    assert.deepEqual(layout.notes, ['แสดง 5 จาก 30 รายการ', 'แสดงเฉพาะรายการที่เกี่ยวข้องกับคุณ']);
     // Every row's words are in the sentence: nothing on the card that the canonical answer does not say.
     assert.ok(result.kind === 'answer');
-    for (const entry of layout.rows.slice(2, 12)) for (const part of entry.value.split(' · ')) assert.ok(result.replyText.includes(part), part);
-    assert.ok(result.replyText.includes('แสดง 10 จาก 30 รายการ') && result.replyText.includes('ตัวกรอง: เฉพาะที่ยืนยันแล้ว, เฉพาะร้านร้าน 1'));
+    for (const entry of layout.rows.slice(2, 7)) for (const part of entry.value.split(' · ')) assert.ok(result.replyText.includes(part), part);
+    assert.ok(result.replyText.includes('แสดง 5 จาก 30 รายการ') && result.replyText.includes('ตัวกรอง: เฉพาะที่ยืนยันแล้ว, เฉพาะร้านร้าน 1'));
   });
 
   it('the grouped summary the owner got: the total, the count, what it is grouped by, each group with its amount and no share', () => {
@@ -2237,13 +2261,13 @@ describe('design lock context 1 — the expense list and the grouped summary as 
     const data = { totalCount: 66, totalAmount: '6600.00', byVendor: many, queryApplied: { statusBasis: 'exclude_rejected_voided', filters: { groupBy: 'vendor', paymentStatus: 'UNPAID' } } };
     const result = formatPreparedSimpleRead(BREAKDOWN, grouped(data), { ...TH, ...asked });
     const layout = layoutOf(BREAKDOWN, grouped(data), asked)!;
-    assert.equal(layout.rows.length, 16, 'the most a card holds: three on top, eight groups, the rest, the filter, the period, the source and the day');
+    assert.equal(layout.rows.length, 12, 'R17 keeps four groups and the remainder within five group rows');
     assert.deepEqual(layout.rows.slice(2, 5), [{ label: 'แยกตาม', value: 'ร้าน' },
       { label: 'ร้าน 1', value: '1,100.00 บาท' }, { label: 'ร้าน 2', value: '1,000.00 บาท' }]);
-    assert.deepEqual(layout.rows[11], { label: 'อื่นๆ (3)', value: '600.00 บาท' });
+    assert.deepEqual(layout.rows[7], { label: 'อื่นๆ (7)', value: '2,800.00 บาท' });
     assert.deepEqual(row(layout, 'ตัวกรอง'), { label: 'ตัวกรอง', value: 'เฉพาะที่ยังไม่ชำระ' });
     assert.ok(result.kind === 'answer');
-    for (const entry of layout.rows.slice(3, 12)) assert.ok(result.replyText.includes(`• ${entry.label}: ${entry.value}`), entry.label);
+    for (const entry of layout.rows.slice(3, 8)) assert.ok(result.replyText.includes(`• ${entry.label}: ${entry.value}`), entry.label);
     assert.deepEqual(row(layoutOf(BREAKDOWN, grouped({ byBranch: [{ branchId: 'b1', branch: 'สาขาลาดพร้าว', currency: 'THB', count: 1, totalAmount: '0.00' }] }),
       { ...asked, proposedInput: { ...asked.proposedInput, groupBy: 'branch' } }), 'แยกตาม'), { label: 'แยกตาม', value: 'สาขา' });
   });

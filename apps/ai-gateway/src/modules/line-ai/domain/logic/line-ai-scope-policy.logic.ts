@@ -407,6 +407,16 @@ export function scopePolicyOverride(
   const productAvailability = /^(?:(?:ระบบนี้|มั่งมี|Mangmee\s*Plus)\s*)?(?:ทำ|มี|ใช้|ดู|รองรับ).*(?:ได้|ไหม|มั้ย|ป่าว|เปล่า)\s*(?:คะ|ค่ะ|ครับ)?[?？]*$|\bcan\s+(?:you|we|this)\s+(?:do|use|create|issue|run|check|track|manage)\b|\bdoes\s+.*support/iu.test(text)
     && !/คืออะไร|หมายถึง|ต่างกัน|อธิบาย|\bexplain\b|\bwhat\s+(?:is|are)\b|\bdifference\b/iu.test(text);
   if (kind === 'general' && !productAvailability || kind !== 'write' && documentExplanationTopic(text)) return undefined;
+  if (/ภ\.?\s*พ\.?\s*30|pp\s*30/iu.test(text) && !moduleFeatureEnabled('thai_tax', entitledFeatureKeys)) {
+    const filingDateQuestion = kind !== 'write' && /ยื่น.*(?:วัน|เมื่อ)|(?:วัน|เมื่อ).*ยื่น|กำหนด.*ยื่น/u.test(text)
+      && !/ยอด|รายการ|บันทึก|ของร้าน|ของบริษัท/u.test(text);
+    if (filingDateQuestion) return undefined;
+    return { reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED',
+      text: unsoldModuleReplyText({ featureKey: 'thai_tax', topicLabelTh: 'รายการ ภ.พ.30', topicLabelEn: 'VAT return records' }, language, offers),
+      webPage: permissionAlternative(permissions, language).page };
+  }
+  if (/กระทบยอด|bank\s+reconciliation/iu.test(text) && !moduleFeatureEnabled('bank_reconciliation', entitledFeatureKeys)) return { reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED',
+    text: unsoldModuleReplyText({ featureKey: 'bank_reconciliation', topicLabelTh: 'กระทบยอดธนาคาร', topicLabelEn: 'Bank reconciliation' }, language, offers), webPage: permissionAlternative(permissions, language).page };
   const whtKeys = /50\s*ทวิ|50\s*bis/iu.test(text) ? ['wht_50bis']
     : /ภ\.?\s*ง\.?\s*ด\.?\s*(?:53|3|สาม)|pnd\s*(?:53|3)/iu.test(text) ? ['wht_pnd53']
       : /หัก\s*ณ\s*ที่จ่าย|withholding|\bwht\b/iu.test(text) || toolHint?.startsWith('wht.') ? ['wht_50bis', 'wht_pnd53'] : undefined;

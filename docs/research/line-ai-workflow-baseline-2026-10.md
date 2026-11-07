@@ -383,3 +383,89 @@ Blind set v6 is ready: 219 conversations, 644 turns, overlap 0 with every earlie
   - **Put-offs.** Common lead-ins ("เอาไว้ก่อน", "พัก…ไว้") count.
   - **Voucher matching.** Voucher lines also match by the seller's bill number.
 - **Next gate.** Blind set v7 has 202 conversations and 581 turns. No sentence repeats in more than two conversations, and presses are used only on postback buttons.
+
+## Blind sets v7 and v8, rounds 16 and 17, measured 2026-11-07 and 2026-11-08
+**Blind set v7** ran on main `e4d2216d6` (round 15) and cost 231.12 THB. MA3/MA6 is **not met**.
+
+| Measure | Result |
+|---|---|
+| W3 workflow | 101/122 (82.8%) after the voucher-pay scoring fix |
+| Advisor tasks | 126/142 (88.7%) |
+| W6 real wrong writes | 0. The 8 wrongApplied effects were voucher-pay rows the oracle did not link to the gold voucher. |
+
+- **Reply audit.** A controller audit mapped each generic reply to its gateway reason:
+  - "ยังเตรียมข้อมูล… ลองส่งข้อความเดิม" (12) was `TOOL_INPUT_NOT_AUTHORIZED`: a read filter the tools did not support;
+  - "ระบบตอบช้า" (5) was `PROVIDER_THROTTLED` after two retries;
+  - "ยังดึงข้อมูลส่วนนี้ไม่ได้" (3) was `ANSWER_NUMBER_NOT_GROUNDED`;
+  - "ยังไม่มีคู่มือ" (3) was `SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE`.
+
+  Beyond those, 70 replies were plain text outside the locked card, 45 were over 400 visible characters, and 91 turns took over 8 s.
+- **Round 16** (develop `ef5ce25a1`) fixed several causes:
+  - big-shop claims named by category and round;
+  - claim verbs after the claim;
+  - status questions as reads;
+  - named substitute receipts and 50 ทวิ by text;
+  - no false "send it again" on unsupported reads;
+  - out-of-package data asks;
+  - one throttle retry;
+  - the oracle's voucher-pay link.
+
+**Blind set v8** ran on main `165be3a66` (round 16) and cost 179.93 THB. It covered 200 conversations, 553 scored turns and 328 tasks. MA3/MA6 is **not met**.
+
+| Measure | Result |
+|---|---|
+| W3 workflow | 126/151 (83.4%) |
+| Advisor tasks | 170/177 (96.0%) |
+| W6 wrongApplied | 0 |
+| W9 / W14 / W15 | 0 / 0 / 0 |
+| Throttled turns | 0 |
+| W1 | 44/75. Rule-routed turns counted as misses: 16 workflow starts and 8 reads or how-tos. Round 17 fixes the scorer. |
+
+- **Reply time:**
+
+  | Tier | p50 | p95 | Max |
+  |---|---|---|---|
+  | T0 | 1.2 s | 1.4 s | |
+  | T1 | 2.8 s | 3.0 s | |
+  | T2 | 5.7 s | 11.6 s | 15.6 s (2 turns over 15 s) |
+
+- **Reply audit.**
+  - 31 generic or confusing replies.
+  - 62 plain-text replies.
+  - 42 replies over 400 visible characters; substitute-receipt cards ran up to about 1,070.
+  - 48 turns over 8 s.
+- **Causes, by failed workflow tasks:**
+
+  | Cause | Tasks |
+  |---|---|
+  | Voucher chains: a typed submit naming status and amount was refused as changed, and a voucher named by a line's expense number got an empty picker. Each failed start blocked the rest of its chain. | 9 |
+  | Claim verbs: "ส่งให้ผู้อนุมัติ" was read as approve; "ผ่าน", "ตีกลับ", "ไม่ผ่าน" and "record payment" were not known. A named claim with no known verb dead-ended with only a menu button. | 7 |
+  | Expense delete wording went to the low-confidence confirm card; "ใบนี้" lost the previous turn's bill; "ส่งตรวจ" was not known. | 4 |
+  | A card pressed from another company recorded `REFUSED` with kind `unknown`. | 2 |
+  | Two amounts for one claim item: an amount typed at the receipt question was taken as "no receipt". | 1 |
+  | Duplicate vendor names on a voucher (gold expects a refusal; disputed). | 2 |
+
+- **Advisor causes:**
+  - reads by requester and category, and one claim's facts by round, which the tools refused;
+  - "ช่วยบอก…" opened an approval confirm card;
+  - customer invoices, ภ.พ.30 records and bank reconciliation were not refused with the approved package reply. ภ.พ.30 was answered from the 50 ทวิ summary;
+  - "who can do this" got the source-changed sentence.
+- **Gold artifacts.**
+  - The pay method differed across three conversations on the same voucher.
+  - One gold reason kept a politeness particle.
+  - A put-off was golded on a turn with no open task.
+- **Round 17** (three lanes, this commit):
+  - **Reads** take requester, category, round, status and approved-unpaid filters, voucher status, and "older than N months". One claim's approval and payment facts come from its own records. Numbers come from tool data only.
+  - **Length.** Lists show at most 5 rows, knowledge answers about 350 characters, and the package card names and prices only.
+  - **Unsold work** (customer documents, ภ.พ.30 records, reconciliation) gets the approved reply and `REFUSED` when the shop has not bought the feature.
+  - **Cards.** Every plain-text reply family moves onto the locked card, with a text fallback when LINE rejects it. The substitute-receipt question card shows the record, the amount, the next question and the count left.
+  - **Workflow.**
+    - Everyday claim and expense verbs are known.
+    - A named record with no verb shows its permitted action buttons.
+    - Vouchers match a line's expense number and never show an empty picker.
+    - The pay preview shows the method, and asks when there is none.
+    - A duplicate vendor name asks which vendor.
+    - Foreign presses keep their workflow kind.
+  - **Scorer.** W1 credits deterministic routes, and reason comparison ignores trailing particles.
+  - **Speed overlap is not built.** Intake settlement finishes inside the gateway call, so an unused parallel intake call cannot yet be guaranteed company-absorbed.
+- **Next gate.** Blind set v9.

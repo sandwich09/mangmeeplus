@@ -12,7 +12,7 @@
  * `unverified` when the output does not match the family's exact shape, so the caller falls back to an
  * honest terminal without claiming success. No provider, no tool re-invocation.
  */
-import { EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, formatThaiPeriodRange, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_STATUS_LABELS, EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, formatThaiPeriodRange, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
 import type { LineAiAnswerCardLayout, LineAiAnswerCardRow, LineAiPeriodCandidate, LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, expensePeriodComparisonCard, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
@@ -108,6 +108,7 @@ function thaiExpenseRange(data: Record<string, unknown> | undefined): string | u
   const range = period as Record<string, unknown>;
   const from = thaiIsoDate(typeof range['fromDate'] === 'string' ? range['fromDate'] : undefined);
   const to = thaiIsoDate(typeof range['toDate'] === 'string' ? range['toDate'] : undefined);
+  if (range['fromDate'] === '0001-01-01' && to) return `ถึง ${to}`;
   return from && to ? from === to ? from : `${from} – ${to}` : undefined;
 }
 
@@ -138,6 +139,10 @@ function periodPhrase(
 ): string | undefined {
   // The label already reads as Thai ("เดือนที่แล้ว (1–31 ส.ค. 2569)"), so it replaces the bare ISO
   // range for a Thai answer.
+  if (appliedPeriod(data)?.fromDate === '0001-01-01') {
+    const cutoff = appliedPeriod(data)?.toDate;
+    if (cutoff) return english ? `Through ${cutoff}` : `ถึง ${thaiIsoDate(cutoff)}`;
+  }
   if (!english && periodLabel) return periodLabel;
   const effective = appliedPeriod(data);
   const from = effective?.fromDate ?? (typeof proposedInput?.['fromDate'] === 'string' ? proposedInput['fromDate'] as string : undefined);
@@ -535,7 +540,7 @@ function documentTypeLabel(type: string, english: boolean): string {
 
 /** R-A3: enough expense records to be useful in one LINE bubble; the rest are admitted by the
  *  "showing N of M" line, same convention as the document-type and breakdown-group caps below. */
-const MAX_EXPENSE_LIST_LINES = 10;
+const MAX_EXPENSE_LIST_LINES = 5;
 
 /**
  * R-L4/R-A3 — `expense.list_recent` as a numbered list ("ค่าใช้จ่ายล่าสุด 10 รายการ"). States the
@@ -612,7 +617,7 @@ function formatExpenseListRecentList(output: SpecialistOutput, ctx: PreparedForm
       ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
     ],
     ...cardNotes([moreText, scopeNote(accessScope), periodNoteLine(ctx.periodNote)]),
-    ...(webLinks[0] ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}),
+    ...(webLinks[0] ? { linkLabel: total > shown.length ? 'ดูทั้งหมดในเว็บ' : 'ดูค่าใช้จ่ายในเว็บ' } : {}),
   }) : undefined;
   return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
@@ -782,7 +787,7 @@ function expenseItemPhrase(lines: unknown): string | undefined {
 }
 
 /** R-A2: enough breakdown groups to stay readable in one bubble; the rest are folded into "อื่นๆ". */
-const MAX_BREAKDOWN_GROUPS = 8;
+const MAX_BREAKDOWN_GROUPS = 5;
 
 /** The three axes `expense.get_breakdown` groups by; `groupBy` (spec item 3) is a pure PRESENTATION
  *  hint that picks which one leads the answer — the tool always computes and returns all three. */
@@ -847,8 +852,9 @@ function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedForma
   groups.sort((a, b) => moneyNumber(b.amount) - moneyNumber(a.amount));
 
   const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
-  const shown = groups.slice(0, MAX_BREAKDOWN_GROUPS);
-  const rest = groups.slice(MAX_BREAKDOWN_GROUPS);
+  const shownCount = groups.length > MAX_BREAKDOWN_GROUPS ? MAX_BREAKDOWN_GROUPS - 1 : MAX_BREAKDOWN_GROUPS;
+  const shown = groups.slice(0, shownCount);
+  const rest = groups.slice(shownCount);
   const groupLine = (name: string, amount: number, count: number) => english
     ? `\n• ${name}: ${moneyText(amount)} THB (${plural(count, 'record')})`
     : `\n• ${name}: ${moneyText(amount)} บาท (${groupThousands(String(count))} รายการ)`;
@@ -894,7 +900,7 @@ function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedForma
       ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
     ],
     ...cardNotes([scopeNote(accessScope), periodNoteLine(ctx.periodNote)]),
-    ...(webLinks[0] ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}),
+    ...(webLinks[0] ? { linkLabel: rest.length ? 'ดูทั้งหมดในเว็บ' : 'ดูค่าใช้จ่ายในเว็บ' } : {}),
   }) : undefined;
   return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
@@ -1401,6 +1407,17 @@ function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: 
  */
 function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
   const data = sourceData(output, 'reimbursement.get_summary');
+  if (isCount(data?.matchedCount) && Array.isArray(data?.matchedItems)) {
+    const items = data.matchedItems.slice(0, 5) as Array<Record<string, unknown>>;
+    if (items.some(item => !isMoney(item.amount) || typeof item.status !== 'string')) return { kind: 'unverified' };
+    const { sourceRefs, webLinks } = groundedSource(output.facts.find(fact => fact.sourceRef)?.sourceRef, isEnglish(ctx));
+    const rows = items.map(item => ({ label: String(item.requestNo ?? item.title ?? 'ใบเบิก'),
+      value: [item.requesterDisplayName, `${moneyText(item.amount as string)} บาท`, REIMBURSEMENT_STATUS_TH[String(item.status)] ?? 'รอตรวจสอบ'].filter(Boolean).join(' · ') }));
+    const replyText = `พบใบเบิก ${data.matchedCount} ใบค่ะ${rows.length ? '\n' + rows.map(row => `${row.label}: ${row.value}`).join('\n') : ''}`;
+    return { kind: 'answer', replyText, sourceRefs, webLinks,
+      layout: cardLayout({ context: 'open_work', header: ['ใบเบิกตามที่ถาม', `${data.matchedCount} ใบ`],
+        rows: rows.length ? rows : [{ label: 'รายการ', value: 'ยังไม่พบใบเบิกตามที่ถาม' }], linkLabel: data.matchedCount > rows.length ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ' }) };
+  }
   const pending = data?.['pendingApprovalCount'];
   const unpaidApproved = data?.['unpaidApprovedCount'];
   const overdue = data?.['overdueApprovalCount'];
@@ -1444,7 +1461,7 @@ function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx
       // Owner 2026-11-06: counts alone did not say which claims. The first ones, unpaid first.
       ...summaryClaimRows(data?.['unpaidApprovedItems'], 'รอจ่าย'),
       ...summaryClaimRows(data?.['pendingApprovalItems'], 'รออนุมัติ'),
-    ].slice(0, 9),
+    ].slice(0, 5),
     ...cardNotes([scopeNote(data?.['accessScope'])]),
   });
   return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
@@ -1483,6 +1500,8 @@ const REIMBURSEMENT_STATUS_TH: Record<string, string> = {
  */
 function formatReimbursementGetDetailSingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
   const data = sourceData(output, 'reimbursement.get_detail');
+  if (isCount(data?.matchedCount)) return formatReimbursementGetSummarySingleMetric({ ...output,
+    toolData: output.toolData?.map(entry => ({ ...entry, tool: entry.tool === 'reimbursement.get_detail' ? 'reimbursement.get_summary' : entry.tool })) }, ctx);
   const incurredDate = data?.['incurredDate'];
   const amount = data?.['amount'];
   const status = data?.['status'];
@@ -1495,6 +1514,18 @@ function formatReimbursementGetDetailSingleMetric(output: SpecialistOutput, ctx:
     ? data['requesterDisplayName'] as string : (english ? 'Unknown requester' : 'ไม่ระบุผู้ขอ');
   const statusLabel = english ? humanizedEnum(status) : REIMBURSEMENT_STATUS_TH[status] ?? status;
   const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+
+  const question = ctx.messageText ?? '';
+  const approvalSteps = Array.isArray(data?.approvalSteps) ? data.approvalSteps as Array<Record<string, unknown>> : [];
+  const approvals = approvalSteps.filter(step => step.status === 'APPROVED');
+  const payments = Array.isArray(data?.payments) ? (data.payments as Array<Record<string, unknown>>).filter(payment => payment.status === 'RECORDED') : [];
+  const factRows: Array<{ label: string; value: string }> = [];
+  if (/ใครอนุมัติ|ผู้อนุมัติ/u.test(question)) factRows.push({ label: 'ผู้อนุมัติ', value: approvals.map(step => step.approverName).filter(value => typeof value === 'string').join(' · ') || 'ยังไม่มีประวัติอนุมัติ' });
+  if (/อนุมัติ.*(?:เมื่อ|วัน)/u.test(question)) factRows.push({ label: 'วันที่อนุมัติ', value: approvals.map(step => typeof step.actedAt === 'string' ? thaiIsoDate(step.actedAt.slice(0, 10)) : undefined).filter(Boolean).join(' · ') || 'ยังไม่มีประวัติอนุมัติ' });
+  if (/จ่าย|โอนคืน|คืนเงิน/u.test(question)) factRows.push({ label: 'การจ่าย', value: data?.paymentStatus === 'PAID' ? 'จ่ายแล้ว' : data?.paymentStatus === 'PARTIALLY_PAID' ? 'จ่ายบางส่วน' : data?.paymentStatus === 'UNPAID' ? 'ยังไม่จ่าย' : 'ยังไม่มีข้อมูลการจ่าย' });
+  if (/(?:จ่าย|โอน).*(?:เมื่อ|วัน)|วัน.*(?:จ่าย|โอน)/u.test(question)) factRows.push({ label: 'วันที่จ่าย', value: payments.map(payment => typeof payment.paidAt === 'string' ? thaiIsoDate(payment.paidAt.slice(0, 10)) : undefined).filter(Boolean).join(' · ') || 'ยังไม่มีประวัติจ่าย' });
+  if (factRows.length) return { kind: 'answer', replyText: factRows.slice(0, 5).map(row => `${row.label}: ${row.value}`).join('\n'), sourceRefs, webLinks,
+    layout: cardLayout({ context: 'expense_record', header: ['ใบเบิก', String(data?.requestNo ?? requester)], rows: factRows.slice(0, 5), linkLabel: 'เปิดในเว็บ' }) };
 
   // C6 (batch 5c): the English headline printed the raw ISO date while the Thai side already used
   // `dateLabel` — `incurredDate` already passed `thaiIsoDate`'s stricter real-calendar check above.
@@ -1799,8 +1830,49 @@ function formatCounterpartySearchList(output: SpecialistOutput, ctx: PreparedFor
   return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
+function formatRoleList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'company.get_roles');
+  if (!Array.isArray(data?.roles)) return { kind: 'unverified' };
+  const roles = data.roles as Array<Record<string, unknown>>;
+  if (roles.some(role => typeof role.name !== 'string')) return { kind: 'unverified' };
+  const { sourceRefs, webLinks } = groundedSource(output.facts.find(fact => fact.sourceRef)?.sourceRef, isEnglish(ctx));
+  const rows = roles.slice(0, 5).map(role => ({ label: String(role.name), value: Array.isArray(role.menus) ? role.menus.slice(0, 2).join(' · ') || 'ยังไม่มีสิทธิ์ทำงานที่เปิดอยู่' : 'ดูสิทธิ์ตามหน้าที่' }));
+  const replyText = typeof data.message === 'string' && roles.length <= 5 ? data.message : rows.map(row => `${row.label}: ${row.value}`).join('\n') || 'ยังไม่มีหน้าที่ตามที่ถามในร้านค่ะ';
+  return { kind: 'answer', replyText, sourceRefs, webLinks, layout: cardLayout({ context: 'open_work', header: ['หน้าที่และสิทธิ์', 'ของร้าน'],
+    rows: rows.length ? rows : [{ label: 'หน้าที่', value: 'ยังไม่พบหน้าที่ตามที่ถาม' }], linkLabel: roles.length > 5 ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ' }) };
+}
+
+function formatVoucherList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'voucher.list_recent');
+  if (!isCount(data?.total) || !Array.isArray(data?.items)) return { kind: 'unverified' };
+  const items = data.items.slice(0, 5) as Array<Record<string, unknown>>;
+  if (items.some(item => !isMoney(item.totalAmount) || typeof item.status !== 'string')) return { kind: 'unverified' };
+  const rows = items.map(item => ({ label: String(item.documentNumber ?? 'ร่าง'),
+    value: `${item.payeeName ?? 'ไม่ระบุผู้รับเงิน'} · ${moneyText(item.totalAmount as string)} บาท · ${DISBURSEMENT_VOUCHER_STATUS_LABELS[item.status as keyof typeof DISBURSEMENT_VOUCHER_STATUS_LABELS] ?? 'รอตรวจสอบ'}` }));
+  const { sourceRefs, webLinks } = groundedSource(output.facts.find(fact => fact.sourceRef)?.sourceRef, isEnglish(ctx));
+  return { kind: 'answer', replyText: `พบใบเตรียมจ่าย/ใบสำคัญจ่าย ${data.total} ใบค่ะ${rows.length ? '\n' + rows.map(row => `${row.label}: ${row.value}`).join('\n') : ''}`, sourceRefs, webLinks,
+    layout: cardLayout({ context: 'open_work', header: ['ใบเตรียมจ่าย/ใบสำคัญจ่าย', `${data.total} ใบ`],
+      rows: rows.length ? rows : [{ label: 'รายการ', value: 'ยังไม่มีใบตามที่ถาม' }], linkLabel: data.total > rows.length ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ' }) };
+}
+
+function formatPackageList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'billing.get_package_catalog');
+  if (!Array.isArray(data?.packages)) return { kind: 'unverified' };
+  const rows: Array<{ label: string; value: string }> = [];
+  for (const item of data.packages.slice(0, 5) as Array<Record<string, any>>) {
+    if (typeof item.name !== 'string' || !isMoney(item.monthly?.payable ?? item.monthly?.price) || !isMoney(item.yearly?.payable ?? item.yearly?.price)) return { kind: 'unverified' };
+    rows.push({ label: item.name, value: `เดือน ${moneyText(item.monthly.payable ?? item.monthly.price)} บาท · ปี ${moneyText(item.yearly.payable ?? item.yearly.price)} บาท` });
+  }
+  const { sourceRefs, webLinks } = groundedSource(output.facts.find(fact => fact.sourceRef)?.sourceRef, isEnglish(ctx));
+  return { kind: 'answer', replyText: rows.map(row => `${row.label}: ${row.value}`).join('\n'), sourceRefs, webLinks,
+    layout: cardLayout({ context: 'open_work', header: ['แพ็กเกจ', 'ชื่อและราคา'], rows, linkLabel: 'เปิดหน้าแพ็กเกจ' }) };
+}
+
 const COMPILED_FORMATTERS: ReadonlyMap<string, (output: SpecialistOutput, ctx: PreparedFormatContext) => PreparedFormatResult> =
   new Map([
+    [preparedFamilyKey('company.get_roles', 'list'), formatRoleList],
+    [preparedFamilyKey('voucher.list_recent', 'list'), formatVoucherList],
+    [preparedFamilyKey('billing.get_package_catalog', 'list'), formatPackageList],
     [preparedFamilyKey('sales.get_sales_summary', 'single_metric'), formatSalesSummarySingleMetric],
     [preparedFamilyKey('expense.list_recent', 'single_metric'), formatExpenseListRecentSingleMetric],
     [preparedFamilyKey('expense.list_recent', 'list'), formatExpenseListRecentList],
@@ -1853,7 +1925,7 @@ export const APPROVED_PREPARED_FAMILY_KEYS: ReadonlySet<string> = activePrepared
 
 /** Drawn only after its read, never offered to the router (its intake bytes and credit hold stay as calibrated):
  *  the counterparty list is the tool's own names verbatim, nothing for a writer to judge (owner 2026-11-06). */
-export const CODED_ONLY_FAMILY_KEYS: ReadonlySet<string> = new Set(['counterparty.search::list']);
+export const CODED_ONLY_FAMILY_KEYS: ReadonlySet<string> = new Set(['voucher.list_recent::list', 'counterparty.search::list', 'company.get_roles::list', 'billing.get_package_catalog::list']);
 
 /** Format via the compiled family, or `unverified` when the family/shape has no formatter. */
 export function formatPreparedSimpleRead(familyKey: string, output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {

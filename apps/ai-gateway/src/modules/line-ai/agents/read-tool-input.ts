@@ -1,4 +1,4 @@
-import { LINE_AI_VALUE_CANDIDATES_V2_LIMITS, extractValueCandidates, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, resolvePeriodCandidates } from '@watchdog-bms/contracts';
+import { LINE_CHAT_ACTIONS, LINE_AI_VALUE_CANDIDATES_V2_LIMITS, extractValueCandidates, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, resolvePeriodCandidates } from '@watchdog-bms/contracts';
 import type { LineAiConversationContext, LineAiInputEvidenceV2, LineAiSourceRefV2, LineAiValueCandidates, LineAiTurnRequest, ToolMeta } from '@watchdog-bms/contracts';
 
 /** Read memory identifies a record, never grants access or supplies its current figures. */
@@ -13,6 +13,13 @@ export function isExpenseReadReference(id: unknown, context?: LineAiConversation
 /** Repair the router's record/group confusion only from API-owned, typed shown items. */
 export function resolveExpenseReadReferences(req: LineAiTurnRequest): LineAiTurnRequest {
   if (!req.semanticSubrequests?.length) return req;
+  const previous = req.conversationContext?.recentTurns.at(-1);
+  if (req.semanticSubrequests.length === 1 && previous?.refused
+    && /^(?:แล้ว)?(?:ต้อง)?(?:ให้)?ใคร(?:ทำ|ช่วย)(?:ให้|ได้|เรื่องนี้)*[?？]*(?:คะ|ค่ะ|ครับ)?$/u.test(req.messageText.replace(/\s+/gu, ''))) {
+    const action = LINE_CHAT_ACTIONS.find(action => [action.command, action.title].some(label => label && previous.userMessagePreview?.includes(label)));
+    if (action) return { ...req, semanticSubrequests: [{ ...req.semanticSubrequests[0]!, kind: 'read', toolHint: 'company.get_roles',
+      requestedFilters: { permissionKey: action.permission } }] };
+  }
   return { ...req, semanticSubrequests: req.semanticSubrequests.map(item => {
     if (item.kind !== 'read' || !item.toolHint?.startsWith('expense.')) return item;
     const text = evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText);
@@ -138,11 +145,25 @@ export function resolvePeriodKeyAlias(periodKey: string, todayIso: string | unde
 }
 
 export function canonicalizeReadToolEnums(
-  meta: Pick<ToolMeta, 'inputEnumValues'>,
+  meta: Pick<ToolMeta, 'inputEnumValues'> & { name?: string },
   raw: Record<string, unknown>,
   messageText?: string,
 ): Record<string, unknown> | undefined {
   const canonical = { ...raw };
+  if (meta.name?.startsWith('reimbursement.')) {
+    for (const key of ['requesterName', 'categoryName']) {
+      if (canonical[key] !== undefined && (typeof canonical[key] !== 'string' || !nameFilterGroundedInText(canonical[key] as string, messageText ?? ''))) return undefined;
+    }
+    if (canonical.round !== undefined) {
+      const spoken = /รอบ\s*(?:ที่\s*)?([0-9๐-๙]+|[ก-๙]+)/u.exec(messageText ?? '')?.[1];
+      if (!spoken || extractValueCandidates(spoken).amounts[0]?.value !== String(canonical.round)) return undefined;
+    }
+    if (canonical.status === 'APPROVED' && /อนุมัติแล้ว.*(?:ยังไม่จ่าย|ยังไม่ได้จ่าย|รอจ่าย)/u.test(messageText ?? '')) canonical.status = 'APPROVED_UNPAID';
+  }
+  if (canonical.olderThanMonths !== undefined) {
+    const spoken = /(?:เกิน|นานกว่า|มากกว่า)\s*([0-9๐-๙]+|[ก-๙]+)\s*เดือน/u.exec(messageText ?? '')?.[1];
+    if (!spoken || extractValueCandidates(spoken).amounts[0]?.value !== String(canonical.olderThanMonths)) return undefined;
+  }
   if (meta.inputEnumValues?.documentStatus?.includes('NEEDS_REVIEW')
     && ['DRAFT', 'READY_FOR_CONFIRMATION'].includes(String(canonical.documentStatus))
     && /ยัง(?:ไม่|ไม่ได้)ยืนยัน|\bunconfirmed\b/iu.test(messageText ?? '')

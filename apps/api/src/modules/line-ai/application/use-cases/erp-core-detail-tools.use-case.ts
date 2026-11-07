@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import type { RequestContext, SourceRef, ToolResult } from '@watchdog-bms/contracts';
+import type { RequestContext, SourceRef, ToolResult, ReimbursementAiReadFilters } from '@watchdog-bms/contracts';
 import {
   expenseEvidenceAssessment, expenseEvidenceImageMissing, civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementPayoutHeld, reimbursementPayoutRoundStatus, reimbursementDuplicateBlockNotice, reimbursementDuplicateWait,
 } from '@watchdog-bms/contracts';
@@ -419,10 +419,10 @@ export class ReimbursementGetSummaryTool implements ErpReadToolPort {
   toolName = 'reimbursement.get_summary';
   constructor(private readonly getSummary: GetReimbursementAiSummaryUseCase) {}
 
-  async execute(ctx: ErpToolContext): Promise<ToolResult> {
+  async execute(ctx: ErpToolContext, input: ReimbursementAiReadFilters = {}): Promise<ToolResult> {
     const asOf = now();
     return safely(this.toolName, asOf, 'REIMBURSEMENT_SUMMARY_UNAVAILABLE', async () => ({
-      toolName: this.toolName, status: 'ok', data: await this.getSummary.execute(toCtx(ctx)), asOf,
+      toolName: this.toolName, status: 'ok', data: await this.getSummary.execute(toCtx(ctx), input), asOf,
       sourceRefs: [source(ctx, asOf, 'สรุปเบิกจ่าย', 'reimbursements', 'reimbursement_summary', undefined, `/companies/${ctx.companyId}/reimbursements`)],
     }));
   }
@@ -431,13 +431,20 @@ export class ReimbursementGetSummaryTool implements ErpReadToolPort {
 @Injectable()
 export class ReimbursementGetDetailTool implements ErpReadToolPort<{ reimbursementId?: string }> {
   toolName = 'reimbursement.get_detail';
-  constructor(private readonly getDetail: GetReimbursementDetailUseCase) {}
+  constructor(private readonly getDetail: GetReimbursementDetailUseCase, @Optional() private readonly getSummary?: GetReimbursementAiSummaryUseCase) {}
 
-  async execute(ctx: ErpToolContext, input: { reimbursementId?: string } = {}): Promise<ToolResult> {
+  async execute(ctx: ErpToolContext, input: ReimbursementAiReadFilters & { reimbursementId?: string } = {}): Promise<ToolResult> {
     const asOf = now();
-    const reimbursementId = typeof input.reimbursementId === 'string' ? input.reimbursementId.trim().slice(0, 200) : '';
-    if (!reimbursementId) return unavailable(this.toolName, asOf, 'REIMBURSEMENT_ID_REQUIRED');
     return safely(this.toolName, asOf, 'REIMBURSEMENT_NOT_FOUND', async () => {
+      let reimbursementId = typeof input.reimbursementId === 'string' ? input.reimbursementId.trim().slice(0, 200) : '';
+      if (!reimbursementId && this.getSummary && (input.round || input.requesterName || input.categoryName)) {
+        const { reimbursementId: _id, ...filters } = input;
+        const matches = await this.getSummary.execute(toCtx(ctx), filters);
+        if (matches.matchedCount !== 1) return { toolName: this.toolName, status: 'ok', asOf, data: { ...matches, selectionRequired: true },
+          sourceRefs: [source(ctx, asOf, 'รายการใบเบิก', 'reimbursements', 'reimbursement_summary', undefined, `/companies/${ctx.companyId}/reimbursements`)] };
+        reimbursementId = matches.matchedItems![0]!.id;
+      }
+      if (!reimbursementId) return unavailable(this.toolName, asOf, 'REIMBURSEMENT_ID_REQUIRED');
       const item = await this.getDetail.execute(toCtx(ctx), reimbursementId);
       // Payout spec §14: a claim sent back from the pay step is PENDING_APPROVAL by its status, with the approval it
       // stood on set aside. It reads here as `reimbursement.get_approval_backlog` reads it: the claim page's status
@@ -474,7 +481,8 @@ export class ReimbursementGetDetailTool implements ErpReadToolPort<{ reimburseme
           lineCount: item.lineCount,
           // A step a correction round set aside is history: it is not the approval the claim stands on.
           approvalSteps: item.approvalSteps.filter((step) => step.invalidatedReason !== PAYOUT_CORRECTION_STEP_REASON).slice(0, 10)
-            .map((step) => ({ status: step.status, sequence: step.sequenceNo, actedAt: step.decidedAt ?? null })),
+            .map((step) => ({ status: step.status, sequence: step.sequenceNo, actedAt: step.decidedAt ?? null,
+              ...(step.decidedByName || step.approverName ? { approverName: step.decidedByName ?? step.approverName } : {}) })),
           payments: item.payments.map((payment) => ({ paymentNo: payment.paymentNo, status: payment.status, paidAmount: payment.paidAmount, paidAt: payment.paidAt })),
           duplicateCount: item.duplicateCandidates.length,
           ...(item.duplicateBlocksPayment && {

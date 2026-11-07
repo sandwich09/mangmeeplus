@@ -6,6 +6,14 @@ import { ListExpensesUseCase } from '../../../expenses/application/use-cases/exp
 import { pnd53PaperDueDay } from '../../../tax/domain/logic/tax-period.logic';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+
+it('R17 voucher status is passed to the scoped repository query', async () => {
+  let query: any;
+  const tool = new VoucherListRecentTool({ list: async (_ctx: any, input: any) => { query = input; return { data: [], total: 0 }; } } as any);
+  const result = await tool.execute({ companyId: 'shop', userId: 'reader', permissions: ['expense.disbursement.read'], locale: 'th-TH' } as any, { status: 'DRAFT' } as any);
+  assert.equal(query.status, 'DRAFT');
+  assert.equal((result.data as any).message, 'ยังไม่มีใบเตรียมจ่าย/ใบสำคัญจ่ายที่คุณมีสิทธิ์ดูค่ะ');
+});
 import {
   TaxGetCitCalendarTool,
   TaxGetReconciliationSummaryTool,

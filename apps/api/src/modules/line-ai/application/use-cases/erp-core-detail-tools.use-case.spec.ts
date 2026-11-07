@@ -11,6 +11,19 @@ import {
 } from './erp-core-detail-tools.use-case';
 import { InternalToolsController } from '../../presentation/http/internal-tools.controller';
 import { BACKLOG_DESK_LABELS } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
+import { GetReimbursementAiSummaryUseCase } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
+
+it('R17 claim read filters retain requester scope and match an exact round', async () => {
+  let query: any;
+  const rows = [4, 14].map(round => ({ id: `claim-${round}`, title: `ค่าเดินทาง รอบ ${round}`, reason: '', requestNo: null,
+    requesterDisplayNameSnapshot: 'สมศรี', categoryLabelSnapshot: 'ค่าเดินทาง', amount: '100', status: 'DRAFT', paymentStatus: 'UNPAID', outstandingAmount: '100' }));
+  const summary = new GetReimbursementAiSummaryUseCase({ findPolicy: async () => null, listRequests: async (where: any) => { query = where; return rows; } } as any, { log: async () => {} } as any);
+  const result: any = await (summary.execute as any)({ companyId: 'co', userId: 'reader', permissions: ['reimbursement.read_own'], scopes: { branchIds: ['branch'] } },
+    { requesterName: 'สมศรี', categoryName: 'ค่าเดินทาง', round: '4', status: 'DRAFT' });
+  assert.equal(query.requesterUserId, 'reader'); assert.deepEqual(query.scopes, { branchIds: ['branch'] });
+  assert.equal(query.requesterName, 'สมศรี'); assert.equal(query.categoryName, 'ค่าเดินทาง');
+  assert.equal(result.matchedCount, 1); assert.equal(result.matchedItems[0].id, 'claim-4');
+});
 
 const ctx = {
   requestId: 'r1', companyId: 'c1', userId: 'u1', membershipId: 'm1',
@@ -402,4 +415,38 @@ describe('LINE ERP core detail tools', () => {
     assert.equal(map.get('accounting.get_document_detail'), adapters[6]);
     assert.equal(map.get('accounting.get_receivable_summary'), adapters[7]);
   });
+});
+
+it('R17 approved-unpaid named claims keep the reader scope and exclude paid claims', async () => {
+  let query: any;
+  const rows = ['UNPAID', 'PAID'].map(paymentStatus => ({ id: paymentStatus, status: 'APPROVED', paymentStatus,
+    reason: '', amount: '100', outstandingAmount: paymentStatus === 'PAID' ? '0' : '100' }));
+  const summary = new GetReimbursementAiSummaryUseCase({ findPolicy: async () => null,
+    listRequests: async (where: any) => { query = where; return rows; } } as any, { log: async () => {} } as any);
+  const result = await summary.execute({ companyId: 'shop', userId: 'reader', permissions: ['reimbursement.read_related'],
+    scopes: { branchIds: ['branch'] } } as any, { requesterName: 'สมศรี', status: 'APPROVED_UNPAID' });
+  assert.equal(query.relatedUserId, 'reader');
+  assert.deepEqual(query.scopes, { branchIds: ['branch'] });
+  assert.deepEqual(query.statuses, ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID']);
+  assert.equal(result.matchedCount, 1);
+  assert.equal(result.matchedItems?.[0]?.id, 'UNPAID');
+});
+
+it('R17 a unique named claim uses its permission-checked detail and actual deciding person', async () => {
+  let selected: string | undefined;
+  const tool = new ReimbursementGetDetailTool({ execute: async (_ctx: any, id: string) => {
+    selected = id;
+    return { id, requesterUserId: 'u1', branchId: 'b1', status: 'APPROVED', approvalSteps: [
+      { sequenceNo: 1, status: 'APPROVED', decidedAt: '2026-11-05T03:00:00Z', approverName: 'ผู้รับมอบหมาย', decidedByName: 'ผู้ที่เซ็นจริง' }],
+      payments: [{ status: 'RECORDED', paidAmount: '100', paidAt: '2026-11-06T03:00:00Z' }], duplicateCandidates: [] };
+  } } as any, { execute: async (_ctx: any, filters: any) => {
+    assert.deepEqual(filters, { requesterName: 'สมศรี', categoryName: 'ค่าเดินทาง', round: '4' });
+    return { matchedCount: 1, matchedItems: [{ id: 'claim-4' }] };
+  } } as any);
+  const result = await tool.execute(ctx, { requesterName: 'สมศรี', categoryName: 'ค่าเดินทาง', round: '4' });
+  assert.equal(result.status, 'ok');
+  assert.equal(selected, 'claim-4');
+  assert.deepEqual((result.data as any).approvalSteps, [{ status: 'APPROVED', sequence: 1,
+    actedAt: '2026-11-05T03:00:00Z', approverName: 'ผู้ที่เซ็นจริง' }]);
+  assert.equal((result.data as any).payments[0].paidAt, '2026-11-06T03:00:00Z');
 });

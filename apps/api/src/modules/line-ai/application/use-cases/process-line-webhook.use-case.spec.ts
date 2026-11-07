@@ -840,12 +840,12 @@ function makeUseCase(
         if (sendReplyFn) return sendReplyFn(token, messages);
         sentMessageBatches.push(messages);
         sentMessages.push(messages[0]);
-        replies.push(messages[0]?.text ?? messages[0]?.altText ?? '');
+        replies.push(messages[0]?.canonicalText ?? messages[0]?.text ?? messages[0]?.altText ?? '');
         return 'ok';
       },
       sendPush: async (to: string, messages: any[]) => {
         if (sendPushFn) return sendPushFn(to, messages);
-        pushes.push({ to, text: messages[0]?.text ?? messages[0]?.altText ?? '', message: messages[0] });
+        pushes.push({ to, text: messages[0]?.canonicalText ?? messages[0]?.text ?? messages[0]?.altText ?? '', message: messages[0] });
         return 'ok';
       },
     } as any,
@@ -1611,8 +1611,8 @@ it('fails a bound semantic turn before pending media, ERP reads, or a LINE turn 
   event.inputEvidence = evidence.inputEvidence;
   const flow = h.useCase as any;
   const delivered: string[] = [];
-  flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string }>) => {
-    delivered.push(...messages.flatMap((message) => message.text ? [message.text] : [])); return 'ok';
+  flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string; canonicalText?: string }>) => {
+    delivered.push(...messages.flatMap((message) => (message.canonicalText ?? message.text) ? [message.canonicalText ?? message.text!] : [])); return 'ok';
   };
   flow.contextV2 = {
     admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
@@ -1653,8 +1653,8 @@ for (const errorCode of ['PROVIDER_THROTTLED', 'PROVIDER_TIMEOUT', 'PROVIDER_UNK
     event.inputEvidence = evidence.inputEvidence;
     const flow = h.useCase as any;
     const delivered: string[] = [];
-    flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string }>) => {
-      delivered.push(...messages.flatMap((message) => message.text ? [message.text] : [])); return 'ok';
+    flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string; canonicalText?: string }>) => {
+      delivered.push(...messages.flatMap((message) => (message.canonicalText ?? message.text) ? [message.canonicalText ?? message.text!] : [])); return 'ok';
     };
     flow.contextV2 = {
       admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
@@ -2973,7 +2973,8 @@ describe('ProcessLineWebhookUseCase', () => {
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-clarify-no-menu', messageText: 'บันทึกใบเสร็จ' });
 
     assert.equal(getAiGatewayCalled(), false);
-    assert.equal(sentMessages[0]?.type, 'text');
+    assert.equal(sentMessages[0]?.type, 'flex');
+    assert.ok(isLineSystemCard(sentMessages[0]));
     assert.equal(sentMessages[0]?.quickReply, undefined);
   });
 
@@ -3863,7 +3864,8 @@ describe('ProcessLineWebhookUseCase', () => {
 
       await useCase.execute({ ...BASE_EVENT });
 
-      assert.equal(sentMessages[0].type, 'text');
+      assert.equal(sentMessages[0].type, 'flex');
+      assert.ok(isLineSystemCard(sentMessages[0]));
       assert.match(replies[0] ?? '', /ให้เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน/);
       assert.doesNotMatch(JSON.stringify(sentMessages), /co-owned/);
     });
@@ -4631,7 +4633,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma } = makePrisma();
     const allowed = makeUseCase(prisma, { permissions: ['expense.receipt.line_upload'] });
     await allowed.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-welcome-receipt', messageText: 'ลองส่งใบเสร็จ' });
-    assert.match(allowed.sentMessages[0]?.text ?? '', /มั่งมีช่วยอ่านและเตรียมข้อมูลให้คุณตรวจดู/);
+    assert.match(allowed.sentMessages[0]?.canonicalText ?? '', /มั่งมีช่วยอ่านและเตรียมข้อมูลให้คุณตรวจดู/);
     assert.doesNotMatch(JSON.stringify(allowed.sentMessages), /\p{Extended_Pictographic}|[←→]/u);
     assert.deepEqual(allowed.sentMessages[0]?.quickReply?.items.slice(0, 2).map((item: any) => item.action.type), ['cameraRoll', 'camera']);
     for (const item of allowed.sentMessages[0]?.quickReply?.items ?? []) {
@@ -5453,8 +5455,9 @@ describe('ProcessLineWebhookUseCase', () => {
 
       assert.equal(state.quotaNoticeSentMonthKey(), bangkokMonthKey());
       assert.equal(sentMessages[0].type, 'flex', 'the first wall hit is the card');
-      assert.equal(sentMessages[1].type, 'text', 'the second is not another sales card');
-      assert.match(sentMessages[1].text, /ขอเปลี่ยนแพ็กเกจ/);
+      assert.equal(sentMessages[1].type, 'flex');
+      assert.ok(isLineSystemCard(sentMessages[1]));
+      assert.match(sentMessages[1].canonicalText, /ขอเปลี่ยนแพ็กเกจ/);
     });
 
     // Advisor spec §2.2 (Owner 2026-09-30): a member without `company.plan.manage` meets the same wall
@@ -5473,8 +5476,9 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.equal(sentMessages[0].contents.footer, undefined, 'no package button for a member');
       assert.match(sentMessages[0].altText, /ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ/);
       assert.match(sentMessages[0].altText, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
-      assert.equal(sentMessages[1].type, 'text');
-      assert.match(sentMessages[1].text, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
+      assert.equal(sentMessages[1].type, 'flex');
+      assert.ok(isLineSystemCard(sentMessages[1]));
+      assert.match(sentMessages[1].canonicalText, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
       assert.doesNotMatch(JSON.stringify(sentMessages), /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|โปรโมชั่น/);
     });
 
@@ -5513,14 +5517,14 @@ describe('ProcessLineWebhookUseCase', () => {
 
       await sendReceipt(useCase, 'gen-a');
       await sendReceipt(useCase, 'gen-b');
-      assert.deepEqual(sentMessages.map((message: any) => message.type), ['flex', 'text'], 'one card for the first generation');
+      assert.deepEqual(sentMessages.map((message: any) => message.type), ['flex', 'flex'], 'the follow-up uses the locked notice card');
       assert.equal(state.quotaNoticeSentMonthKey(), bangkokMonthKey(), 'no add-on lot: the bare month key, as before');
 
       const lotAt = new Date('2026-09-29T05:00:00.000Z');
       state.addOnLotCreated(lotAt);
       await sendReceipt(useCase, 'gen-c');
       await sendReceipt(useCase, 'gen-d');
-      assert.deepEqual(sentMessages.map((message: any) => message.type), ['flex', 'text', 'flex', 'text'], 'the new generation gets its card once');
+      assert.deepEqual(sentMessages.map((message: any) => message.type), ['flex', 'flex', 'flex', 'flex'], 'each generation keeps its package card and locked follow-up');
       assert.equal(state.quotaNoticeSentMonthKey(), `${bangkokMonthKey()}#${lotAt.getTime()}`);
     });
 
@@ -5779,8 +5783,8 @@ describe('ProcessLineWebhookUseCase', () => {
       } as any,
       {
         buildTextMessage: (text: string) => ({ type: 'text', text }),
-        sendReply: async (_token: string, messages: Array<{ text: string }>) => {
-          replies.push(messages[0]?.text ?? '');
+        sendReply: async (_token: string, messages: Array<{ text?: string; canonicalText?: string }>) => {
+          replies.push(messages[0]?.canonicalText ?? messages[0]?.text ?? '');
           return 'ok';
         },
       } as any,
@@ -5908,8 +5912,8 @@ describe('ProcessLineWebhookUseCase', () => {
       } as any,
       {
         buildTextMessage: (text: string) => ({ type: 'text', text }),
-        sendReply: async (_token: string, messages: Array<{ text: string }>) => {
-          replies.push(messages[0]?.text ?? '');
+        sendReply: async (_token: string, messages: Array<{ text?: string; canonicalText?: string }>) => {
+          replies.push(messages[0]?.canonicalText ?? messages[0]?.text ?? '');
           return 'ok';
         },
       } as any,
@@ -6742,7 +6746,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
       it(`keeps the try-again line at the ${route} route when the credit is busy or could not be checked`, async () => {
         for (const code of ['AI_BUDGET_BUSY', 'AI_BUDGET_UNAVAILABLE']) {
           const turn = await boundTextTurn(code, [...permissions], messageText);
-          assert.deepEqual(turn.delivered.map((message: any) => message.text), ['ขอโทษค่ะ ระบบตอบช้ากว่าปกติ ลองส่งข้อความเดิมอีกครั้งได้เลยค่ะ'], code);
+          assert.deepEqual(turn.delivered.map((message: any) => message.canonicalText ?? message.text), ['ขอโทษค่ะ ระบบตอบช้ากว่าปกติ ลองส่งข้อความเดิมอีกครั้งได้เลยค่ะ'], code);
           assert.equal(turn.final.status, 'provider_unavailable');
           assert.equal(turn.final.errorCode, code);
         }
@@ -6818,7 +6822,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
       assert.ok(long.header[1]!.endsWith('…') && 'ช่วยดูค่าใช้จ่ายของเดือนที่แล้วเทียบกับเดือนนี้ให้หน่อยได้ไหมคะ'.startsWith(long.header[0]!));
     });
 
-    it('stays the text it was where a card cannot be true or cannot be drawn: a tap, a base that is not https', async () => {
+    it('leaves taps to the delivery seam and retains text when the base is not https', async () => {
       // A button tap is carried as words the reader never typed (no LINE message id): no heading of "their words".
       const tap = await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'อ่านคำตอบต่อ', {});
       assert.deepEqual(tap.delivered, [{ type: 'text', text: TRANSIENT }]);
@@ -8780,13 +8784,13 @@ describe('ProcessLineWebhookUseCase – completed multi-part replies end in a Fl
     assert.deepEqual(messages[0].contents.body.contents.filter((entry: any) => entry.type === 'box'), []);
   });
 
-  it('keeps earlier parts as lossless text and renders only the terminal part as the Flex card', async () => {
+  it('keeps every part lossless on the locked card and the completion menu on the terminal part', async () => {
     const parts = ['ส่วนที่ 1\nรายละเอียดยาว', 'ส่วนที่ 2', 'สรุปร่างค่าใช้จ่าย'];
     const messages = await run(parts);
     assert.equal(messages.length, parts.length, 'part count is unchanged (≤ 5)');
     assert.deepEqual(
-      messages.slice(0, -1).map((message: any) => [message.type, message.text, message.quickReply]),
-      [['text', parts[0], undefined], ['text', parts[1], undefined]],
+      messages.slice(0, -1).map((message: any) => [message.type, message.canonicalText, message.quickReply]),
+      [['flex', parts[0], undefined], ['flex', parts[1], undefined]],
     );
     const terminal = messages[messages.length - 1];
     assert.equal(terminal.type, 'flex');
@@ -8900,8 +8904,8 @@ describe('ProcessLineWebhookUseCase – durable terminal outcome (§8.3, default
     await run();
 
     assert.equal(replyCalls.length, 1);
-    assert.equal(replyCalls[0]!.messages[0].type, 'text');
-    assert.match(replyCalls[0]!.messages[0].text, /เกิดข้อผิดพลาดชั่วคราว/);
+    assert.ok(isLineSystemCard(replyCalls[0]!.messages[0]));
+    assert.match(replyCalls[0]!.messages[0].canonicalText, /เกิดข้อผิดพลาดชั่วคราว/);
     assert.doesNotMatch(JSON.stringify(replyCalls), /บันทึกวัตถุประสงค์แล้ว/);
     assert.equal(pushCalls.length, 0);
     const pending = updates.map((update: any) => update.data).find((data: any) => data.status === 'delivery_pending');
@@ -8914,8 +8918,10 @@ describe('ProcessLineWebhookUseCase – Flex→text delivery fallback (§14.3, d
   it('takes the exact legacy push path for a rejected Flex payload while the flag is off', async () => {
     const { run, replyCalls, pushCalls, updates } = makeDeliveryRun({ replyResults: ['failed_flex'], pushResult: 'failed_other' });
     await run();
-    assert.equal(replyCalls.length, 2, 'a plain failure follows an unsaved, undelivered answer');
-    assert.match(replyCalls[1]!.messages[0].text, /เกิดข้อผิดพลาดชั่วคราว/);
+    assert.equal(replyCalls.length, 3, 'the failure card is rejected too, so its canonical text follows once');
+    assert.equal(replyCalls[2]!.messages[0].type, 'text');
+    assert.equal(replyCalls[2]!.messages[0].text, replyCalls[1]!.messages[0].canonicalText);
+    assert.match(replyCalls[1]!.messages[0].canonicalText, /เกิดข้อผิดพลาดชั่วคราว/);
     assert.equal(pushCalls.length, 1, 'failed_flex takes the same push failed_token always took');
     assert.deepEqual(pushCalls[0]!.messages, replyCalls[0]!.messages, 'with the SAME messages');
     const pending = updates.map((update: any) => update.data).find((data: any) => data.status === 'delivery_pending');
@@ -8979,7 +8985,7 @@ describe('ProcessLineWebhookUseCase – Flex→text delivery fallback (§14.3, d
       });
       await run();
       assert.equal(replyCalls.length, expectedReplies + 1, first);
-      assert.match(replyCalls.at(-1)!.messages[0].text, /เกิดข้อผิดพลาดชั่วคราว/);
+      assert.match(replyCalls.at(-1)!.messages[0].canonicalText, /เกิดข้อผิดพลาดชั่วคราว/);
       assert.equal(pushCalls.length, expectedPushes * 2, `${first}: expired tokens also push the plain failure`);
       if (expectedPushes > 0) assert.equal(pushCalls[0]!.messages[0].type, 'flex');
     }
@@ -9110,7 +9116,7 @@ function makeIntakeStateUseCase(prisma: any, opts: {
     {
       buildTextMessage: (text: string) => ({ type: 'text', text }),
       sendReply: async (_token: string, messages: any[]) => {
-        replies.push(messages[0]?.text ?? messages[0]?.altText ?? '');
+        replies.push(messages[0]?.canonicalText ?? messages[0]?.text ?? messages[0]?.altText ?? '');
         sent.push(messages);
         return 'ok';
       },
@@ -9682,7 +9688,7 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     } };
     await h.useCase.executeReceiptUpload(h.event('pair-slip-after-ocr'));
     assert.equal(pairCalls, 1);
-    const reply = h.sends.flat().find((message: any) => message.text?.includes('แนบสลิป'));
+    const reply = h.sends.flat().find((message: any) => (message.canonicalText ?? message.text)?.includes('แนบสลิป'));
     assert.ok(reply); assert.equal(reply.quickReply.items[0].action.type, 'postback');
     assert.doesNotMatch(h.sends.map(batch => JSON.stringify(batch)).join(''), /กรุณาตรวจว่าจ่ายค่าอะไร/);
   });
@@ -10418,8 +10424,8 @@ describe('A5 safety net tracks successful sends before execute finally', () => {
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'a5-silent-once' });
     assert.equal(h.sentMessageBatches.length, 1);
     assert.equal(h.pushes.length, 0);
-    assert.equal(h.sentMessages[0].type, 'text');
-    assert.match(h.sentMessages[0].text, /เกิดข้อผิดพลาดชั่วคราว/);
+    assert.ok(isLineSystemCard(h.sentMessages[0]));
+    assert.match(h.sentMessages[0].canonicalText, /เกิดข้อผิดพลาดชั่วคราว/);
   });
 });
 
@@ -12909,7 +12915,7 @@ it('Fix-up 23 R2: exact after-fx22 E02 waiting tap saves an unreviewed evidence 
   assert.deepEqual((await actions.repairChoices(ctx, chat))?.map(choice => choice.label), ['ส่งรูปใบเสร็จ', 'รอใบเสร็จ', 'ใบรับรองแทนใบเสร็จ']);
   await h.execute(text);
   const messages = h.delivered.at(-1)!;
-  assert.equal(messages[0].text, 'เก็บร่างไว้รอใบเสร็จแล้วค่ะ');
+  assert.ok(readLineSystemCard(messages[0]).texts.includes('เก็บร่างไว้รอใบเสร็จแล้วค่ะ'));
   assert.deepEqual(messages[0].quickReply.items.map((item: any) => item.action), [{ type: 'message', label: 'ส่งรูปใบเสร็จ', text: 'ส่งรูปใบเสร็จ' }]);
   assert.equal(writes.filter(input => input.expectedUpdatedAt).length, 1); assert.equal(record.status, 'DRAFT');
   assert.deepEqual(record.aiVerificationSummaryJson.documentEvidenceDraft, { route: 'ALTERNATIVE_EVIDENCE', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [], reason: '' });
@@ -14476,7 +14482,7 @@ describe('free expense LINE boundary', () => {
     await h.useCase.executeReceiptUpload({ ...BASE_EVENT, messageType: 'image', lineMessageId: 'guest-photo' } as any);
     const cards = JSON.stringify(h.sentMessageBatches);
     assert.match(cards, /เปิดร้านใหม่/); assert.equal(h.intakeRequests.length, 0);
-    assert.deepEqual(h.sentMessageBatches[0].map((message: any) => message.type), ['text', 'flex']);
+    assert.deepEqual(h.sentMessageBatches[0].map((message: any) => message.type), ['flex', 'flex']);
   });
 });
 
@@ -18827,8 +18833,8 @@ it('R12 an open claim category reminder keeps its signed category choices usable
   flow.sendMessagesV2 = async (_event: any, messages: any[]) => { delivered = messages; return 'ok'; };
   await flow.sendMessages(event, [{ type: 'text', text: 'เลือกหมวดตามรายการที่เบิกได้ค่ะ' }]);
   const message = delivered.at(-1);
-  assert.equal(delivered[0].text, 'เลือกหมวดตามรายการที่เบิกได้ค่ะ');
-  assert.match(message.text, /^ต่อจากเมื่อกี้: เลือกหมวดค่าใช้จ่าย/); assert.ok(message.quickReply?.items.length);
+  assert.equal(delivered[0].canonicalText, 'เลือกหมวดตามรายการที่เบิกได้ค่ะ');
+  assert.match(message.canonicalText, /^ต่อจากเมื่อกี้: เลือกหมวดค่าใช้จ่าย/); assert.ok(message.quickReply?.items.length);
   assert.equal(flow.reimbursementOptionsDelivery.get(event)?.actionId, claim.action().id, 'the repeated signed choices carry their existing delivery proof');
   const categories = (await claim.view())!.choices.filter((choice: any) => choice.kind === 'CATEGORY');
   const button = message.quickReply.items.find((i: any) => i.action.data && categories.some((category: any) => category.choiceId === new URLSearchParams(i.action.data).get('choice')));
@@ -19522,7 +19528,7 @@ it('R15 foreign actor presses and chat credit refusals record REFUSED without ap
   const control = { action: 'wf_open' as const, act: 'DELETE_DRAFT' as const, id: 'workflow-expense-c-2', sig: lineWorkflowOpenSig(h.flow.config.aiGatewayInternalSecret, 'company-1', 'user-1', 'DELETE_DRAFT', 'workflow-expense-c-2') };
   const foreign = { ...BASE_EVENT, webhookEventId: 'r15-foreign-actor', workflowControl: control };
   await h.flow.handleWorkflowControl(foreign, { ...h.source.ctx, companyId: 'company-2', userId: 'foreign-member', membershipId: 'foreign-membership' }, new Set(['expenses']));
-  assert.equal(h.flow.workflowTaskOutcomes.get(foreign)?.status, 'REFUSED'); assert.match(JSON.stringify(messages.at(-1)), /การ์ดนี้ใช้ไม่ได้แล้ว/); assert.equal(h.creates(), 0);
+  assert.equal(h.flow.workflowTaskOutcomes.get(foreign)?.status, 'REFUSED'); assert.equal(h.flow.workflowTaskOutcomes.get(foreign)?.kind, 'expense_delete'); assert.match(JSON.stringify(messages.at(-1)), /การ์ดนี้เป็นของบัญชีอื่น/); assert.equal(h.creates(), 0);
   const credit = { ...BASE_EVENT, webhookEventId: 'r15-credit' };
   const { AI_BUDGET_REFUSAL_CODES } = await import('@watchdog-bms/contracts'); h.flow.isTrialTier = async () => false;
   assert.equal(await h.flow.answerAiCreditRefusal(credit, 'company-1', { budgetErrorCode: AI_BUDGET_REFUSAL_CODES.exceeded, budgetScope: 'CHAT' }, false), true);
@@ -19791,6 +19797,52 @@ it('R16 read web exits preserve the approved package refusal sentence', async ()
   assert.equal(h.replies.at(-1), text);
 });
 
+it('R17 customer documents VAT records and reconciliation refuse without models on paid and free paths', async () => {
+  const { FREE_EXPENSE_CHAT_REPLY } = await import('../../domain/logic/free-expense-line.logic');
+  for (const freeExpenseDrafts of [false, true]) for (const messageText of ['ออกใบแจ้งหนี้ให้ลูกค้า', 'ช่วยทำใบเสนอราคา', 'ออกใบกำกับภาษีขาย 500 บาท', 'ออกใบเสร็จให้ลูกค้า', 'ดูรายการ ภ.พ.30 เดือนนี้', 'กระทบยอดธนาคาร']) {
+    const { prisma } = makePrisma();
+    prisma.client.companyFeatureEntitlement.findMany = async () => [{ featureKey: 'expenses', enabled: true }, { featureKey: 'ai_line_assistant', enabled: true }];
+    const h = makeUseCase(prisma, { freeExpenseDrafts, permissions: ['line.ai.query', 'ai.tool.invoke', 'expense.read'],
+      intakeRouteFn: () => assert.fail('no intake'), aiGatewayFn: () => assert.fail('no turn') });
+    (h.useCase as any).aiGateway.requestLineWorkflowClassify = async () => assert.fail('no classifier');
+    const event = { ...BASE_EVENT, webhookEventId: `r17-unsold-${freeExpenseDrafts}-${messageText}`, messageText };
+    await h.useCase.execute(event);
+    assert.equal(h.replies.at(-1), freeExpenseDrafts ? FREE_EXPENSE_CHAT_REPLY : 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
+    assert.equal((h.useCase as any).workflowTaskOutcomes.get(event)?.status, 'REFUSED');
+    assert.equal(h.intakeRequests.length + h.aiGatewayRequests.length, 0);
+  }
+});
+
+it('R17 requests to tell and show reuse the read-question detector', async () => {
+  const { lineWorkflowPickerText } = await import('../../domain/logic/line-ai-classifier.logic');
+  for (const text of ['ช่วยบอกยอดของใบที่รอ', 'บอกหน่อยว่าใบเบิกรอบ 4 จ่ายแล้ว', 'ขอทราบยอดใบเบิก', 'ช่วยแสดงใบเตรียมจ่ายที่เป็นร่าง']) {
+    assert.equal(lineWorkflowPickerText(text, true).question, true, text);
+  }
+});
+
+it('R17 approved knowledge follow-ups verify exact remembered cards without a business read', async () => {
+  const { LineReadEvidenceService } = await import('../line-read-evidence.service');
+  const service = new LineReadEvidenceService({ client: { lineReadEvidence: { findMany: async () => [] } } } as any, {} as any, new Map());
+  const request: any = { approvedKnowledge: true, userContext: { companyId: 'shop', internalUserId: 'reader' },
+    conversationContext: { lastKnowledgeCards: [{ id: 'staff.roles', version: 3 }] } };
+  const response: any = { toolsInvoked: [], sourceRefs: [{ module: 'knowledge', entityType: 'approved_product_help',
+    entityId: 'mangmee-product-help:7:staff.roles:3', permissionChecked: true }] };
+  assert.deepEqual(await service.forTurn(request, response), []);
+  assert.equal(await service.forTurn(request, { ...response, sourceRefs: [{ ...response.sourceRefs[0], entityId: 'mangmee-product-help:7:staff.roles:4' }] }), null);
+});
+
+it('R17 an unverifiable read gets the read limitation and a web button', async () => {
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma), flow = h.useCase as any, sent: any[] = [];
+  const event = { ...BASE_EVENT, webhookEventId: 'r17-read-verification', messageText: 'ใบเบิกของสมศรีมีไหม' };
+  flow.intakePlansV2.set(event, { semanticSubrequests: [{ kind: 'read' }] });
+  flow.sendTrackedReply = async (_event: any, messages: any[]) => { sent.push(...messages); return 'ok'; };
+  await flow.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', { companyId: 'company-1', userId: 'user-1' });
+  assert.ok(JSON.stringify(sent).includes('ในแชตยังแสดงข้อมูลตามที่ถามไม่ได้ เปิดรายการในเว็บเพื่อดูต่อค่ะ'));
+  assert.ok(JSON.stringify(sent).includes('/companies/company-1/reimbursements'));
+  assert.doesNotMatch(JSON.stringify(sent), /ข้อมูลต้นทางเปลี่ยน/);
+});
+
 it('R16 due-date evidence pins this month and last month and still refuses changed sources or access', async () => {
   const { LineReadEvidenceService } = await import('../line-read-evidence.service');
   for (const [question, periodKey] of [['ภงด53 เดือนนี้ยื่นวันไหน', '2026-11'], ['ภงด53 เดือนที่แล้วยื่นวันไหน', '2026-10']]) {
@@ -19813,4 +19865,321 @@ it('R16 due-date evidence pins this month and last month and still refuses chang
     changed = true; assert.equal(await service.verify('company', 'user', 'request', ['proof']), false);
     changed = false; permissions = []; assert.equal(await service.verify('company', 'user', 'request', ['proof']), false);
   }
+});
+
+it('R17 seller invoices retain the expense read route on paid and free paths', async () => {
+  for (const freeExpenseDrafts of [false, true]) {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { freeExpenseDrafts, permissions: ['line.ai.query', 'ai.tool.invoke', 'expense.read'],
+      aiGatewayFn: () => ({ requestId: 'vendor-invoice', replyText: 'ยอดค่าใช้จ่าย 500 บาท', intent: 'business_read', agent: 'accounting',
+        refused: false, toolsInvoked: [], sourceRefs: [], sourceLabels: [], webLinks: [] }) });
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `r17-vendor-${freeExpenseDrafts}`, messageText: 'ใบแจ้งหนี้จากผู้ขายเดือนนี้ยอดเท่าไหร่' });
+    const { FREE_EXPENSE_CHAT_REPLY } = await import('../../domain/logic/free-expense-line.logic');
+    assert.equal(h.aiGatewayRequests.length, freeExpenseDrafts ? 0 : 1);
+    assert.equal(h.replies.at(-1), freeExpenseDrafts ? FREE_EXPENSE_CHAT_REPLY : 'ยอดค่าใช้จ่าย 500 บาท');
+  }
+});
+
+// Round 17 lane B. Exercise the delivery seam so field questions and reminders cannot bypass it.
+for (const [family, text] of [
+  ['workflow field', 'จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ'],
+  ['expense reason', 'ยกเลิกรายการนี้เพราะอะไรคะ'],
+  ['claim reason', 'ยกเลิกใบเบิกนี้เพราะอะไรคะ'],
+  ['claim rejection', 'ไม่อนุมัติใบเบิกนี้เพราะอะไรคะ'],
+  ['unusable card', 'การ์ดนี้ใช้ไม่ได้แล้วค่ะ ขอเตรียมการ์ดใหม่อีกครั้ง'],
+  ['expired card', 'การ์ดนี้หมดเวลาแล้วค่ะ'],
+  ['choice', 'ต้องการทำเรื่องไหนคะ'],
+  ['single choice', 'ต้องการทำเรื่องนี้ใช่ไหมคะ'],
+  ['picker', 'เลือกรายการจากการ์ดนี้'],
+  ['payee', 'ขอชื่อผู้รับเงินสำหรับใบเตรียมจ่ายนี้ค่ะ'],
+  ['decline', 'ไม่ทำรายการนี้ค่ะ'],
+  ['cancel', 'ยกเลิกขั้นตอนนี้แล้วค่ะ'],
+  ['reminder', 'ต่อจากเมื่อกี้: ผู้รับเงินชื่ออะไรคะ'],
+  ['error', 'ยังตอบไม่สำเร็จ ลองอีกครั้งค่ะ'],
+  ['follow', 'น้องมั่งมีจะตอบได้หลังเปิดร้านหรือเชื่อมบัญชีแล้วค่ะ'],
+  ['unlinked', '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนใช้งานนะคะ\nเปิดเว็บแอปเพื่อเชื่อมต่อได้เลยค่ะ'],
+  ['resume', 'ร่างใบเบิกเดิมยังเก็บไว้ค่ะ'],
+  ['delivery expiry', 'คำตอบชุดนี้หมดอายุหรือสิทธิ์เปลี่ยนแล้วค่ะ กรุณาถามใหม่'],
+  ['delivery cancel', 'หยุดส่งส่วนที่เหลือแล้วค่ะ การหยุดส่งคำตอบไม่ย้อนรายการที่บันทึกไปแล้ว'],
+  ['public refusal', 'แชตนี้ยังไม่พร้อมตอบด้วย AI ค่ะ งานเอกสารหรือข้อมูลบริษัทกรุณาส่งในแชตส่วนตัว'],
+] as const) it(`R17 ${family} uses the locked card and keeps quick replies for paid and free delivery`, async () => {
+  const { lineFlexBodyProblems } = await import('../../domain/logic/line-system-card-limits.logic');
+  for (const freeExpenseDrafts of [false, true]) {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { freeExpenseDrafts });
+    const flow = h.useCase as any;
+    const event = { ...BASE_EVENT, messageText: '', lineMessageId: undefined };
+    const quickReply = { items: [{ type: 'action', action: { type: 'message', label: 'เปิดเมนู', text: 'เมนูหลัก' } }] };
+    await flow.deliverRequiredMessages(event, [{ type: 'text', text, quickReply }]);
+    const card = h.sentMessages.at(-1);
+    assert.deepEqual(readLineSystemCard(card).header, family === 'unlinked' ? ['เริ่มใช้น้องมั่งมี', 'เปิดร้านหรือเชื่อมบัญชี'] : ['น้องมั่งมี', 'แจ้งให้ทราบ']);
+    assert.equal(card.canonicalText, text);
+    assert.ok(readLineSystemCard(card).texts.join('\n').includes(text));
+    assert.deepEqual(card.quickReply, quickReply);
+    assert.deepEqual(lineFlexBodyProblems(card.contents), []);
+    assert.equal(h.intakeRequests.length, 0);
+    assert.equal(h.aiGatewayRequests.length, 0);
+  }
+});
+
+it('R17 substitute questions show the record amount and only the next question while retaining all preview fields', async () => {
+  const { harness, ctx } = await import('../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec');
+  const { buildSubstituteReceiptFactsCard } = await import('../line-substitute-receipt-action.service');
+  const { lineFlexBodyProblems } = await import('../../domain/logic/line-system-card-limits.logic');
+  const h = harness();
+  const result = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'รายการ' }], confirmedStart: true, webBaseUrl: 'https://app.example.com' });
+  const before = JSON.stringify(h.getExpense());
+  const card = buildSubstituteReceiptFactsCard(result);
+  assert.ok(card && card.type === 'flex');
+  const read = readLineSystemCard(card);
+  assert.deepEqual(read.header, ['ใบรับรองแทนใบเสร็จ', 'ข้อมูลที่ต้องตอบ']);
+  assert.deepEqual(read.rows.map(row => row[0]), ['รายการ', 'ยอดปัจจุบัน']);
+  if (result.blockers.some(item => item.code === 'payer_required')) assert.deepEqual(read.actions.map(action => action.label), ['ฉันเป็นผู้จ่าย', 'เลือกสมาชิกคนอื่น']);
+  const questions = result.pendingQuestion!.split('\n• ').slice(1);
+  assert.equal(result.questionCard!.remainingQuestions, result.blockers.filter(item => item.collectableInLine).length - 1);
+  assert.ok(questions.length > 1);
+  assert.ok(read.texts.includes(result.questionCard!.question));
+  assert.ok(read.texts.includes(`ยังเหลือ ${result.questionCard!.remainingQuestions} ข้อ`));
+  for (const later of questions.slice(1)) assert.ok(!read.texts.includes(later));
+  assert.ok(read.texts.join('\n').length <= 1000);
+  assert.deepEqual(lineFlexBodyProblems(card.contents), []);
+  assert.equal(JSON.stringify(h.getExpense()), before, 'rendering keeps all accepted values and source state');
+});
+
+it('R17 a rejected notice falls back to its original text and quick replies exactly once', async () => {
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma);
+  const flow = h.useCase as any;
+  const calls: any[] = [];
+  flow.lineReply.sendReply = async (_token: string, messages: any[]) => { calls.push(messages); return calls.length === 1 ? 'failed_flex' : 'ok'; };
+  const quickReply = { items: [{ type: 'action', action: { type: 'message', label: 'เปิดเมนู', text: 'เมนูหลัก' } }] };
+  assert.equal(await flow.sendTrackedReply(BASE_EVENT, [{ type: 'text', text: 'การ์ดนี้หมดเวลาแล้วค่ะ', quickReply }]), 'ok');
+  assert.equal(calls.length, 2);
+  assert.ok(isLineSystemCard(calls[0][0]));
+  assert.deepEqual(calls[1], [{ type: 'text', text: 'การ์ดนี้หมดเวลาแล้วค่ะ', quickReply }]);
+  assert.equal(h.aiGatewayRequests.length, 0);
+});
+
+it('R17 category options belong to one substitute question and do not inflate the remaining count', async () => {
+  const { buildSubstituteReceiptFactsCard } = await import('../line-substitute-receipt-action.service');
+  const question = 'ค่าใช้จ่ายนี้อยู่หมวดไหนคะ?\n• ค่าเดินทาง\n• ค่าวัสดุ';
+  const card = buildSubstituteReceiptFactsCard({ handled: true, status: 'BLOCKED', acceptedFields: [], blockers: [],
+    replyText: 'ข้อมูลเต็มสำหรับตรวจในขั้นสุดท้าย', pendingQuestion: `${question}\n• ผู้รับเงินชื่ออะไรคะ?`,
+    questionCard: { record: 'EXP-001', amount: '250.00 บาท', question, remainingQuestions: 1 }, webPath: 'https://app.example.com/companies/company-1/expenses/expense-1' });
+  assert.ok(card);
+  const read = readLineSystemCard(card);
+  assert.ok(read.texts.join('\n').includes(question));
+  assert.deepEqual(read.footnotes, ['ยังเหลือ 1 ข้อ']);
+  assert.doesNotMatch(read.texts.join('\n'), /ผู้รับเงินชื่อ/);
+});
+
+it('R17 substitute collection keeps a grounded side answer on its own locked card before the compact question', async () => {
+  const { harness, ctx } = await import('../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec');
+  const source = harness();
+  await source.useCase.execute(ctx(), { messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'รายการ' }], confirmedStart: true, webBaseUrl: 'https://app.example.com' });
+  const result = await source.useCase.execute(ctx(), { messageText: 'ใบนี้เคลมภาษีซื้อได้ไหมคะ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: 'https://app.example.com' });
+  assert.equal(result.sideQuestionAnswered, true);
+  assert.match(result.questionCard?.answer ?? '', /ไม่ใช่ใบกำกับภาษีจากผู้ขาย/);
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma);
+  const flow = h.useCase as any, event = { ...BASE_EVENT, webhookEventId: 'r17-side-answer' };
+  flow.deliverySubstituteContinuations.set(event, result);
+  const before = JSON.stringify(source.getExpense());
+  await flow.deliverCompletedReply(event, result.replyText, 'company-1', { roles: [], permissions: [] });
+  const messages = h.sentMessageBatches[0]!;
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].canonicalText, result.questionCard!.answer);
+  assert.deepEqual(readLineSystemCard(messages[0]).header, ['ใบรับรองแทนใบเสร็จ', 'คำถามที่ถามเพิ่ม']);
+  assert.deepEqual(readLineSystemCard(messages[1]).rows.map(row => row[0]), ['รายการ', 'ยอดปัจจุบัน']);
+  assert.doesNotMatch(readLineSystemCard(messages[1]).texts.join('\n'), /คำถามแทรก/);
+  assert.equal(JSON.stringify(source.getExpense()), before);
+  assert.equal(h.aiGatewayRequests.length, 0);
+});
+
+it('R17 named records without a verb keep their allowed action buttons and bind this bill', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('named record needs no model');
+  await h.execute('จัดการบิล ทดสอบ-0003 ให้หน่อย');
+  assert.match(JSON.stringify(h.delivered.at(-1)), /ส่งตรวจ/);
+  assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /ต้องการทำอะไร/);
+  await h.execute('ส่งตรวจบิลนี้');
+  assert.match(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+  const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+  assert.equal(pending?.expenseId, 'workflow-expense-c-2'); assert.equal(h.creates(), 0);
+});
+
+it('R17 one-item alternative amounts are settled before receipt and typed money stays in collection', async () => {
+  const h = manualClaimHarness(); await h.adapter.startFromWorkflow(h.ctx, h.owner, 1, { eventIdHash: 'a'.repeat(64) });
+  const answer = async (text: string) => {
+    const evidence = (await createLineAiInputEvidence({ turnKey: deliveryHash(text), parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    return h.adapter.answerLine({ ...h.input, evidence, text });
+  };
+  await answer('ค่าแท็กซี่ไปลูกค้า 80 บ. กับ 120 บ. วันนี้');
+  assert.equal((await h.view())?.lineQuestion?.amountChoices.length, 2);
+  await answer('120 บ. ค่ะ');
+  assert.equal(h.action().commandJson.accepted.proposal.lineChanges[0].values.amount.value, '120');
+  assert.equal(h.action().commandJson.accepted.proposal.lineChanges[0].values.description.value, 'ค่าแท็กซี่ไปลูกค้า');
+  assert.equal((await h.view())?.collection.receiptChosen, false);
+  await answer('80 บาท');
+  assert.equal(h.action().commandJson.accepted.proposal.lineChanges[0].values.amount.value, '80');
+  assert.equal((await h.view())?.collection.receiptChosen, false, 'money at the receipt question never chooses no receipt');
+});
+
+it('R17 voucher submit accepts the named draft amount and pay keeps its planned method or asks', async t => {
+  for (const method of ['BANK_TRANSFER', null]) {
+    const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+    h.source.ctx.permissions.push('expense.disbursement.read', 'expense.disbursement.prepare', 'expense.disbursement.pay');
+    h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('voucher is lexical');
+    const header = { id: 'voucher-c-draft', companyId: 'company-1', branchId: 'branch-1', status: 'DRAFT', documentNumber: null, payeeName: 'ผู้รับเงินนอกคู่ค้า', totalAmount: '1000', currency: 'THB', version: 1, createdAt: '2026-11-06T00:00:00Z', updatedAt: '2026-11-06T00:00:00Z', plannedMethod: method };
+    const vouchers = { listForLine: async () => ({ data: [header], total: 1 }), get: async () => ({ header, lines: [{ expenseId: h.source.records[4].id, expenseNumber: 'ทดสอบ-0012', vendorInvoiceNumber: 'ผู้ขาย-0012', amount: '1000', whtAmount: '0', vendorName: 'ร้านสมใจ' }] }), previewLineAction: async () => undefined };
+    h.source.targets.vouchers = vouchers; h.source.actions.vouchers.vouchers = vouchers;
+    await h.execute('ส่งใบเตรียมจ่ายร่าง 1,000 บาทไปอนุมัติ');
+    let pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+    assert.equal(pending?.preview.action, 'VOUCHER_SUBMIT', JSON.stringify(h.delivered.at(-1)));
+    await h.execute('ใบเตรียมจ่ายที่มีบิล ทดสอบ-0012');
+    assert.match(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+    await h.execute('ส่งใบเตรียมจ่ายที่มีบิล ทดสอบ-9999 ไปอนุมัติ');
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+    assert.match(JSON.stringify(h.delivered.at(-1)), /wf_open/);
+    header.status = 'APPROVED'; header.version++;
+    await h.execute('บันทึกจ่ายใบเตรียมจ่ายที่มีบิล ทดสอบ-0012');
+    pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+    if (method) { assert.equal(pending?.preview.payment?.paymentMethod, method); assert.match(JSON.stringify(h.delivered.at(-1)), /วิธีจ่าย.*โอนเงิน/); }
+    else {
+      assert.equal(pending?.awaitingField, 'paymentMethod'); assert.match(JSON.stringify(h.delivered.at(-1)), /จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็ค/);
+      await h.execute('โอน');
+      pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+      assert.equal(pending?.preview.payment?.paymentMethod, 'BANK_TRANSFER'); assert.equal(pending?.awaitingField, undefined);
+    }
+    assert.equal(h.creates(), 0);
+  }
+});
+
+it('R17 a named claim exposes the permitted actions without a model or a write', async t => {
+  const h = await r8ClaimPicker(t); h.flow.latestWorkflowPicker = async () => null;
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('the named claim uses its permitted list');
+  const row = h.source.claims.find((row: any) => row.id === 'c-7');
+  row.reason = 'ค่าน้ำมัน รอบ 4';
+  await h.execute('จัดการใบเบิกค่าน้ำมัน รอบ 4 ของสมชาย ยอด 1,877 บ.');
+  const reply = JSON.stringify(h.delivered.at(-1));
+  assert.match(reply, /อนุมัติ/); assert.match(reply, /wf_open/); assert.doesNotMatch(reply, /ต้องการทำอะไร/);
+  assert.equal(h.intakeRequests.length, 0);
+});
+
+it('R17 named reason and category edits bind to the draft and need no text model', async t => {
+  for (const [field, value] of [['เหตุผล', 'ไปพบลูกค้า'], ['หมวด', 'ค่าเดินทาง']]) {
+    const claim = manualClaimHarness(), now = new Date(); claim.owner.chatKeyHash = chatKeyHashOf(BASE_EVENT);
+    const row: any = { id: 'named-claim', companyId: claim.ctx.companyId, requesterUserId: claim.ctx.userId, requesterDisplayNameSnapshot: 'สมชัย', branchId: 'branch-1', status: 'DRAFT', title: '', reason: 'ค่าน้ำมัน รอบ 2', amount: '250', currency: 'THB', incurredDate: new Date('2026-11-05'), updatedAt: now, categoryKey: 'food', receiptRequirementStatus: 'WAIVED_BY_POLICY', lines: [{ id: 'line-1', lineNo: 1, incurredDate: new Date('2026-11-05'), description: 'ค่าน้ำมัน', amount: '250', categoryKey: 'food', categoryLabelSnapshot: 'ค่าอาหาร', updatedAt: now }] };
+    claim.repo.listRequests = async () => [row]; claim.repo.findRequestById = async () => row;
+    const h = await fx21bBoundWebhook(t, { source: `r17-edit-${field === 'เหตุผล' ? 'reason' : 'category'}`, messageText: '', route: {} }, claim.ctx.permissions);
+    h.flow.permissionResolver.resolveAccess = async () => ({ ...claim.ctx }); h.flow.reimbursementAdapter = claim.adapter; h.flow.reimbursementDrafts = claim.service;
+    h.flow.aiGateway.requestLineWorkflowClassify = () => assert.fail('no classifier'); h.flow.aiGateway.requestLineIntakeRoute = () => assert.fail('no intake'); h.flow.aiGateway.requestLineTurn = () => assert.fail('no model');
+    await h.execute(`แก้${field}ของใบเบิกค่าน้ำมันรอบ 2 ของฉันเป็น ${value}`);
+    assert.match(JSON.stringify(h.delivered.at(-1)), /reimbursement_draft_confirm/, field);
+    assert.equal(claim.action().previewJson.before.amount, row.amount);
+    if (field === 'เหตุผล') assert.equal(claim.action().previewJson.after.reason, value);
+    else assert.equal(claim.action().previewJson.after.lines[0].categoryKey, 'travel');
+  }
+});
+
+it('R17 a duplicate vendor question stays about the vendor and scopes its bill picker', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+  h.source.ctx.permissions.push('accounting.counterparty.read', 'expense.disbursement.read', 'expense.disbursement.prepare');
+  h.source.records.forEach((row: any, index: number) => { row.status = 'CONFIRMED'; row.vendorNameSnapshot = 'ร้านชื่อซ้ำ'; row.vendorCounterpartyId = index === 4 ? 'vendor-2' : 'vendor-1'; });
+  h.source.targets.counterparties = { execute: async () => ({ data: [{ id: 'vendor-1', displayName: 'ร้านชื่อซ้ำ', taxId: '1111111111111', branchCode: '00000' }, { id: 'vendor-2', displayName: 'ร้านชื่อซ้ำ', taxId: '2222222222222', branchCode: '00002' }], total: 2 }) };
+  const list = h.source.targets.expenses.execute;
+  h.source.targets.expenses.execute = async (ctx: any, filter: any, ...rest: any[]) => { const result = await list(ctx, filter, ...rest); const data = result.data.filter((row: any) => !filter.vendorCounterpartyId || row.vendorCounterpartyId === filter.vendorCounterpartyId); return { ...result, data, total: data.length }; };
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('vendor question is deterministic');
+  await h.execute('ทำใบเตรียมจ่ายร้านชื่อซ้ำ');
+  assert.match(JSON.stringify(h.delivered.at(-1)), /1111111111111/); assert.match(JSON.stringify(h.delivered.at(-1)), /2222222222222/);
+  await h.execute('ยังไม่รู้ว่าร้านไหน'); assert.match(JSON.stringify(h.delivered.at(-1)), /เลือกผู้ขาย/);
+  const permissions = h.source.ctx.permissions;
+  h.source.ctx.permissions = permissions.filter((permission: string) => permission !== 'accounting.counterparty.read');
+  const refused = await h.execute('เลือกผู้ขาย 2');
+  assert.equal(h.flow.workflowTaskOutcomes.get(refused)?.status, 'REFUSED'); assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /1111111111111|2222222222222/);
+  h.source.ctx.permissions = permissions;
+  await h.execute('ทำใบเตรียมจ่ายร้านชื่อซ้ำ');
+  await h.execute('เลือกผู้ขาย 2');
+  const reply = JSON.stringify(h.delivered.at(-1)); assert.match(reply, /workflow-expense-c-2/); assert.doesNotMatch(reply, /id=expense-company-c-4/);
+  assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+});
+
+it('R17 this bill refers to the immediately preceding named bill and ignores a denied alternative', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets; h.flow.latestWorkflowPicker = async () => null;
+  h.flow.loadConversationContext = async () => ({ recentTurns: [{ userMessagePreview: 'จัดการบิล ทดสอบ-0003', userMessagePreviewComplete: true }], recentReads: [] });
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('the named preceding bill is lexical');
+  await h.execute('ลบร่างใบนี้ ไม่ได้จะยืนยัน');
+  const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+  assert.equal(pending?.preview.action, 'DELETE_DRAFT'); assert.equal(pending?.expenseId, 'workflow-expense-c-2');
+  assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+});
+
+it('R17 a foreign preview press preserves its workflow kind and offers the menu without a write', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+  await h.execute('ลบร่าง ทดสอบ-0003');
+  const button = flexButtons(h.delivered.at(-1)![0]).find(button => button.action.data?.includes('action=expense_action_confirm'))!;
+  const { parseExpenseActionControl } = await import('../line-expense-action.service');
+  const control = parseExpenseActionControl(button.action.data)!; assert.equal(control.act, 'DELETE_DRAFT');
+  const event = { ...BASE_EVENT, webhookEventId: 'r17-foreign-preview', expenseActionControl: control };
+  const second = { ...h.source.ctx, companyId: 'other-company', userId: 'other-member', membershipId: 'other-membership' };
+  const replies: any[] = []; h.flow.deliverRequiredMessages = async (_event: any, messages: any[]) => replies.push(messages); h.flow.updateEventLog = async () => undefined;
+  h.flow.expenseActionRepairChoices = async () => [];
+  await h.flow.handleExpenseActionPostback(event, second, new Set(['expenses']));
+  assert.equal(h.flow.workflowTaskOutcomes.get(event)?.status, 'REFUSED');
+  assert.match(JSON.stringify(replies), /บัญชีอื่น/); assert.match(JSON.stringify(replies), /เปิดเมนู/); assert.equal(h.creates(), 0);
+  const client = h.prisma.client, observations: any[] = []; h.flow.deliveryAccess.set(event, second);
+  client.lineAiTaskRun = { findFirst: async () => null, createMany: async (args: any) => observations.push(args.data), update: async (args: any) => observations.push(args.data), findUniqueOrThrow: async () => ({ id: 'refused-task', kind: 'expense_delete', startedAt: new Date() }) };
+  client.lineWebhookEventLog.findUnique = async () => ({ id: 'foreign-event', companyId: second.companyId, processedAt: new Date(), status: 'expense_action_blocked', createdAt: new Date() });
+  client.lineWebhookEventLog.updateMany = async () => ({ count: 1 }); client.lineWebhookEventLog.findMany = async () => [];
+  client.lineTurnOutcome = { findUnique: async () => null }; client.aiBudgetReservation = { findMany: async () => [] }; client.aiUsageEvent = { findMany: async () => [] }; client.$transaction = async (run: any) => run(client);
+  await h.flow.recordTaskObservation(event);
+  assert.ok(JSON.stringify(observations).includes('expense_delete')); assert.doesNotMatch(JSON.stringify(observations), /"kind":"unknown"/);
+});
+
+it('R17 everyday expense delete openers go straight to the named draft with zero model calls', async t => {
+  for (const text of ['เอาร่างบิล ทดสอบ-0003 ออก', 'ขอการ์ดลบ ทดสอบ-0003', 'ลบทิ้ง ทดสอบ-0003']) {
+    const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+    h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('delete wording is lexical');
+    await h.execute(text);
+    const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+    assert.equal(pending?.preview.action, 'DELETE_DRAFT'); assert.equal(pending?.expenseId, 'workflow-expense-c-2');
+    assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+  }
+});
+
+it('R17 everyday claim actions honor permission and free-shop gates before any model or write', async t => {
+  for (const freeExpenseDrafts of [false, true]) for (const text of ['ให้ผ่านใบเบิก รอบ 4', 'ตีกลับใบเบิก รอบ 4', 'record payment ใบเบิก รอบ 4']) {
+    const h = await r8ClaimPicker(t); h.source.ctx.freeExpenseDrafts = freeExpenseDrafts;
+    h.source.ctx.permissions = ['line.ai.query', 'ai.tool.invoke', 'reimbursement.read_own'];
+    h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('permission comes before a model');
+    const before = structuredClone(h.source.claims);
+    const event = await h.execute(text);
+    assert.equal(h.flow.workflowTaskOutcomes.get(event)?.status, 'REFUSED');
+    assert.deepEqual(h.source.claims, before); assert.equal(h.intakeRequests.length, 0);
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm|wf_choice/);
+  }
+});
+
+it('R17 named claim action buttons use the existing English action labels', async t => {
+  const h = await r8ClaimPicker(t); h.source.ctx.permissions.push('reimbursement.payment.record');
+  const text = 'ใบเบิกค่าน้ำมัน รอบ 4 ยอด 1,877 บ.';
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'r17-en-actions', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+  h.source.claims.find((row: any) => row.id === 'c-7').reason = 'ค่าน้ำมัน รอบ 4';
+  const event = { ...BASE_EVENT, language: 'en', messageText: text, inputEvidence: evidence }, replies: any[] = [];
+  h.flow.textEvidenceV2 = async () => evidence;
+  h.flow.deliverReply = async (_event: any, _text: string, quickReply: any) => { replies.push(quickReply); };
+  h.flow.updateEventLog = async () => undefined;
+  assert.equal(await h.flow.showNamedRecordActions(event, h.source.ctx, new Set(['expenses'])), true);
+  assert.match(JSON.stringify(replies), /Approve/); assert.doesNotMatch(JSON.stringify(replies.flatMap(reply => reply.items.map((item: any) => item.action.label))), /[ก-๙]/u);
+  assert.ok(replies.flatMap(reply => reply.items).every((item: any) => item.action.data.includes('language=en')));
+});
+
+it('R17 a read-only named bill shows its record and web exit without invented mutation buttons', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets; h.flow.editableExpenses = h.source.targets.expenses;
+  h.source.ctx.permissions = ['line.ai.query', 'ai.tool.invoke', 'expense.read'];
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('the named readable bill needs no classifier');
+  await h.execute('จัดการบิล ทดสอบ-0003');
+  const reply = JSON.stringify(h.delivered.at(-1));
+  assert.match(reply, /ทดสอบ-0003/); assert.match(reply, /\/expenses\/workflow-expense-c-2/); assert.doesNotMatch(reply, /wf_open|ต้องการทำอะไร/);
+  assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
 });

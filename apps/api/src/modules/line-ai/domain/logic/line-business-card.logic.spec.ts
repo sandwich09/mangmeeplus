@@ -124,8 +124,8 @@ it('CARDS-2 claim action previews use Claim and Requester while expense void byt
   const { buildExpenseActionCard } = await import('./line-expense-action-card.logic');
   const base: any = { token: 'preview.' + 'a'.repeat(43), previewId: 'preview', action: 'VOID', summary: 'ตรวจรายการก่อนยกเลิกค่ะ', reason: 'บันทึกซ้ำ',
     expiresAt: '2026-11-06T12:30:00Z', record: { vendorName: 'ร้านทดสอบ', amount: '170.0000', currency: 'THB', date: '2026-11-05', status: 'ยืนยันแล้ว', nextStatus: 'ยกเลิกแล้ว' } };
-  const hashes = ['4d08293bf618a54e988dd1b6237aa52c592b2da2d6b8c4d9cac81043153884a6', '62c5c5b90d5bfbd5807329587d9987f0951c65a5cae2a6c122bc14e8f185ec2b',
-    '8eea80ef6b5868032e4d355124612a4a75865659f0df156cf74e4f82bb9293eb', 'ccdebf7b99c308ba8c6496dc143a9b268bc8c9ce04e7c8cbe74ab9d539efac55'];
+  const hashes = ['64808c37c356c2e16d4edd91bd22379a429b82948ff514f771b16a61a6876a8c', '62c5c5b90d5bfbd5807329587d9987f0951c65a5cae2a6c122bc14e8f185ec2b',
+    '2fc55c4b763083d6ae747784d1485c459aac727aba946fd4035d43982d307e22', 'ccdebf7b99c308ba8c6496dc143a9b268bc8c9ce04e7c8cbe74ab9d539efac55'];
   let index = 0;
   for (const language of ['th', 'en'] as const) for (const reply of [undefined, 'ยกเลิกรายการแล้วค่ะ']) {
     const expense = buildExpenseActionCard(base, reply, language, 'https://app.example.com');

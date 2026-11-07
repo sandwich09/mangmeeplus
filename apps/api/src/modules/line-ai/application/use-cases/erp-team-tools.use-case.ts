@@ -19,7 +19,7 @@ export class CompanyGetRolesTool implements ErpReadToolPort {
   async execute(ctx: ErpToolContext, input: { roleName?: string; employeeName?: string; permissionKey?: string } = {}): Promise<ToolResult> {
     const asOf = new Date().toISOString(), sourceRefs = [{ label: 'หน้าที่และสิทธิ์พนักงาน', module: 'employee-access', entityType: 'role_permissions', permissionChecked: true as const, webPath: `/companies/${ctx.companyId}/settings/access-overview` }];
     const readRoles = ctx.permissions.some(key => ['access.role.read', 'access.role.manage', 'access.employee.create', 'access.employee.update'].includes(key));
-    if (!readRoles || (input.employeeName || input.permissionKey) && !ctx.permissions.includes('access.employee.read')) return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
+    if (!readRoles || input.employeeName && !ctx.permissions.includes('access.employee.read')) return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     if (input.permissionKey && !PERMISSIONS.some(p => p.key === input.permissionKey)) return { toolName: this.toolName, status: 'ok', data: { reply: 'ต้องการดูสิทธิ์ทำงานเรื่องอะไรคะ' }, sourceRefs, asOf };
     const [catalog, entitled] = await Promise.all([this.listRoles.execute(ctx.companyId, { permissions: ctx.permissions, entitlementDeniedPermissions: ctx.entitlementDeniedPermissions, isOwner: ctx.roles?.includes('OWNER') ?? false }), loadEntitledFeatureKeys(this.prisma, ctx.companyId)]);
     const roles = catalog.filter(role => !input.roleName || lineTeamRoleName(role) === input.roleName).map(role => {
@@ -31,6 +31,13 @@ export class CompanyGetRolesTool implements ErpReadToolPort {
         permissions: PERMISSIONS.filter(p => keys.has(p.key)).map(p => p.description) };
     });
     let employees: Array<{ name: string; status: string; roles: string[] }> | undefined;
+    if (input.permissionKey) {
+      const holders = roles.filter(role => role.status === 'ACTIVE' && role.keys.has(input.permissionKey!));
+      roles.splice(0, roles.length, ...holders);
+      if (!ctx.permissions.includes('access.employee.read')) return { toolName: this.toolName, status: 'ok', asOf, sourceRefs,
+        data: { roles: roles.map(({ id: _id, keys: _keys, ...role }) => role),
+          message: holders.length ? `หน้าที่ที่มีสิทธิ์ทำเรื่องนี้คือ ${holders.map(role => role.name).join(' · ')}ค่ะ` : 'ยังไม่มีหน้าที่ที่มีสิทธิ์ทำเรื่องนี้ในร้านค่ะ' } };
+    }
     if (input.employeeName || input.permissionKey) {
       const allowedRoles = roles.filter(role => role.status === 'ACTIVE' && (!input.permissionKey || role.keys.has(input.permissionKey)));
       const memberships = await this.prisma.client.companyMembership.findMany({ where: { companyId: ctx.companyId,

@@ -2,6 +2,7 @@
 
 import type { LineAiBusinessSubject } from './line-ai.js';
 import { EXPENSE_PAYMENT_STATUSES, EXPENSE_STATUSES } from './expenses.js';
+import { DISBURSEMENT_VOUCHER_STATUSES } from './disbursement-vouchers.js';
 
 export type ToolCategory = 'read_summary' | 'read_detail' | 'report' | 'suggestion' | 'evidence_capture' | 'draft_create' | 'draft_update' | 'approval_request' | 'final_mutation';
 
@@ -554,7 +555,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'cfo'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'categoryName', 'vendorName', 'documentStatus', 'paymentStatus', 'limit', 'cursor'],
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'olderThanMonths', 'branchId', 'categoryId', 'vendorId', 'categoryName', 'vendorName', 'documentStatus', 'paymentStatus', 'limit', 'cursor'],
     inputEnumValues: { documentStatus: EXPENSE_STATUSES, paymentStatus: EXPENSE_PAYMENT_STATUSES },
     inputLengthLimits: { categoryName: { min: 1, max: 80 }, vendorName: { min: 1, max: 80 } },
   },
@@ -1279,7 +1280,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'reimbursement.get_summary',
-    description: 'Read an all-company or own-scope reimbursement status and unpaid summary.',
+    description: 'Read a permission-scoped claim summary. Filter requesterName, categoryName, exact round, status or paymentStatus. APPROVED_UNPAID means approved and still awaiting payment. Filtered results include matchedCount and up to five matchedItems.',
     businessSubjects: ['reimbursement'],
     questionKinds: ['summary', 'breakdown'],
     category: 'read_summary',
@@ -1289,10 +1290,13 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'cfo', 'general'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
+    optionalInputFields: ['requesterName', 'categoryName', 'round', 'status', 'paymentStatus'],
+    inputEnumValues: { status: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'APPROVED_UNPAID', 'REJECTED', 'CANCELLED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'VOIDED'], paymentStatus: ['UNPAID', 'PARTIALLY_PAID', 'PAID'] },
+    inputLengthLimits: { requesterName: { min: 1, max: 80 }, categoryName: { min: 1, max: 80 }, round: { min: 1, max: 4 } },
   },
   {
     name: 'reimbursement.get_detail',
-    description: 'Read one permission-scoped reimbursement without attachment or approver identifiers.',
+    description: 'Read one permission-scoped claim, including its actual approval date, approver display name and payment dates. Select reimbursementId or uniquely resolve requesterName/categoryName/round. Never guess a record when several match.',
     businessSubjects: ['reimbursement'],
     questionKinds: ['detail'],
     category: 'read_detail',
@@ -1302,7 +1306,8 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'cfo', 'general'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
-    requiredInputFields: ['reimbursementId'],
+    optionalInputFields: ['reimbursementId', 'requesterName', 'categoryName', 'round', 'status', 'paymentStatus'],
+    inputEnumValues: { status: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'APPROVED_UNPAID', 'REJECTED', 'CANCELLED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'VOIDED'], paymentStatus: ['UNPAID', 'PARTIALLY_PAID', 'PAID'] },
   },
   {
     name: 'reimbursement.get_approval_backlog',
@@ -1358,7 +1363,8 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     businessSubjects: ['expense', 'payment'], questionKinds: ['list', 'summary'], category: 'read_summary',
     requiredPermissions: ['expense.disbursement.read'], featureKeys: ['expenses'], sourceModule: 'expenses',
     supportedAgents: ['accounting', 'general'], sensitiveAudit: true, requiresErpPermissionCheck: true,
-    optionalInputFields: ['q', 'branchId'],
+    optionalInputFields: ['q', 'branchId', 'status'],
+    inputEnumValues: { status: DISBURSEMENT_VOUCHER_STATUSES },
   },
   {
     name: 'voucher.get_detail', description: 'Read one payment voucher already selected from voucher.list_recent.',

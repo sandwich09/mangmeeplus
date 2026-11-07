@@ -21,7 +21,7 @@ export function buildExpenseActionCard(preview: ExpenseActionPreview, reply?: st
   const buttons = (['expense_action_confirm', 'expense_action_cancel'] as const).map((action, i) => ({
     type: 'button', style: i === 0 ? 'primary' : 'secondary', action: { type: 'postback',
       label: i === 0 ? preview.evidenceReview ? lineUiLabel('ตรวจแล้ว ยืนยัน', language) : actionLabel : lineUiLabel('ไม่ทำ', language),
-      data: language === 'en' ? lineControlData(new URLSearchParams({ action, token: preview.token }).toString(), language) : new URLSearchParams({ action, token: preview.token }).toString() },
+      data: language === 'en' ? lineControlData(new URLSearchParams({ action, token: preview.token, act: preview.action }).toString(), language) : new URLSearchParams({ action, token: preview.token, act: preview.action }).toString() },
   }));
   const imageButton = preview.documentImageUrl ? [{ type: 'button', style: 'secondary', action: { type: 'uri', label: lineUiLabel('ส่งรูปเอกสาร', language), uri: preview.documentImageUrl } }] : [];
   const message = { type: 'flex', altText: lines[0]!, canonicalText: lines.join('\n'), contents: { type: 'bubble',

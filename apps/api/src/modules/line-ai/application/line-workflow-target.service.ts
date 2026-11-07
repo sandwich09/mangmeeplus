@@ -141,7 +141,7 @@ export class LineWorkflowTargetService {
         return { rows: list.data, total: list.total };
       });
       if (!sellers.exhaustive || sellers.rows.length !== 1) return { targets: [], total: sellers.total, exhaustive: sellers.exhaustive,
-        sellers: sellers.rows.slice(0, 3).map(row => ({ id: row.id, label: row.displayName })), sellerSearch: slots.vendorName };
+        sellers: sellers.rows.slice(0, 3).map(row => ({ id: row.id, label: [row.displayName, row.taxId, row.branchCode ? `สาขา ${row.branchCode}` : ''].filter(Boolean).join(' · ') })), sellerSearch: slots.vendorName };
       vendorCounterpartyId = sellers.rows[0]!.id;
     }
     const action = EXPENSE_WORKFLOW_ACTIONS[workflow];

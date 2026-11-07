@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { LineAiAnswerPresentation, LineAiConversationContext, LineAiWebLink, SourceRef } from '@watchdog-bms/contracts';
 import { LINE_TOOL_REGISTRY, hasToolPermissions, hasToolFeature } from '@watchdog-bms/contracts';
+import { shortLineKnowledgeText } from './mangmee-persona';
 
 export const KNOWLEDGE_RELEASE = '2.4.0';
 export type ProductKnowledgeCard = {
@@ -177,10 +178,20 @@ export function renderApprovedKnowledge(pack: ProductKnowledgePack, selected: un
   if (!ids?.length) return null;
   const cards = ids.map((id) => eligible.find((card) => card.id === id)!);
   if (expectedCards && cards.some(card => !expectedCards.some(ref => ref.id === card.id && ref.version === card.version))) return null;
-  const webLinks = cards.map((card) => ({ label: card.title, path: card.sourceURL.replace('{companyId}', encodeURIComponent(companyId)) }));
+  const compact = [...new Intl.Segmenter('th', { granularity: 'grapheme' }).segment(cards.map(card => `${card.title}\n${card.body}`).join('\n\n'))].length > 350;
+  const displayed = compact ? cards.slice(0, 3) : cards;
+  let remaining = 350;
+  const bodies = displayed.map((card, index) => {
+    const titleSize = [...new Intl.Segmenter('th', { granularity: 'grapheme' }).segment(card.title)].length;
+    const allowance = Math.max(1, Math.floor(remaining / (displayed.length - index)) - titleSize - 3);
+    const body = compact ? shortLineKnowledgeText(card.summary, allowance) : card.body;
+    remaining -= titleSize + [...new Intl.Segmenter('th', { granularity: 'grapheme' }).segment(body)].length + 3;
+    return body;
+  });
+  const webLinks = displayed.map((card) => ({ label: compact ? 'อ่านต่อในคู่มือ' : card.title, path: card.sourceURL.replace('{companyId}', encodeURIComponent(companyId)) }));
   return {
-    replyText: cards.map((card) => `${card.title}\n${card.body}`).join('\n\n'),
-    sourceRefs: cards.map((card, i) => ({
+    replyText: displayed.map((card, i) => `${card.title}\n${bodies[i]}`).join('\n\n'),
+    sourceRefs: displayed.map((card, i) => ({
       // C6 (batch 5c): the version/effective date belong in the audit trail (`entityId` already
       // carries both pack and card version), never the customer-facing label — the API appends
       // "แหล่งข้อมูล: <label>" to every LINE answer, so a customer previously read
@@ -190,8 +201,8 @@ export function renderApprovedKnowledge(pack: ProductKnowledgePack, selected: un
       permissionChecked: true, webPath: webLinks[i]!.path,
     })),
     webLinks,
-    presentation: { kind: 'answer_cards', cards: cards.map((card, i) => ({
-      title: card.title, text: card.body, sourceLabels: [card.title], webLink: webLinks[i]!,
+    presentation: { kind: 'answer_cards', cards: displayed.map((card, i) => ({
+      title: card.title, text: bodies[i]!, sourceLabels: [card.title], webLink: webLinks[i]!,
     })) },
   };
 }
