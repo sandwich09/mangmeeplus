@@ -2673,7 +2673,7 @@ describe('LINE intake dispatch – media path', () => {
       recentCaptures,
       expenseDetail: (id: string) => id === source.id ? source : undefined,
     });
-    const command = 'ขอให้สร้างใบแจ้งหนี้ด้วย';
+    const command = 'ขอให้สร้างใบแจ้งค่าน้ำด้วย';
     await h.useCase.execute({ ...TEXT_EVENT, messageText: command });
     assert.equal(h.createExpenseCalls.length, 1);
     assert.equal(h.createExpenseCalls[0].sourceDocumentType, 'SUPPLIER_BILL');
@@ -2698,7 +2698,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(isUtilityBillSaveRequest('ออกใบแจ้งหนี้ด้วย'), false);
     assert.equal(isUtilityBillSaveRequest('ไม่ต้องสร้างใบแจ้งหนี้ด้วย'), false);
     assert.equal(isUtilityBillSaveRequest('สร้างใบแจ้งหนี้ด้วยได้ไหม'), false);
-    assert.equal(isUtilityBillSaveRequest('ขอให้สร้างใบแจ้งหนี้ด้วย'), true);
+    assert.equal(isUtilityBillSaveRequest('ขอให้สร้างใบแจ้งค่าน้ำด้วย'), true);
     const source = {
       id: 'expense-1', companyId: 'company-1', createdByUserId: 'user-1', branchId: 'branch-1',
       captureSource: 'LINE_UPLOAD', sourceDocumentType: 'RECEIPT', primaryAttachmentId: 'att-1',
@@ -2714,7 +2714,7 @@ describe('LINE intake dispatch – media path', () => {
       recentCaptures: [{ id: source.id, expenseDate: new Date(), grandTotalAmount: '99', sourceDocumentType: 'RECEIPT', createdAt: new Date() }],
       expenseDetail: source,
     });
-    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'บันทึกใบแจ้งหนี้ด้วย' });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'บันทึกใบแจ้งค่าน้ำด้วย' });
     assert.equal(h.createExpenseCalls.length, 0);
     assert.match(h.replies[0] ?? '', /ยังไม่พบใบแจ้งค่าน้ำ\/ค่าไฟ/);
   });
@@ -2734,11 +2734,11 @@ describe('LINE intake dispatch – media path', () => {
     const recentCaptures = sources.map(source => ({ id: source.id, expenseDate: new Date(), grandTotalAmount: source.grandTotalAmount,
       sourceDocumentType: 'RECEIPT', createdAt: new Date() }));
     const denied = makeHarness({ permissions: ['line.ai.query'], recentCaptures, expenseDetail: (id: string) => sources.find(source => source.id === id) });
-    await denied.useCase.execute({ ...TEXT_EVENT, messageText: 'บันทึกใบแจ้งหนี้ด้วย' });
+    await denied.useCase.execute({ ...TEXT_EVENT, messageText: 'บันทึกใบแจ้งค่าน้ำด้วย' });
     assert.equal(denied.createExpenseCalls.length, 0);
     const allowed = makeHarness({ permissions: ['line.ai.query', 'expense.receipt.line_upload'], recentCaptures,
       expenseDetail: (id: string) => sources.find(source => source.id === id) });
-    await allowed.useCase.execute({ ...TEXT_EVENT, messageText: 'บันทึกใบแจ้งหนี้ด้วย' });
+    await allowed.useCase.execute({ ...TEXT_EVENT, messageText: 'บันทึกใบแจ้งค่าน้ำด้วย' });
     assert.equal(allowed.createExpenseCalls.length, 0);
     assert.match(allowed.replies[0] ?? '', /หลายรูป/);
     await allowed.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-period-choice', lineMessageId: 'msg-period-choice', messageText: 'บันทึกใบแจ้งค่าน้ำงวด 09/69' });

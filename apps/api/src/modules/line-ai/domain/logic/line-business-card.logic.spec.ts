@@ -1551,6 +1551,7 @@ describe('delivery plan guard: every card carries its text, or says why it never
   const WEB = 'https://app.example.com';
   const DRAFT_FACTS: LineExpenseDraftCardFacts = { expenseId: 'e1', subject: 'ร่างค่าใช้จ่าย', rows: [{ label: 'ยอดรวม', value: '100.00 บาท', total: true }], notes: [] };
   const carriesText: Record<string, () => LineReplyMessage[]> = {
+    buildWorkflowExitMessage: () => [cardBuilders.buildWorkflowExitMessage('เปิดในเว็บเพื่อทำต่อค่ะ', '/companies/c1/expenses', 'c1', WEB)],
     buildExpenseWorkflowPicker: () => [
       buildExpenseWorkflowPicker({ targets: [], total: 0, exhaustive: true }, 'expense_pay', 'secret', 'c1', 'u1', WEB),
       buildExpenseWorkflowPicker({ targets: [{ id: 'e1', label: 'ร้านทดสอบ', amount: '250', currency: 'THB' }], total: 1, exhaustive: true }, 'expense_pay', 'secret', 'c1', 'u1', WEB),
@@ -1711,5 +1712,16 @@ it('R11 claim rows name requester reason and amount without calling pending or a
     const card = buildClaimWorkflowPicker({ targets: [{ id: 'claim', requestNo: null, status, requesterDisplayNameSnapshot: 'สมชาย', reason: 'ค่าเดินทาง รอบ 4', amount: '1200', currency: 'THB' } as any], total: 1, exhaustive: true }, 'approvals', 'secret', 'company', 'user', 'https://app.example.com');
     const label = readLineSystemCard(card as any).actions.find((a: any) => a.type === 'postback')!.label;
     assert.ok(label.length <= 40, label); assert.match(label, /สมชาย/); assert.match(label, /รอบ 4/); assert.match(label, /1,200.00/); assert.doesNotMatch(label, /ร่าง/);
+  }
+});
+
+it('CARDS-R4 empty and incomplete workflow pickers retain a persistent web button and narrowing hint', () => {
+  for (const workflow of ['expense_pay', 'wht_certificate', 'reimbursement_pay'] as const) for (const incomplete of [false, true]) {
+    const result = { targets: [], total: incomplete ? 301 : 0, exhaustive: !incomplete };
+    const card = workflow === 'reimbursement_pay' ? buildClaimWorkflowPicker(result, workflow, 'secret', 'company', 'user', 'https://app.example.com')
+      : buildExpenseWorkflowPicker(result, workflow, 'secret', 'company', 'user', 'https://app.example.com');
+    assert.equal(card.type, 'flex');
+    assert.match(JSON.stringify((card as any).contents), /"type":"uri"/);
+    if (incomplete) assert.match(JSON.stringify(card), /เลขที่|ยอด|ผู้เบิก/);
   }
 });

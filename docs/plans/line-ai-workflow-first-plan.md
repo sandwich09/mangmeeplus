@@ -286,6 +286,7 @@ No implementation here. P04 owns B7 typed-choice/signed-apply safety; P10 owns B
   - **What failed:** almost no workflow task finishes by chat. An open picker traps later messages, and count questions open the approval picker. Both are being fixed in round 8.
   - **Next:** a re-run, then a fresh blind held-out set for MA3/MA6.
 - **Status 2026-11-06, blind gate.** Rounds 8–10 lift the tuning corpus to W3 65/72 (90.3%), with wrong applied 0. On the first blind set (held-out v2), MA3/MA6 is **not met**: W3 85/156 (54.5%), and one real wrong change, a claim edit applied to a draft the user did not pick. Tier 1 stays unreleased. Details are in `docs/research/line-ai-workflow-baseline-2026-10.md`, "Round 10 and the blind gate".
+- **Status 2026-11-06, second blind gate.** Round 11 lifts tuning W3 to 65/69 (94.2%). On blind set v3, MA3/MA6 is **not met**: W3 workflow is 98/164 (59.8%) once one wrong gold button label is corrected, with wrong applied 0. Round 12 and cards round 4 fix the product causes, and blind set v4 is the next gate. Details are in `docs/research/line-ai-workflow-baseline-2026-10.md`, "Rounds 11–12 and the second blind gate".
   - **Fixes:** the eight product causes are in rounds `wfp-r11` and `cards-r3`.
   - **Next gate:** a new blind held-out v3, whose gold is checked against the current seed and `ROLE_GRANTS`. Running it needs the owner's approval for budget beyond the 2,300 THB eval cap.
 

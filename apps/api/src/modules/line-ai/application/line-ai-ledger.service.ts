@@ -103,6 +103,7 @@ export type LedgerEntry = {
   intakeIntent?: LineIntakeRouteIntent;
   /** Correction-target shortlist the question named; wording snapshot only, never authorization. */
   candidateExpenseIds?: string[];
+  substituteTargetQuestionCount?: number;
   /** Opaque, bounded server proof. Never forwarded to the model; the webhook validates it. */
   sourceContext?: string;
   /** The already-stored file this question was asked about (see LineAiOpenClarification). */
@@ -127,6 +128,7 @@ export type LedgerSubRequestInput = {
   clarifyForIntent?: LineIntakeRouteIntent;
   reasonCode?: LineAiOpenClarification['reasonCode'];
   candidateExpenseIds?: string[];
+  substituteTargetQuestionCount?: number;
   sourceContext?: string;
   pendingMedia?: LedgerPendingMedia;
 };
@@ -175,6 +177,7 @@ export function fieldsToEntry(key: string, id: string, fields: string[]): Ledger
     ...(map['agent'] ? { agent: map['agent'] } : {}),
     ...(LINE_AI_BUSINESS_SUBJECTS.includes(map['subject'] as LineAiBusinessSubject) ? { subject: map['subject'] as LineAiBusinessSubject } : {}),
     ...(map['state'] === 'pending' || map['state'] === 'waiting_user' ? { state: map['state'] } : {}),
+    ...(/^[12]$/u.test(map['substituteTargetQuestionCount'] ?? '') ? { substituteTargetQuestionCount: Number(map['substituteTargetQuestionCount']) } : {}),
     ...(map['clarifyQuestion'] ? { clarifyQuestion: map['clarifyQuestion'] } : {}),
     ...(map['reasonCode'] === 'READ_FILTER_NOT_UNDERSTOOD' ? { reasonCode: map['reasonCode'] } : {}),
     ...(asIntakeRouteIntent(map['clarifyForIntent']) ? { clarifyForIntent: asIntakeRouteIntent(map['clarifyForIntent']) } : {}),
@@ -311,6 +314,7 @@ export class LineAiLedgerService implements OnModuleDestroy {
         ...(item.intent ? { intent: item.intent } : {}),
         ...(item.agent ? { agent: item.agent } : {}),
         ...(item.subject ? { subject: item.subject } : {}),
+        ...(item.substituteTargetQuestionCount ? { substituteTargetQuestionCount: String(item.substituteTargetQuestionCount) } : {}),
         ...(item.clarifyQuestion ? { clarifyQuestion: item.clarifyQuestion } : {}),
         ...(item.reasonCode === 'READ_FILTER_NOT_UNDERSTOOD' ? { reasonCode: item.reasonCode } : {}),
         ...(item.clarifyForIntent ? { clarifyForIntent: item.clarifyForIntent } : {}),

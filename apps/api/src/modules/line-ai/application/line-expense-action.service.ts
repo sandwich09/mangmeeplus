@@ -119,7 +119,7 @@ function missingActionFields(error: unknown): string[] {
   return Array.isArray(fields) ? fields.filter((field): field is string => typeof field === 'string') : [];
 }
 export type ExpenseActionResult = { status: 'applied' | 'replayed' | 'prepared'; reply: string; preview: ExpenseActionPreview; expenseIds?: string[] }
-  | { status: 'blocked' | 'cancelled'; reply: string; webPath?: string; webLabel?: string; recovery?: string; taskSource?: { action: ExpenseAction; id: string } };
+  | { status: 'blocked' | 'cancelled'; reply: string; webPath?: string; webLabel?: string; recovery?: string; question?: boolean; taskSource?: { action: ExpenseAction; id: string } };
 export const EXPENSE_ACTION_CHANGED = 'รายการเปลี่ยนไปแล้วค่ะ ขอเตรียมการ์ดใหม่ก่อนยืนยันอีกครั้ง';
 // Confirm/ready/void/payment and their repository guards: customer text never echoes an exception.
 export const EXPENSE_ACTION_REFUSALS: Record<string, string> = {
@@ -467,10 +467,10 @@ export class LineExpenseActionService {
     const dates = [...(candidates?.dates.map(item => item.isoDate) ?? []), ...(candidates?.periods.filter(item => item.kind === 'day' && item.fromDate === item.toDate).map(item => item.fromDate) ?? [])];
     return { ...(paymentMethod ? { paymentMethod } : {}), ...(amounts.length === 1 ? { paidAmount: amounts[0]!.value } : {}), ...(dates.length === 1 ? { paidAt: dates[0]! } : {}) };
   }
-  async openWorkflow(ctx: RequestContext, chat: string, control: Extract<LineWorkflowControl, { action: 'wf_open' }>, language: LineReplyLanguage = 'th', reason?: string, typedPayment?: Partial<RecordExpensePaymentInput>): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
+  async openWorkflow(ctx: RequestContext, chat: string, control: Extract<LineWorkflowControl, { action: 'wf_open' }>, language: LineReplyLanguage = 'th', reason?: string, typedPayment?: Partial<RecordExpensePaymentInput>): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string; question?: boolean }> {
     if (ctx.freeExpenseDrafts || !verifyLineWorkflowOpenSig(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId,
       control.act, control.id, control.pm ?? '', control.pd ?? '', control.pa ?? '', control.sig)) return { reply: EXPIRED };
-    return this.preview(ctx, chat, { action: control.act, ...(control.act === 'RECORD_PAYMENT' ? { ...typedPayment, requirePaymentMethod: true } : {}),
+    return this.preview(ctx, chat, { action: control.act, ...(control.act === 'RECORD_PAYMENT' ? { ...typedPayment, requirePaymentMethod: true } : control.act === 'CONFIRM' && (typedPayment || control.pm || control.pd || control.pa) ? { ...typedPayment, offerPaymentAfterConfirm: true } : {}),
       ...(this.isClaim(control.act) ? { reimbursementId: control.id } : this.isVoucher(control.act) && control.act !== 'VOUCHER_CREATE'
         ? { voucherId: control.id } : { expenseId: control.id }),
       ...(control.pm ? { paymentMethod: control.pm } : {}), ...(control.pd ? { paidAt: control.pd } : {}),
@@ -594,9 +594,15 @@ export class LineExpenseActionService {
   }
 
   async preview(ctx: RequestContext, chat: string | undefined, input: Record<string, unknown>, opened = false,
-    preparedCategory?: { category: ActionCategory; source: ExpenseRecordWithRelations }, language: LineReplyLanguage = 'th', requestedVoucherCount?: number, inputEvidence?: LineAiInputEvidenceV2): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
+    preparedCategory?: { category: ActionCategory; source: ExpenseRecordWithRelations }, language: LineReplyLanguage = 'th', requestedVoucherCount?: number, inputEvidence?: LineAiInputEvidenceV2): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string; question?: boolean }> {
     const en = language === 'en';
     if (ctx.freeExpenseDrafts) return { reply: EXPIRED };
+    if (chat && inputEvidence && lineWorkflowPickerText(inputEvidence.parts.map(p => p.rawText).join('\n')).question) {
+      const pending = await this.collectionQuestion(ctx, chat, language);
+      if (pending) return { reply: pending.reply };
+    }
+    input = { ...input };
+    for (const field of ['reason', 'payeeName', 'payeeAddress']) if (typeof input[field] === 'string' && lineWorkflowPickerText(input[field] as string).question) delete input[field];
     let action = input.action as ExpenseAction;
     const requestedId = this.isVoucher(action ?? '') && action !== 'VOUCHER_CREATE' ? input.voucherId : this.isClaim(action ?? '') ? input.reimbursementId : action === 'VOUCHER_CREATE' && typeof input.expenseIds === 'string' ? input.expenseIds.split(',')[0]?.trim() : input.expenseId;
     if (!EXPENSE_ACTIONS.some(value => value === action) || typeof requestedId !== 'string' || !requestedId || requestedId.length > 200) return { reply: (en ? 'Which record and action would you like?' : 'ต้องการทำอะไรกับรายการไหนคะ') };
@@ -650,8 +656,8 @@ export class LineExpenseActionService {
         const reply = `ต้องยืนยันรายการก่อนบันทึกจ่ายค่ะ ${confirmation.reply}`;
         return { ...confirmation, reply };
       }
-      const paymentIntent = action === 'CONFIRM' && input.recordPaymentAfterConfirm === true
-        ? { paidAt: input.paidAt ?? todayCivilDate('Asia/Bangkok'), ...(input.paymentMethod ? { paymentMethod: input.paymentMethod } : {}), ...(input.paidAmount ? { paidAmount: input.paidAmount } : {}) } : undefined;
+      const paymentIntent = action === 'CONFIRM' && (input.recordPaymentAfterConfirm === true || input.offerPaymentAfterConfirm === true)
+        ? { ...(input.offerPaymentAfterConfirm ? { offerPaymentAfterConfirm: true } : {}), paidAt: input.paidAt ?? todayCivilDate('Asia/Bangkok'), ...(input.paymentMethod ? { paymentMethod: input.paymentMethod } : {}), ...(input.paidAmount ? { paidAmount: input.paidAmount } : {}) } : undefined;
       if (paymentIntent && !ctx.permissions.includes('expense.payment.record')) return { reply: (en ? 'Ask the owner or an authorized payment recorder to do this.' : PERMISSION.RECORD_PAYMENT) };
       approvers = record.claim?.currentDesk?.kind === 'APPROVER' ? record.claim.currentDesk.names : undefined;
       const reason = typeof input.reason === 'string' ? input.reason.trim() : undefined;
@@ -705,7 +711,8 @@ export class LineExpenseActionService {
         const claim = record.claim!;
         if (!['APPROVED', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'].includes(claim.status)) return { reply: (en ? 'This claim is not ready to record reimbursement.' : 'ใบเบิกนี้ยังไม่พร้อมบันทึกจ่ายคืนค่ะ') };
         const destination = claim.payout?.version ? claim.payout : claim.legacyPayoutDefault;
-        if (!destination || claim.payout?.payoutMethod === 'CASH') return { reply: (en ? 'Open the claim on the web to review the payout account and payment method.' : 'เปิดใบเบิกเพื่อตรวจบัญชีรับเงินและวิธีจ่ายก่อนบันทึกจ่ายคืนค่ะ'),
+        if (claim.payout?.payoutMethod === 'CASH') return { reply: en ? 'Record this cash reimbursement on the web.' : 'บันทึกจ่ายคืนใบเบิกที่รับเงินสดในเว็บได้ค่ะ', webPath: `/companies/${ctx.companyId}/reimbursements/${id}` };
+        if (!destination) return { reply: (en ? 'Open the claim on the web to review the payout account and payment method.' : 'เปิดใบเบิกเพื่อตรวจบัญชีรับเงินและวิธีจ่ายก่อนบันทึกจ่ายคืนค่ะ'),
           webPath: `/companies/${ctx.companyId}/reimbursements/${id}` };
         claimPayment = { paidAmount: typeof input.paidAmount === 'string' ? input.paidAmount : new Decimal(claim.outstandingAmount).toFixed(2),
           paidAt: typeof input.paidAt === 'string' ? input.paidAt : todayCivilDate('Asia/Bangkok'), paymentMethod: 'BANK_TRANSFER', currency: claim.currency,
@@ -788,7 +795,7 @@ export class LineExpenseActionService {
         ...(typeof input.paidAt === 'string' ? { pd: input.paidAt } : preview.payment?.paidAt ? { pd: preview.payment.paidAt } : {}),
         ...(typeof input.paidAmount === 'string' ? { pa: input.paidAmount } : preview.payment?.paidAmount ? { pa: preview.payment.paidAmount } : {}) };
       if (!await this.store.save(entry, recovery)) return { reply: (en ? 'A previous request is still in progress; please try again.' : 'กำลังดำเนินการคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง') };
-      if (awaitingReason || entry.awaitingField) return { reply: allowedPaymentMethods ? E_WHT_WORDS['L-1'] : this.question(entry) };
+      if (awaitingReason || entry.awaitingField) return { question: true, reply: allowedPaymentMethods ? E_WHT_WORDS['L-1'] : this.question(entry) };
       return { preview, reply: preview.summary };
     } catch (error) {
       if (action === 'REIMBURSEMENT_SUBMIT') return this.claimSubmitRefusal(error, ctx, id as string, language);
@@ -896,6 +903,7 @@ export class LineExpenseActionService {
     return { entry, expense };
   }
   async answerEvidence(ctx: RequestContext, chat: string, text: string, language: LineReplyLanguage = 'th') {
+    if (lineWorkflowPickerText(text).question) return null;
     text = ({ 'Send receipt photo': 'ส่งรูปใบเสร็จ', 'Wait for receipt': 'รอใบเสร็จ', 'Prepare substitute receipt': 'จัดทำใบรับรองแทนใบเสร็จ', 'Use other evidence': 'ใช้หลักฐานอื่นที่มี', cancel: 'ยกเลิก' } as Record<string, string>)[text.trim()] ?? text;
     const evidence = await this.evidenceChoice(ctx, chat);
     if (!evidence) return null;
@@ -967,6 +975,7 @@ export class LineExpenseActionService {
     return this.preview(ctx, chat, { ...pending?.paymentIntent, recordPaymentAfterConfirm: !!pending?.paymentIntent, expenseId, action: 'CONFIRM' }, true, undefined, language);
   }
   async answerCategory(ctx: RequestContext, chat: string, text: string, language: LineReplyLanguage = 'th') {
+    if (lineWorkflowPickerText(text).question) return null;
     const repair = await this.repair(ctx, chat);
     if (!repair || repair.editPreviewId) return null;
     const choices = await this.repairChoices(ctx, chat, undefined, language);
@@ -1038,6 +1047,13 @@ export class LineExpenseActionService {
     return picker && Object.hasOwn(CLAIM_WORKFLOW_ACTIONS, picker.workflow) ? { ...picker, workflow: picker.workflow as ClaimWorkflowId, result: picker.result as LineWorkflowTargets } : null;
   }
 
+  async collectionQuestion(ctx: RequestContext, chat: string, language: LineReplyLanguage = 'th') {
+    const entry = await this.store.load(ctx.companyId, this.key(chat));
+    if (!entry || !(entry.awaitingField || entry.awaitingReason) || !await this.bound(ctx, chat, entry) || !await this.permitted(ctx, entry)) return null;
+    const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher).catch(() => null);
+    if (!record || record.updatedAt.toISOString() !== entry.revision || record.digest !== entry.digest) return null;
+    return { reply: this.question(entry, language) };
+  }
   async pending(ctx: RequestContext, chat: string, requestId?: string): Promise<ExpenseActionPreview | null> {
     const team = await this.teams?.pending(ctx, chat, requestId);
     if (team) return team;
@@ -1082,6 +1098,16 @@ export class LineExpenseActionService {
   }
 
   async apply(ctx: RequestContext, chat: string, control: ExpenseActionControl, language: LineReplyLanguage = 'th'): Promise<ExpenseActionResult> {
+    const result = await this.applyAction(ctx, chat, control, language);
+    if (result.status !== 'blocked' || result.taskSource || control.token.startsWith('team_')
+      || ['expense_action_submit', 'expense_action_approve', 'expense_action_reject'].includes(control.action)) return result;
+    const entry = await this.store.load(ctx.companyId, this.key(chat));
+    return entry && await this.bound(ctx, chat, entry, control.token) ? { ...result,
+      ...(entry.awaitingReason || entry.awaitingField ? { question: true } : {}),
+      taskSource: { action: entry.preview.action, id: entry.voucher?.id ?? entry.expenseId } } : result;
+  }
+
+  private async applyAction(ctx: RequestContext, chat: string, control: ExpenseActionControl, language: LineReplyLanguage = 'th'): Promise<ExpenseActionResult> {
     if (control.token.startsWith('team_')) return this.teams?.apply(ctx, chat, control) ?? { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
     if (control.action === 'expense_action_approve' || control.action === 'expense_action_reject' || control.action === 'expense_action_submit') {
       if (!verifyReimbursementApprovalOpenToken(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId, control.token, control.action)) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
@@ -1218,7 +1244,7 @@ export class LineExpenseActionService {
       entry.applied = { nextVoucherId, revision: current?.updatedAt.toISOString() ?? (result ? new Date(result.updatedAt).toISOString() : null), digest: current?.digest, preview };
       await this.store.remember(ctx.companyId, this.key(chat), entry);
       await this.store.discard(ctx.companyId, this.key(chat));
-      if (offerPayment && entry.paymentIntent) {
+      if (offerPayment && entry.paymentIntent && !entry.paymentIntent.offerPaymentAfterConfirm) {
         await this.store.releaseClaim(ctx.companyId, this.key(chat), claim.token);
         const next = await this.preview(ctx, chat, { ...entry.paymentIntent, action: 'RECORD_PAYMENT', expenseId: entry.expenseId }, true, undefined, language);
         if (next.preview) return { status: 'prepared', preview: next.preview, reply: next.reply };
@@ -1249,6 +1275,7 @@ export class LineExpenseActionService {
   async answerReason(ctx: RequestContext, chat: string, reason: string, evidence?: LineAiInputEvidenceV2): Promise<{ preview?: ExpenseActionPreview; reply: string; cancelled?: true; taskSource?: { action: ExpenseAction; id: string } } | null> {
     const entry = await this.store.load(ctx.companyId, this.key(chat));
     if (!(entry?.awaitingReason || entry?.awaitingField) || !await this.bound(ctx, chat, entry)) return null;
+    if (lineWorkflowPickerText(reason).question) return null;
     const language: LineReplyLanguage = /[\u0E00-\u0E7F]/u.test(reason) ? 'th' : entry.awaitingField && entry.awaitingField !== 'reason' ? entry.preview.language ?? 'th' : lineReplyLanguage(reason, entry.preview.language ?? 'th');
     if (!/^(ไม่ทำ|ยกเลิก|cancel)$/iu.test(reason.trim()) && !(entry.awaitingField === 'paymentMethod' && entry.preview.action === 'RECORD_PAYMENT') && !isPendingFieldAnswer(reason, entry.awaitingField === 'payeeName' || entry.awaitingField === 'payeeAddress' ? 'payee' : 'reason')) return null;
     const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher).catch(() => null);

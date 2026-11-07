@@ -108,7 +108,7 @@ export class LineWorkflowTargetService {
         return { rows: list.items, total: list.total };
       });
       return { targets: result.rows.map(row => ({ id: row.id, label: row.vendorNameSnapshot || row.expenseNumber || '',
-        amount: row.grandTotalAmount, currency: row.currency })), total: result.total, exhaustive: result.exhaustive };
+        amount: row.grandTotalAmount, currency: row.currency, documentNumbers: row.expenseNumber ? [row.expenseNumber] : [] })), total: result.total, exhaustive: result.exhaustive };
     }
     let vendorCounterpartyId = slots.vendorCounterpartyId;
     const latestOnly = !!slots.vendorName && !ctx.permissions.includes('accounting.counterparty.read');

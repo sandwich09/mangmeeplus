@@ -164,8 +164,50 @@ it('R8 picker text reads requester names up to the next locator and treats Thai 
   assert.equal(lineWorkflowPickerText('ของสมชาย', false).requester, undefined);
   for (const text of ['ใบแรกใครเป็นคนเบิกคะ', 'อันนี้จ่ายรึยัง', 'ทำไมยอดไม่ตรง', 'ใบนี้ยังไง?']) assert.equal(lineWorkflowPickerText(text).question, true, text);
   for (const text of ['อนุมัติใบแรกหน่อยได้ไหม', 'ใบเลขที่ ทดสอบ-0003 ค่ะ', 'อันที่ 2']) assert.equal(lineWorkflowPickerText(text).question, false, text);
+  // Everyday words that contain a question word are answers, not questions.
+  for (const text of ['เบิกค่าน้ำเปล่า 30 บาท', 'ค่าใช้จ่ายเกี่ยวกับงานลูกค้า', 'ค่าผ้าไหม 500 บ.', 'ซื้อไหมพรม 2 ม้วน']) {
+    assert.equal(lineWorkflowPickerText(text).question, false, text);
+    assert.equal(isPendingFieldAnswer(text, 'reason'), true, text);
+  }
+  for (const text of ['ใช้ได้หรือเปล่า', 'ใบที่ 1 เปล่า', 'ต้องแนบกี่ใบ', 'ใส่ชื่อร้านได้ไหม']) assert.equal(lineWorkflowPickerText(text).question, true, text);
   assert.equal(lineWorkflowPickerText('อันแรกเลยค่ะ').ordinal, 1);
   assert.equal(isLineWorkflowCountRead('ตอนนี้มีใบเบิกรออนุมัติกี่ใบ รวมเท่าไหร่'), true);
   assert.equal(isLineWorkflowCountRead('อนุมัติใบเบิก 1,877 บาทให้หน่อย'), false);
   assert.equal(isLineWorkflowCountRead('มีใบเบิกรออนุมัติไหม'), false);
+});
+
+it('R12 manual claims accept abbreviated baht and never collect a question as a field', async () => {
+  const { createLineAiInputEvidence, extractValueCandidatesV2 } = await import('@watchdog-bms/contracts');
+  const { parseManualClaimLine } = await import('./line-ai-classifier.logic');
+  for (const text of ['เบิกค่าจอดรถ 60 บ. วันนี้', 'เบิกค่าจอดรถ 60บ วันนี้']) {
+    const evidence = (await createLineAiInputEvidence({ turnKey: 'r12', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const parsed = await parseManualClaimLine(evidence, (await extractValueCandidatesV2(evidence, '2026-11-06'))!);
+    assert.equal(Number(parsed?.values.amount?.value), 60);
+  }
+  for (const field of ['claim', 'payee', 'reason'] as const) for (const text of ['ชื่อผู้รับเงินใส่ชื่อร้านได้ไหม', 'ถ้าต้องเลือกหมวดอะไรให้บอกด้วย', 'ยอดค้างทั้งหมดเท่าไหร่', 'Can the payee be a shop name', 'ขอถามว่าชื่อผู้รับเงินใส่ชื่อร้านได้ไหม'])
+    assert.equal(isPendingFieldAnswer(text, field), false, `${field}: ${text}`);
+});
+
+it('R12 repair descriptions and indefinite answers are not side questions', () => {
+  assert.equal(lineWorkflowPickerText('ค่าปะยาง').question, false);
+  assert.equal(lineWorkflowPickerText('อะไรก็ได้').question, false);
+});
+
+it('R12 a pending expense price accepts abbreviated baht', async () => {
+  const { buildInitialLineExpenseDraftContinuation, applyLineExpenseDraftAnswer } = await import('../../../expenses/domain/logic/line-expense-draft-conversation.logic');
+  const categories: any[] = [{ id: 'cat-office', companyId: 'c1', name: 'กระดาษ', status: 'ACTIVE', sortOrder: 1 }];
+  for (const messageText of ['60 บ.', '60บ']) {
+    const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'wf-price', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat', targetRevision: '2026-08-18T00:00:00.000Z', provisionalExpenseDate: '2026-08-18', messageText: 'ซื้อกระดาษ', webhookEventId: 'price', categories, now: '2026-08-18T01:00:00.000Z', hints: { confidence: 1, description: 'กระดาษ' } });
+    assert.equal(state.items.length, 1);
+    const result = applyLineExpenseDraftAnswer({ state, messageText, categories, now: '2026-08-18T02:00:00.000Z' });
+    assert.equal(Number(result.state.items[0]!.totalAmount), 60, messageText);
+  }
+});
+
+it('R12 expense free-text and model hints cannot turn questions into draft fields', async () => {
+  const { buildInitialLineExpenseDraftContinuation, applyLineExpenseDraftAnswer } = await import('../../../expenses/domain/logic/line-expense-draft-conversation.logic');
+  const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'wf-question', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat', targetRevision: '2026-08-18T00:00:00.000Z', provisionalExpenseDate: '2026-08-18', messageText: 'ซื้อกระดาษ', webhookEventId: 'question', categories: [], now: '2026-08-18T01:00:00.000Z', hints: { confidence: 1, description: 'กระดาษ' } });
+  const result = applyLineExpenseDraftAnswer({ state, messageText: 'ร้าน ใส่ชื่อใครคะ', hints: { confidence: 1, businessPurpose: 'ใส่ชื่อใครคะ' }, categories: [] });
+  assert.equal(result.state.header.vendorName, undefined); assert.equal(result.state.header.businessPurpose, undefined);
+  assert.deepEqual(result.acceptedFields, []);
 });

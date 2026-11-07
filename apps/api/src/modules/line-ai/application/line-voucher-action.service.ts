@@ -1,3 +1,4 @@
+import { isPendingFieldAnswer } from '../domain/logic/line-ai-classifier.logic';
 import { lineDisplayDate, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { formatThaiDate } from '../domain/logic/line-draft-update-card.logic';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
@@ -27,7 +28,7 @@ const operation = (action: VoucherAction) => action.slice('VOUCHER_'.length).toL
 export function isVoucherPayeeName(value: string): boolean {
   const name = value.trim();
   // ponytail: conservative name shape; uncertain sentences go through the normal admitted intake.
-  return name.length >= 2 && name.length <= 200 && /^[\p{L}\p{M}\p{N} .,&'’()\-]+$/u.test(name) && /\p{L}/u.test(name)
+  return isPendingFieldAnswer(name, 'payee') && name.length >= 2 && name.length <= 200 && /^[\p{L}\p{M}\p{N} .,&'’()\-]+$/u.test(name) && /\p{L}/u.test(name)
     && !/^(?:ขอ|ช่วย|ทำ|สร้าง|ส่ง|จ่าย|โอน|ยืนยัน|บันทึก|อนุมัติ|เปลี่ยน|แก้|ออก|ตรวจ|ดู|ให้|เอา|ซื้อ|ลบ|ยกเลิก|ต้องการ|(?:pay|send|show|change|update|delete|issue|confirm|do)\b)/iu.test(name)
     && !/(?:อนุมัติ|บันทึก|ใบสำคัญ|ใบเตรียม|จ่ายแล้ว|วันนี้|เมื่อวาน|โอนเงิน|ทำให้|ขอดู|ยกเลิก|พิมพ์ชื่อเอง|(?:ช่วย|สร้าง)(?:ใบ|รายการ|ให้|ทำ)|\b(?:approve|record|please|create|cancel|paid|transfer)\b)/iu.test(name);
 }
@@ -159,7 +160,7 @@ export class LineVoucherActionService {
         payload.handoffs = handoffs.map(row => ({ id: row.id, revision: row.updatedAt }));
         const missing = handoffs.filter(row => !whtPayeeAddress(row.payeeAddress, row.prefill.payeeSnapshot.address));
         if (missing.length) {
-          if (typeof input.payeeAddress === 'string' && input.payeeAddress.trim()) {
+          if (typeof input.payeeAddress === 'string' && isPendingFieldAnswer(input.payeeAddress, 'payee') && input.payeeAddress.trim()) {
             if (input.payeeAddress.trim().length > WHT_HANDOFF_PAYEE_ADDRESS_MAX) throw new BadRequestException({ code: 'counterparty_address_too_long', message: 'ขอที่อยู่ผู้รับเงินไม่เกิน 500 ตัวอักษร' });
             payload.payeeAddress = input.payeeAddress.trim();
           }

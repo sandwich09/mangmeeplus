@@ -1,4 +1,4 @@
-import { matchLineClaimTargets } from '../domain/logic/line-ai-classifier.logic';
+import { matchLineClaimTargets, lineWorkflowPickerText } from '../domain/logic/line-ai-classifier.logic';
 import { effectivePolicy } from '../../reimbursements/domain/reimbursement.constants';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import { Inject, Injectable, Optional } from '@nestjs/common';
@@ -133,6 +133,50 @@ export class LineReimbursementDraftAdapterService {
     private readonly expenses: PrismaExpenseRepository = new PrismaExpenseRepository(prisma),
     @Optional() @Inject(LineDraftPreviewStore) private readonly photoIntents: LineDraftPreviewStore<ClaimPhotoIntent> = new LineDraftPreviewStore(),
   ) {}
+
+  async startUpdateFromText(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; evidence: LineAiInputEvidenceV2; text: string }): Promise<LineReimbursementDraftResult | null> {
+    const match = /^(แก้ยอด|แก้เหตุผล)\s*(ใบเบิก.+?)เป็น\s*(.+)$/u.exec(input.text.trim());
+    if (!match || input.ctx.freeExpenseDrafts || input.evidence.parts.map(part => part.rawText).join('\n') !== input.text
+      || lineWorkflowPickerText(input.text).question || !input.ctx.permissions.includes('ai.tool.invoke')) return null;
+    const owner = this.actionOwner(input.owner, input.ownerEpoch);
+    if (await this.drafts.active(input.ctx, owner)) return null;
+    const rows: ReimbursementRequestRecord[] = [];
+    let exhaustive = false;
+    for (let page = 0; page < 3; page++) {
+      const found = await this.repo.listRequests({ companyId: input.ctx.companyId, status: 'DRAFT', scopes: input.ctx.scopes,
+        ...(input.ctx.permissions.includes('reimbursement.finance_review') ? {} : { requesterUserId: input.ctx.userId }), skip: page * 100, take: 100 });
+      rows.push(...found.filter(row => this.canUpdate(input.ctx, row)));
+      if (found.length < 100) { exhaustive = true; break; }
+    }
+    const locator = match[2]!.replace(/ของฉัน/gu, ' ของฉัน ');
+    const candidates = await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok'));
+    if (candidates?.completeness !== 'complete') return null;
+    const locatorAmounts = candidates.amounts.filter(amount => {
+      const part = input.evidence.parts.find(part => part.partId === amount.source.partId)!;
+      const start = part.rawText.indexOf(match[2]!);
+      return start >= 0 && amount.source.startUtf16 >= start && amount.source.endUtf16 <= start + match[2]!.length;
+    });
+    const matches = matchLineClaimTargets(locator, rows, locatorAmounts, input.ctx.userId);
+    const taskId = stableUuid(['claim-edit-text', input.owner, input.evidence.turnKey]);
+    const key: LineReimbursementActionKey = { taskId, actionId: stableUuid([taskId, 'UPDATE']), actionOrdinal: 1, operation: 'UPDATE' };
+    const opened = await this.drafts.open(input.ctx, owner, key);
+    if (!('id' in opened)) return opened;
+    let options = await this.buildOptions(input.ctx, key, 0, { operation: 'UPDATE', subrequestIndex: 0 }, undefined);
+    let pickedTargetRef: string | undefined;
+    if (exhaustive && matches.length === 1) {
+      const row = matches[0]!;
+      const choice = this.choice(key.actionId, 'TARGET', row.requestNo || row.reason, row.updatedAt.toISOString(), { id: row.id });
+      options.choices.push(choice);
+      options = await this.buildOptions(input.ctx, key, 0, { operation: 'UPDATE', subrequestIndex: 0, targetRef: choice.choiceId }, options);
+      pickedTargetRef = choice.choiceId;
+    }
+    const proposal: LineReimbursementDraftProposalV1 = { schemaVersion: 1, taskId, taskRevision: 0, operation: 'UPDATE', fields: {}, ...(pickedTargetRef ? { targetRef: pickedTargetRef } : {}) };
+    const saved = await this.drafts.saveTrustedOptions({ ctx: input.ctx, owner, key, accepted: { schemaVersion: 1, options, proposal, ...(pickedTargetRef ? { pickedTargetRef } : {}) }, fieldPaths: pickedTargetRef ? ['fields'] : ['targetRef'] });
+    if (!('id' in saved)) return saved;
+    if (!pickedTargetRef) return { status: 'needs_target', actionId: key.actionId, actionRevision: saved.previewRevision };
+    return await this.answerLine({ ...input, text: `${match[1]}เป็น ${match[3]}` })
+      ?? this.draftService.get({ ...input, actionId: key.actionId });
+  }
 
   async startFromWorkflow(ctx: RequestContext, owner: LineConversationOwner, ownerEpoch: number, start: { eventIdHash: string; evidence?: LineAiInputEvidenceV2; slots?: { descriptionText?: string; amountText?: string; dateText?: string } }): Promise<LineReimbursementDraftResult> {
     if (ctx.freeExpenseDrafts || !ctx.permissions.includes('line.ai.query') || !ctx.permissions.includes('ai.tool.invoke')) return { status: 'blocked', errorCode: 'forbidden' };
@@ -295,7 +339,7 @@ export class LineReimbursementDraftAdapterService {
 
   async answerLine(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number;
     evidence: LineAiInputEvidenceV2; text: string; workflowDescription?: string }): Promise<LineReimbursementDraftResult | null> {
-    if (input.ctx.freeExpenseDrafts) return null;
+    if (input.ctx.freeExpenseDrafts || lineWorkflowPickerText(input.text).question) return null;
     const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
     const accepted = active && this.accepted(active);
     if (active?.status === 'COLLECTING' && active.operation === 'UPDATE' && accepted && Date.parse(accepted.options.expiresAt) > Date.now() && !accepted.pickedTargetRef) {
@@ -316,14 +360,22 @@ export class LineReimbursementDraftAdapterService {
       const proposal = clone(accepted.proposal), reason = /^(?:แก้|เปลี่ยน)เหตุผล(?:เป็น)?\s*(.+)$/u.exec(input.text)?.[1]?.trim();
       if (reason) {
         const refs = input.evidence.parts.flatMap(part => { const start = part.rawText.indexOf(reason); return start < 0 ? [] : [{ partId: part.partId, rawSha256: part.rawSha256, startUtf16: start, endUtf16: start + reason.length }]; });
-        const fragment = parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: active.taskId, taskRevision: accepted.options.taskRevision, operation: 'UPDATE', fields: { reason: { value: reason, proof: { kind: 'USER_TEXT', refs } } } }, { evidence: input.evidence, candidateValues: {}, candidateSources: {} });
+        const fragment = parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: active.taskId, taskRevision: accepted.options.taskRevision, operation: 'UPDATE', targetRef: accepted.pickedTargetRef, fields: { reason: { value: reason, proof: { kind: 'USER_TEXT', refs } } } }, { evidence: input.evidence, candidateValues: {}, candidateSources: {} });
         if (fragment?.fields.reason) { proposal.fields.reason = fragment.fields.reason; return this.proposeCollected(input, active, { ...accepted, proposal }); }
       }
       const lines = accepted.options.choices.filter(choice => choice.kind === 'LINE');
       if (/แก้ยอด|เปลี่ยนยอด/u.test(input.text) && lines.length === 1) {
         const candidates = await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok'));
-        const parsed = candidates && await parseManualClaimLine(input.evidence, candidates);
-        if (parsed?.values.amount) { proposal.lineChanges = [{ operation: 'SET', lineRef: lines[0]!.choiceId, values: { amount: parsed.values.amount } }]; return this.proposeCollected(input, active, { ...accepted, proposal }); }
+        const amounts = candidates?.amounts.filter(amount => {
+          const part = input.evidence.parts.find(p => p.partId === amount.source.partId)!;
+          const after = part.rawText.lastIndexOf('เป็น');
+          return (after < 0 || amount.source.startUtf16 >= after + 'เป็น'.length) && (!amount.currencyToken || /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(amount.currencyToken));
+        }) ?? [];
+        if (amounts.length === 1 && candidates?.completeness === 'complete') {
+          const amount = amounts[0]!;
+          const fragment = parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: active.taskId, taskRevision: accepted.options.taskRevision, operation: 'UPDATE', targetRef: accepted.pickedTargetRef, fields: {}, lineChanges: [{ operation: 'SET', lineRef: lines[0]!.choiceId, values: { amount: { value: amount.value, proof: { kind: 'USER_TEXT', candidateId: amount.candidateId, refs: [amount.source] } } } }] }, { evidence: input.evidence, candidateValues: Object.fromEntries(candidates.amounts.map(a => [a.candidateId, a.value])), candidateSources: Object.fromEntries(candidates.amounts.map(a => [a.candidateId, a.source])) });
+          if (fragment) return this.proposeCollected(input, active, { ...accepted, proposal: this.mergeProposal(proposal, fragment) });
+        }
       }
     }
     if (!active || active.status !== 'COLLECTING' || active.operation !== 'CREATE' || !accepted?.proposal
@@ -472,7 +524,8 @@ export class LineReimbursementDraftAdapterService {
 
   private async answerPurpose(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number;
     evidence: LineAiInputEvidenceV2 }, active: ReimbursementDraftActionRecord, purpose: string): Promise<LineReimbursementDraftResult | null> {
-    if (active.status !== 'PREVIEW' || active.operation !== 'CREATE') return null;
+    if (active.status !== 'PREVIEW' || active.operation !== 'CREATE' || lineWorkflowPickerText(purpose).question
+      || lineWorkflowPickerText(input.evidence.parts.map(part => part.rawText).join('\n')).question) return null;
     const result = await this.draftService.get({ ctx: input.ctx, owner: input.owner, ownerEpoch: input.ownerEpoch, actionId: active.id });
     if (result.status !== 'preview' || result.preview.after.lines.length !== 1) return null;
     const refs = input.evidence.parts.flatMap(part => {
@@ -676,7 +729,7 @@ export class LineReimbursementDraftAdapterService {
         });
       const prior = active ? this.accepted(active) : undefined;
       // Keep proven intake facts even if the planner times out after this options read.
-      const proposal = prior?.proposal ?? this.intakeProposal(authority, options);
+      const proposal = prior?.proposal ?? (lineWorkflowPickerText(authority.evidence.parts.map(part => part.rawText).join('\n')).question ? undefined : this.intakeProposal(authority, options));
       const accepted: Accepted = { schemaVersion: 1, options, ...(prior?.pickedTargetRef ? { pickedTargetRef: prior.pickedTargetRef } : {}), admission: { ...prior?.admission, requestId: String(authority.acceptedRequest['requestId']),
         subrequestIndex: input.subrequestIndex, ...(authority.retainedTaskRef ? { taskId: authority.retainedTaskRef.taskId, taskSubrequestIndex: authority.retainedTaskRef.subrequestIndex } : {}) },
         ...(proposal ? { proposal } : {}), ...(prior?.awaitingPhoto ? { awaitingPhoto: true } : {}),
@@ -728,6 +781,7 @@ export class LineReimbursementDraftAdapterService {
       || new Date(options.expiresAt) <= new Date()) {
       return this.domainResult(toolName, key, { status: 'stale', actionId: active.id, errorCode: 'source_changed' });
     }
+    if (lineWorkflowPickerText(authority.evidence.parts.map(part => part.rawText).join('\n')).question) return this.domainResult(toolName, key, { status: 'needs_fields', actionId: active.id, actionRevision: active.previewRevision, fieldPaths: (active.commandJson as { fieldPaths?: string[] }).fieldPaths ?? [] });
     if (authority.candidates.completeness !== 'complete') {
       return this.domainResult(toolName, key, { status: 'blocked', errorCode: 'evidence_overflow' });
     }

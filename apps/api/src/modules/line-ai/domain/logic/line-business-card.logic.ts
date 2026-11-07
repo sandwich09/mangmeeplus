@@ -1226,6 +1226,13 @@ export function buildLineBusinessAnswerMessage(
 }
 
 
+export function buildWorkflowExitMessage(text: string, path: string, companyId: string, webBaseUrl?: string, language: LineReplyLanguage = 'th', label = language === 'en' ? 'Open on web' : 'เปิดในเว็บ'): LineReplyMessage {
+  const uri = safeTenantLink(webBaseUrl, companyId, path) ?? safeTenantUrl(webBaseUrl, companyId, path);
+  return buildLineSystemTextCardMessage({ text: uri ? `${text}\n${label}: ${uri}` : text, header: { lines: language === 'en' ? ['Continue', 'on web'] : ['ทำต่อ', 'ในเว็บ'] },
+    companyId, webBaseUrl, language, linkLabel: label })
+    ?? { type: 'text', text: [text, uri].filter(Boolean).join('\n'), ...(!uri ? { quickReply: lineChoiceQuickReply([{ label: language === 'en' ? 'Main menu' : 'เมนูหลัก', text: 'เมนูหลัก' }]) } : {}) };
+}
+
 export const LINE_CLAIM_PICKER_COPY = {
   unavailable: 'ยังเปิดใบเบิกไม่ได้ค่ะ กดเปิดเมนูเพื่อลองอีกครั้ง',
   forbidden: 'ยังไม่มีสิทธิ์เปิดใบเบิกค่ะ ให้เจ้าของกิจการตรวจสิทธิ์ก่อน',
@@ -1242,7 +1249,7 @@ export function buildClaimWorkflowPicker(result: LineWorkflowTargets, workflow: 
   const approvals = workflow === 'approvals' && result.exhaustive && result.targets.length ? lineUiLabel('มีใบเบิกรอคุณอนุมัติ {count} ใบ{total} เลือกใบที่จะอนุมัติได้เลยค่ะ', language)
     .replace('{count}', String(result.targets.length)).replace('{total}', new Set(result.targets.map(claim => claim.currency)).size === 1
       ? lineUiLabel(' รวม {amount}', language).replace('{amount}', formatClaimMoney(result.targets.reduce((sum, claim) => sum.plus(claim.amount), new Decimal(0)).toFixed(2), result.targets[0]!.currency, language)) : '') : undefined;
-  const text = receiptFix ?? approvals ?? (!result.exhaustive ? result.total > 300 ? LINE_CLAIM_PICKER_COPY.incomplete : LINE_CLAIM_PICKER_COPY.interrupted
+  const text = receiptFix ?? approvals ?? (!result.exhaustive ? result.total > 300 ? `${LINE_CLAIM_PICKER_COPY.incomplete} พิมพ์เลขที่ใบเบิก ยอด หรือผู้เบิกเพื่อค้นให้แคบลงค่ะ` : LINE_CLAIM_PICKER_COPY.interrupted
     : result.targets.length ? LINE_CLAIM_PICKER_COPY.choose[workflow] : LINE_CLAIM_PICKER_COPY.empty[workflow]);
   const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map(claim => {
     const amount = formatClaimMoney(claim.amount, claim.currency, language).replace(' บาท', '');
@@ -1254,9 +1261,9 @@ export function buildClaimWorkflowPicker(result: LineWorkflowTargets, workflow: 
   });
   const webLabel = receiptBlocked ? 'เปิดใบเบิก' : !result.exhaustive ? 'ค้นในเว็บ' : result.total > 4 ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ';
   const exit: LineSystemCardAction = webBaseUrl ? { type: 'uri', label: webLabel,
-    uri: `${webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(company)}/reimbursements${receiptBlocked ? `/${encodeURIComponent(receiptBlocked.id)}` : ''}` }
+    uri: `${webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(company)}/reimbursements${receiptBlocked ? `/${encodeURIComponent(receiptBlocked.id)}` : `?tab=${workflow === 'approvals' || workflow === 'reimbursement_reject' ? 'approvals' : workflow === 'reimbursement_pay' ? 'finance' : 'mine'}`}` }
     : { type: 'message', label: 'เปิดเมนู', text: 'เมนูหลัก' };
-  if (!actions.length) return { type: 'text', text, quickReply: { items: [{ type: 'action', action: exit }] } };
+  if (!actions.length) return buildWorkflowExitMessage(text, exit.type === 'uri' ? exit.uri : '', company, webBaseUrl, language, exit.label);
   if (!result.exhaustive || result.total > 4) actions.push(exit);
   const canonicalText = [text, ...actions.map(action => action.label)].join('\n');
   const contents = drawLineSystemCard({ mascot: 'general', header: { lines: ['ใบเบิก', 'เลือกใบเบิก'] }, notes: [text],
@@ -1285,7 +1292,7 @@ export function buildExpenseWorkflowPicker(result: LineWorkflowRecordTargets, wo
     ? ['ชื่อนี้ตรงกับผู้ขายหลายราย เลือกในเว็บหรือพิมพ์ชื่อให้ชัดขึ้นค่ะ',
       ...(result.sellers ?? []).slice(0, 3).map(seller => scrubRecordText(seller.label, 60)).filter(Boolean)].join('\n')
     : sellerName ? `ไม่พบผู้ขายชื่อ ${sellerName} ในรายชื่อคู่ค้าค่ะ` : 'ไม่พบผู้ขายชื่อนี้ในรายชื่อคู่ค้าค่ะ';
-  const text = !result.exhaustive ? [result.total > 300 ? LINE_CLAIM_PICKER_COPY.incomplete : 'ยังค้นรายการไม่ครบค่ะ กดค้นในเว็บ',
+  const text = !result.exhaustive ? [result.total > 300 ? `${LINE_CLAIM_PICKER_COPY.incomplete} พิมพ์เลขที่เอกสารหรือยอดเพื่อค้นให้แคบลงค่ะ` : 'ยังค้นรายการไม่ครบค่ะ กดค้นในเว็บ',
     ...(sellerText && result.total > 1 ? [sellerText] : [])].join('\n')
     : sellerText ?? (result.targets.length ? result.latestOnly ? 'เลือกจากรายการล่าสุดได้เลยค่ะ' : LINE_EXPENSE_PICKER_COPY.choose[workflow]
       : workflow === 'wht_certificate' && result.latestPaidWithoutWithholding ? 'ใบเตรียมจ่ายที่จ่ายล่าสุดไม่ได้หักภาษี ณ ที่จ่าย จึงไม่มี 50 ทวิให้ออกค่ะ' : LINE_EXPENSE_PICKER_COPY.empty[workflow]);
@@ -1295,9 +1302,9 @@ export function buildExpenseWorkflowPicker(result: LineWorkflowRecordTargets, wo
       : { type: 'postback' as const, data: lineWorkflowOpenData(secret, company, user, EXPENSE_WORKFLOW_ACTIONS[workflow], target.id, payment) }),
   }));
   const exit: LineSystemCardAction = webBaseUrl ? { type: 'uri', label: !result.exhaustive ? 'ค้นในเว็บ' : result.sellerSearch !== undefined ? 'เปิดในเว็บ' : result.total > 4 ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ',
-    uri: `${webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(company)}/expenses${workflow === 'wht_certificate' ? '/disbursement-vouchers' : workflow === 'substitute_receipt' ? '/substitute-receipts/new' : ''}` }
+    uri: `${webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(company)}/expenses${workflow === 'wht_certificate' ? '/disbursement-vouchers?status=PAID' : workflow === 'substitute_receipt' ? '/substitute-receipts/new' : ''}` }
     : { type: 'message', label: 'เมนูหลัก', text: 'เมนูหลัก' };
-  if (!actions.length) return { type: 'text', text, quickReply: { items: [{ type: 'action', action: exit }] } };
+  if (!actions.length) return buildWorkflowExitMessage(text, exit.type === 'uri' ? exit.uri : '', company, webBaseUrl, 'th', exit.label);
   if (!result.exhaustive || result.total > 4) actions.push(exit);
   const canonicalText = [text, ...actions.map(action => action.label)].join('\n');
   const contents = drawLineSystemCard({ mascot: 'general', header: { lines: ['รายจ่าย', 'เลือกรายการ'] }, notes: [text],

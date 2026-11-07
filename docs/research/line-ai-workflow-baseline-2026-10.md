@@ -236,3 +236,58 @@ Even with all 25 counted as passes, W3 would be 110/156 (70.5%). The gate fails 
 - **Fixes.** Rounds `wfp-r11` and `cards-r3` take the eight product causes above.
 - **New blind set.** A new lane writes blind held-out v3 whose gold is checked against today's seed and `ROLE_GRANTS`.
 - **Budget.** The programme has spent about 2,100 THB of the 2,300 THB cap, so the re-measure needs the owner's approval for more budget.
+
+## Rounds 11–12 and the second blind gate, measured 2026-11-06
+
+### What was run
+- **Product:** main `d7b6e2bfe`, rounds 11 (claim pick by the user's own words; edits bind to the picked claim only) and cards round 3.
+- **Tuning corpus:** 112 of 115 conversations before the 170 THB cap.
+- **Blind set v3:** 226 conversations, 770 turns, 335 tasks (164 workflow, 171 advisor). It was written by a separate lane that never saw the tuning or earlier held-out texts, and run once.
+- **Advisor held-out:** 43 conversations, 71 turns.
+
+### Tuning
+- **W3:** 65/69 (94.2%), with wrong applied 0.
+- **The four failures:**
+  - two claim-create golds are stale: the policy rightly asks for the missing-receipt reason;
+  - one expense confirm lost its target after a low-confidence choice card;
+  - one advisor turn.
+
+### Blind gate v3 (MA3/MA6): not met
+| Metric | Result |
+|---|---|
+| W3 workflow, as scored | 81/164 (49.4%) |
+| W3 workflow, gold label corrected | 98/164 (59.8%) |
+| W3 advisor tasks | 124/171 |
+| W6 wrong applied | 0 |
+| W14 timeouts | 0 / 350 calls |
+| Spend | 318.18 THB (no cap) |
+
+**Gold and harness causes:**
+- **Wrong button label.** 29 presses used "ยืนยัน" where the button is "ตรวจแล้ว ยืนยัน", so the press never reached the button.
+  - Re-running those 22 conversations with the real label (19.97 THB) gives expense confirm 17/22.
+  - Four of the remaining five are the preview-then-expiry scoring limit; one is the `multi` product cause below.
+- **Text refusals not counted.** About 25 refusal tasks ended in a correct refusal said in text, but the product logged no `REFUSED` task, so W3 cannot count them.
+- **Free-tier answer turns.** 12 such turns are not recorded as `ANSWERED`.
+
+**Product causes:**
+- **Claim create.** A claim amount typed "บ." was not read (`parseManualClaimLine` accepted บาท, ฿, THB and baht only).
+- **Side questions.** A side question during collection lost the quick replies, and on the voucher payee step it lost the task.
+- **Questions taken as fields.** A question was stored as the voucher payee name. This is a preview only, never applied.
+- **Two jobs in one message.** "Confirm this bill, then record its payment" got the utility-bill reply.
+- **Named starts.** Claim edit, claim cancel and substitute receipt starts that named one record still showed the picker.
+- **Substitute receipt.** The collection could not be put off and looped on "which expense".
+- **Refusal links.** A refusal's web link was a quick reply only, or was dropped. Cash-payout claim repayments got an untrue "check the account" sentence.
+- **Dead end.** "Too many to search in chat" offered no way out.
+- **No-access members.** A member without LINE AI access was refused only after a gateway call.
+
+### Advisor held-out (W11)
+- **Result:** 59/71 (83.1%), 56.27 THB, no throttling.
+- **Stale gold:** four failures are out-of-package golds that still require the words "แพ็กเกจ" or "ยังไม่มี". Without them the result is 63/71.
+
+### Next
+- Round 12 (wfp-r12) and cards round 4 fix the product causes above. Cards round 4 also logs every deterministic workflow refusal as a `REFUSED` task.
+- **Blind set v4:**
+  - 200 conversations;
+  - every press label checked against a literal in `apps/api/src`;
+  - overlap with the tuning, v2 and v3 texts is 0.
+- Set v4 is the next gate, run once. Tier 1 stays unreleased until it passes.

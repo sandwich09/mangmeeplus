@@ -658,3 +658,11 @@ describe('read period clarification round trip', () => {
       'legacy prose is not a server-observed read marker');
   });
 });
+
+it('CARDS-R4 unbound substitute question count survives the owner-bound waiting entry', async () => {
+  const { service } = makeService();
+  await service.appendSubRequests({ companyId: 'c1', chatKey: 'chat1', turnId: 't1', webhookEventId: 'evt1', userId: 'u1', now: NOW,
+    items: [{ text: 'ทำใบรับรองแทนใบเสร็จจากเมนู', state: 'waiting_user', clarifyQuestion: 'เลือกรายการ', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', candidateExpenseIds: ['one', 'two'], substituteTargetQuestionCount: 2 }] });
+  assert.equal((await service.openWaitingUser('c1', 'chat1', 'u1', NOW))[0]?.entry.substituteTargetQuestionCount, 2);
+  assert.deepEqual(await service.openWaitingUser('c1', 'chat1', 'other', NOW), []);
+});

@@ -78,24 +78,24 @@ test('empty public rollout permits only the configured, currently authorized cha
   assert.equal(seen.turns.length, 1, 'empty rollout never authorizes another messaging channel');
 });
 
-test('private v2 owner allows empty rollout but still requires current membership and private chat', () => {
+test('private v2 owner allows empty rollout but still requires current membership and private chat', async () => {
   const { handler, config } = fixture();
   config.lineAiReliabilityV2CompanyIds = [];
   config.lineAiDeliveryPlanV2WriteCompanyIds = [];
   handler.deliveryAccess = new WeakMap();
   const event = { lineUserId: 'Uactor', messagingChannelId: 'oa' };
-  assert.equal(handler.conversationOwner('company-1', 'actor', event), null, 'missing current access is denied');
+  assert.equal((await handler.conversationOwner('company-1', 'actor', event)), null, 'missing current access is denied');
   handler.deliveryAccess.set(event, { membershipId: 'member' });
-  assert.equal(handler.conversationOwner('company-1', 'actor', event)?.membershipId, 'member');
+  assert.equal((await handler.conversationOwner('company-1', 'actor', event))?.membershipId, 'member');
   config.lineAiReliabilityV2CompanyIds = ['other'];
-  assert.equal(handler.conversationOwner('company-1', 'actor', event), null);
+  assert.equal((await handler.conversationOwner('company-1', 'actor', event)), null);
   config.lineAiReliabilityV2CompanyIds = [];
   config.lineAiDeliveryPlanV2WriteCompanyIds = ['other'];
-  assert.equal(handler.conversationOwner('company-1', 'actor', event), null);
+  assert.equal((await handler.conversationOwner('company-1', 'actor', event)), null);
   config.lineAiDeliveryPlanV2WriteCompanyIds = [];
   const group = { ...event, pushTargetId: 'Cgroup' };
   handler.deliveryAccess.set(group, { membershipId: 'member' });
-  assert.equal(handler.conversationOwner('company-1', 'actor', group), null);
+  assert.equal((await handler.conversationOwner('company-1', 'actor', group)), null);
   config.lineAiReliabilityV2Mode = 'off';
-  assert.equal(handler.conversationOwner('company-1', 'actor', event), null);
+  assert.equal((await handler.conversationOwner('company-1', 'actor', event)), null);
 });

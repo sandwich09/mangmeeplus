@@ -1,3 +1,4 @@
+import { lineWorkflowPickerText } from '../../../line-ai/domain/logic/line-ai-classifier.logic';
 import { createHash } from 'node:crypto';
 import { lineUiLabel } from '../../../line-ai/domain/logic/line-language.logic';
 import Decimal from 'decimal.js';
@@ -509,6 +510,11 @@ export function applyLineExpenseDraftAnswer(input: {
   webhookEventId?: string;
   now?: string;
 }): { state: LineExpenseDraftContinuation; acceptedFields: string[]; rejectedCandidates: LineExpenseDraftRejectedCandidate[] } {
+  if (lineWorkflowPickerText(input.messageText).question) {
+    const state = { ...input.state, header: { ...input.state.header } };
+    delete state.header.vendorAddressAsk; // The optional seller-address prompt is still asked only once.
+    return { state, acceptedFields: [], rejectedCandidates: [] };
+  }
   const now = input.now ?? new Date().toISOString();
   const next: LineExpenseDraftContinuation = {
     ...input.state,
@@ -561,7 +567,7 @@ export function applyLineExpenseDraftAnswer(input: {
       if (quantity) plainSegments.push({ id: `${soleItem.itemRef}-QTY`, value: quantity });
       if (price) plainSegments.push({ id: `${soleItem.itemRef}-PRICE`, value: price });
       if (!price && input.state.unresolvedQuestions.some(question => question.id === `${soleItem.itemRef}-PRICE`)
-        && /^\s*\d[\d,]*(?:\.\d{1,4})?\s*(?:บาท|THB)\s*$/iu.test(input.messageText)) {
+        && /^\s*\d[\d,]*(?:\.\d{1,4})?\s*(?:บาท|บ\.?|฿|THB|baht)\s*$/iu.test(input.messageText)) {
         plainSegments.push({ id: `${soleItem.itemRef}-PRICE`, value: `ยอดรวม ${input.messageText}` });
       }
     }

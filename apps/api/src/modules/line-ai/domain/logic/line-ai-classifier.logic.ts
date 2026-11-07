@@ -101,7 +101,7 @@ export function chooseAgent(intent: LineAiIntent, normalizedText: string): LineA
 /** Pending fields own plain answers; questions and new commands keep their normal route. */
 export function isPendingFieldAnswer(text: string, field: 'claim' | 'reason' | 'payee'): boolean {
   const value = text.trim();
-  return !!value && value.length <= 2000 && !/[?？\n]/u.test(value)
+  return !!value && value.length <= 2000 && !lineWorkflowPickerText(value).question && !/[?？\n]/u.test(value)
     && (field === 'claim'
       ? !/^(?:ขอ|ช่วย|สร้าง|เบิก|บันทึก|ดู|ยกเลิก|ไม่ทำ|เปลี่ยน|แก้|ทำข้อ|ทำรายการ|ให้ทำ|ติดต่อเจ้าหน้าที่)/u.test(value)
       : !staffMenuCommand(value) && !parseLineCompanyCommand(value)
@@ -117,8 +117,9 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   const ordinal = /(?:อัน|ใบ|รายการ)แรก/u.test(text) ? 1 : ordinalMatch ? Number(ordinalMatch[1]) : undefined;
   const requester = claim ? /(?:^|\s|ใบเบิก)ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ(?:ฉัน|คุณ)|\d|[?？]|$)/u.exec(text)?.[1]?.trim().replace(/(?:นะคะ|นะครับ|ค่ะ|ครับ|คะ)$/u, '').trim() : undefined;
   const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?เลขที่\s*([^\s,]+)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
-  const question = /[?？]|ไหม|มั้ย|ปะ|เปล่า|รึยัง|หรือยัง|กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน/u
-    .test(text.replace(/(?:หน่อย)?ได้(?:ไหม|มั้ย|ปะ)/gu, ''));
+  const questionText = text.replace(/(?:อะไร|ใคร|ที่ไหน)ก็ได้/gu, '');
+  const question = /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
+    .test((ordinal !== undefined || documents.length || /^(?:(?:ช่วย|ขอ)\s*)?(?:อนุมัติ|ส่ง|ยกเลิก|ลบ|บันทึก|ทำ|สร้าง|จ่าย|เลือก|เอา|ใช้)/u.test(text)) ? questionText.replace(/(?:หน่อย)?ได้(?:ไหม|มั้ย|ปะ)/gu, '') : questionText);
   const rounds = [...text.matchAll(/รอบ\s*(\d+)/gu)].map(match => match[1]!);
   const explicit = ordinal !== undefined || documents.length > 0 || rounds.length > 0 || /สาขา\s*\S+/u.test(text) || !!requester;
   return { question, ordinal, requester, documents, rounds, explicit };
@@ -142,7 +143,7 @@ export async function parseManualClaimLine(
 ) {
   const verified = await verifyLineAiValueCandidatesV2(candidates, evidence);
   if (!verified || verified.completeness !== 'complete') return null;
-  const amounts = verified.amounts.filter(item => !item.currencyToken || /^(?:บาท|฿|THB|baht)$/iu.test(item.currencyToken));
+  const amounts = verified.amounts.filter(item => !item.currencyToken || /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(item.currencyToken));
   const dates = [...verified.dates.map(item => ({ ...item, value: item.isoDate })),
     ...verified.periods.filter(item => item.kind === 'day' && item.fromDate === item.toDate).map(item => ({ ...item, value: item.fromDate }))];
   if (dates.length > 1) return null;

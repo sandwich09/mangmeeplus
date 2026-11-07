@@ -2556,3 +2556,13 @@ it('200 bill rows remain eligible and 201 has the Thai line-limit issue', () => 
     else assert.match(issue!.message, /สูงสุด 200 รายการ/);
   }
 });
+
+it('R12 a substitute payee question never becomes the awaiting free-text value', async () => {
+  const h = await lineReadyHarness({ expense: lineExpense({ vendorNameSnapshot: null, paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'), missingReceiptReason: 'ร้านไม่ออกใบเสร็จ', attachments: [{ id: 'att-1', status: 'ACTIVE', purpose: 'expense.receipt.supporting' }] }) });
+  assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.missingFields[0], 'payeeName');
+  const before = h.saves.length;
+  const result = await h.useCase.execute(lineCtx(), { messageText: 'ผู้รับเงินควรเป็นใครคะ', chatKeyHash: 'chat-hash', recentCandidates: [] });
+  assert.equal(result.acceptedFields.includes('payeeName'), false);
+  assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.payeeName, undefined);
+  assert.equal(h.saves.length, before);
+});

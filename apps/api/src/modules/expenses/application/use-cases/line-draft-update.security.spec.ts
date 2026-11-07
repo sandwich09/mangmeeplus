@@ -949,7 +949,7 @@ describe('Round 3 reimbursement and payment confirm cards', () => {
   }
   it('asks one short rejection-reason question, stores no confirmable card until answered, and refuses stale answers', async () => {
     const h = round3Harness('REIMBURSEMENT_REJECT'); delete (h.input as any).reason;
-    assert.deepEqual(await h.preview(), { reply: 'ไม่อนุมัติใบเบิกนี้เพราะอะไรคะ' });
+    assert.deepEqual(await h.preview(), { question: true, reply: 'ไม่อนุมัติใบเบิกนี้เพราะอะไรคะ' });
     assert.equal(await h.actions.pending(h.ctx, 'private-action'), null);
     const answer = await h.actions.answerReason(h.ctx, 'private-action', 'หลักฐานไม่ครบ'); assert.equal(answer?.preview?.reason, 'หลักฐานไม่ครบ');
     assert.equal((await h.actions.apply(h.ctx, 'private-action', { action: 'expense_action_confirm', token: answer!.preview!.token })).status, 'applied');

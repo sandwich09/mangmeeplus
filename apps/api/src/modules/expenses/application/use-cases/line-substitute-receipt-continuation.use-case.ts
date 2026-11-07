@@ -335,7 +335,7 @@ function paymentMethodOf(text: string): ExpensePaymentMethod | undefined {
 
 function nonQuestionLines(text: string): string {
   return text.split(/\n+/u)
-    .filter((line) => !/[?？]|ไหม|อย่างไร|ยังไง|ถ้า/u.test(line))
+    .filter((line) => !lineWorkflowPickerText(line).question && !/[?？]|ไหม|อย่างไร|ยังไง|ถ้า/u.test(line))
     .join('\n');
 }
 
@@ -492,7 +492,7 @@ function extractValues(
     || SUBSTITUTE_CANCEL.test(lowered)
     || SUBSTITUTE_CONTROL_REPLY.test(plain)
   );
-  if (plain && !controlPhrase && Object.keys(values).length === 0 && !/[?？]|ไหม|หรือไม่|อย่างไร|ยังไง/u.test(plain)
+  if (plain && !controlPhrase && Object.keys(values).length === 0 && !lineWorkflowPickerText(plain).question && !/[?？]|ไหม|หรือไม่|อย่างไร|ยังไง/u.test(plain)
     && !new RegExp(`(?:^|\\s)(?:${ANY_LABEL})${LABEL_END}`, 'u').test(plain)) {
     if (pendingField === 'missingReceiptReason') values.missingReceiptReason = freeTextOf(plain);
     if (pendingField === 'businessPurpose') values.businessPurpose = freeTextOf(plain);
