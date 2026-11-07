@@ -235,7 +235,7 @@ The table covers every named quoted control/page/command in the revised bodies a
 | ยกเลิกใบเบิกนี้ | ปุ่มเริ่มยกเลิกหน้าใบเบิก | `apps/web/src/features/reimbursements/ReimbursementJourneyPage.tsx:53` |
 | ยืนยันเอกสาร | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:1645` |
 | รายงาน | ชื่อหน้ารายงานบนเว็บ | `apps/web/src/features/reports/ReportsWorkspacePage.tsx:256` |
-| ลายเซ็นของฉัน | แท็บหน้าค่าใช้จ่ายบนเว็บ | `apps/web/src/common/i18n/workspace-dictionary.ts:1801` |
+| ลายเซ็นของฉัน | แท็บหน้าค่าใช้จ่ายบนเว็บ | `apps/web/src/common/i18n/workspace-dictionary.ts:1802` |
 | สาขา | ชื่อหน้าสาขาบนเว็บ | `apps/web/src/features/branch-settings/BranchSettingsPage.tsx:186` |
 | ส่งกลับให้แก้ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:131` |
 | ส่งอนุมัติ | ปุ่มส่งใบเบิก; ใบเตรียมจ่ายใช้คำเดียวกัน | `apps/web/src/features/reimbursements/ReimbursementJourneyPage.tsx:53` |
@@ -244,15 +244,15 @@ The table covers every named quoted control/page/command in the revised bodies a
 | เปิดร้านใหม่ | ปุ่มการ์ดร้านใน LINE เมื่อเจ้าของกิจการสมัครได้ | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:295` |
 | เปิดเว็บบริษัทนี้ | ปุ่มบนการ์ดร้านและตัวเลือกร้านใน LINE | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:93` |
 | เพิ่มพนักงาน | เมนูหรือปุ่มหน้าจัดการพนักงานบนเว็บ | `apps/web/src/features/employee-access/EmployeeAccessPages.tsx:365` |
-| เพิ่มลายเซ็น | ปุ่มหน้าลายเซ็นบนเว็บ | `apps/web/src/features/expenses/ExpensesWorkspacePanels.tsx:584` |
-| เพิ่มหมวดหมู่ | ปุ่มหน้าจัดการหมวดบนเว็บ | `apps/web/src/features/expenses/ExpensesWorkspacePanels.tsx:336` |
+| เพิ่มลายเซ็น | ปุ่มหน้าลายเซ็นบนเว็บ | `apps/web/src/features/expenses/ExpensesWorkspacePanels.tsx:647` |
+| เพิ่มหมวดหมู่ | ปุ่มหน้าจัดการหมวดบนเว็บ | `apps/web/src/features/expenses/ExpensesWorkspacePanels.tsx:347` |
 | เรียกรายงาน | ปุ่มหน้ารายงานบนเว็บ | `apps/web/src/features/reports/ReportsWorkspacePage.tsx:365` |
 | เลือกวันที่ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:684` |
 | แก้ไขเอกสาร | ปุ่มเปิดแก้รายจ่ายที่ยืนยันแล้ว | `packages/contracts/src/expenses.ts:756` |
 | แพ็กเกจ | เมนูบนเว็บ | `apps/web/src/features/web-core-workspace/settings-menu.logic.ts:158` |
 | แพ็กเกจและราคา | พื้นที่ rich menu ปัจจุบัน; ส่งข้อความ โปรโมชั่น | `scripts/line-oa/rich-menu-v2-ver3.manifest.json:27` |
 | โปรโมชั่น | คำสั่งที่พิมพ์ใน LINE; VIEW_PACKAGES_COMMAND | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:16` |
-| ใบรับรองแทนใบเสร็จ | แท็บและชื่อหน้าศูนย์ใบรับรองบนเว็บ | `apps/web/src/common/i18n/workspace-dictionary.ts:1773` |
+| ใบรับรองแทนใบเสร็จ | แท็บและชื่อหน้าศูนย์ใบรับรองบนเว็บ | `apps/web/src/common/i18n/workspace-dictionary.ts:1774` |
 | ใบเสร็จรอตรวจ | ชื่อตัวเลขบนการ์ดรายจ่ายหน้าแรก | `apps/web/src/features/dashboard-notifications/DashboardPages.tsx:115` |
 | ไม่มีสิทธิ์ | ป้ายสิทธิ์รายงานบนเว็บ | `apps/web/src/features/reports/ReportsWorkspacePage.tsx:32` |
 

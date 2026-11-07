@@ -2075,6 +2075,7 @@ export type ExpenseHistoryEntry = {
 export type ExpenseHistoryResult = { data: ExpenseHistoryEntry[]; total: number; page: number; pageSize: number; creatorDisplayName: string | null };
 
 export const ACCOUNTANT_WORKBOOK_SHEETS = {
+  followUp: 'ต้องตามเอกสาร', summary: 'สรุปรายเดือน', purchaseTax: 'รายงานภาษีซื้อ',
   expenses: 'รายการค่าใช้จ่าย', payments: 'การจ่าย', withholding: 'หัก ณ ที่จ่าย', files: 'ไฟล์ทั้งหมด', about: 'เกี่ยวกับไฟล์นี้',
 } as const;
 

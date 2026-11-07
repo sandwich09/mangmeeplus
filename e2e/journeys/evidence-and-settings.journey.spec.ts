@@ -36,6 +36,8 @@ function rows(xml: string): string[][] {
       decodeXml(cell[1]!.match(/<t\b[^>]*>([\s\S]*?)<\/t>|<v>([^<]*)<\/v>/)?.slice(1).find(value => value !== undefined) ?? '')));
 }
 const headers = {
+  'ต้องตามเอกสาร': ['เลขที่รายการ', 'สิ่งที่ต้องตาม', 'ดูรายการ'],
+  'สรุปรายเดือน': ['หัวข้อ', 'รายการ', 'สกุลเงิน', 'มูลค่าก่อน VAT', 'VAT', 'ยอดรวมตามเอกสาร', 'หัก ณ ที่จ่าย', 'ยอดจ่ายสุทธิ', 'จ่ายแล้ว', 'ค้างจ่าย', 'จำนวนรายการ'],
   'รายการค่าใช้จ่าย': ['วันที่เอกสาร', 'วันที่ส่งเข้ามั่งมี', 'เลขที่รายการ', 'เลขที่ตามเอกสาร', 'ประเภทเอกสาร', 'ผู้ขาย/ผู้รับเงิน', 'เลขประจำตัวผู้เสียภาษีผู้ขาย', 'สาขาผู้ขาย', 'ที่อยู่ผู้ขาย', 'หมวดค่าใช้จ่าย', 'รายละเอียด', 'สกุลเงิน', 'มูลค่าก่อน VAT', 'VAT', 'ยอดรวมตามเอกสาร', 'สิทธิภาษีซื้อ', 'หลักฐานรายจ่าย', 'หัก ณ ที่จ่าย (ทั้งเอกสาร)', 'ยอดจ่ายสุทธิ', 'จ่ายแล้ว', 'ค้างจ่าย', 'วันที่จ่ายล่าสุด', 'สำรองจ่ายโดย', 'สถานะ', 'หมายเหตุ'],
   'การจ่าย': ['วันที่จ่าย', 'เลขที่รายการ', 'ผู้ขาย/ผู้รับเงิน', 'ยอดจ่าย', 'สกุลเงิน', 'วิธีจ่าย', 'จ่ายจาก', 'เลขที่ใบสำคัญจ่าย'],
   'หัก ณ ที่จ่าย': ['วันที่จ่าย', 'เลขที่รายการ', 'ผู้รับเงิน', 'เลขประจำตัวผู้เสียภาษี', 'สาขา', 'ที่อยู่', 'แบบ ภ.ง.ด.', 'ประเภทเงินได้', 'อัตรา (%)', 'จำนวนเงินที่จ่าย', 'ภาษีที่หัก', 'สกุลเงิน', 'เลขที่หนังสือรับรอง 50 ทวิ', 'สถานะ', 'หมายเหตุ'],
@@ -45,11 +47,17 @@ const headers = {
 function workbookSheets(buffer: Buffer, bundled = false, partCount = 1) {
   const files = unzip(buffer);
   const names = [...files.get('xl/workbook.xml')!.toString().matchAll(/<sheet\b[^>]*name="([^"]+)"/g)].map(match => decodeXml(match[1]!));
-  expect(names).toEqual(bundled ? Object.keys(headers) : Object.keys(headers).filter(name => name !== 'ไฟล์ทั้งหมด'));
+  const expectedNames = Object.keys(headers).filter(name => bundled || name !== 'ไฟล์ทั้งหมด');
+  expectedNames.splice(expectedNames.indexOf('ไฟล์ทั้งหมด') < 0 ? expectedNames.indexOf('เกี่ยวกับไฟล์นี้') : expectedNames.indexOf('ไฟล์ทั้งหมด'), 0, 'รายงานภาษีซื้อ');
+  expect(names).toEqual(expectedNames);
   return new Map(names.map((name, index) => {
     const xml = files.get(`xl/worksheets/sheet${index + 1}.xml`)!.toString();
     expect(decodeXml(xml)).not.toMatch(/HYPERLINK\("http/i);
     const data = rows(xml);
+    if (name === 'รายงานภาษีซื้อ') {
+      expect(data.flat()).toContain('จัดตามเดือนวันที่เอกสาร ระบบยังไม่ได้เก็บเดือนที่ใช้สิทธิภาษีซื้อ');
+      return [name, data] as const;
+    }
     const expected = headers[name as keyof typeof headers].filter(label => name !== 'ไฟล์ทั้งหมด' || label !== 'ชุดที่' || partCount > 1);
     if (name === 'รายการค่าใช้จ่าย') {
       if (data[0]!.includes('สาขาของร้าน')) expected.splice(2, 0, 'สาขาของร้าน');

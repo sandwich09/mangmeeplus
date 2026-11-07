@@ -404,7 +404,7 @@ describe('accountant export logic', () => {
       for (let offset = 0; workbook.readUInt32LE(offset) === 0x04034b50;) {
         const size = workbook.readUInt32LE(offset + 18), nameLength = workbook.readUInt16LE(offset + 26), extraLength = workbook.readUInt16LE(offset + 28);
         const start = offset + 30 + nameLength + extraLength;
-        if (workbook.subarray(offset + 30, offset + 30 + nameLength).toString() === 'xl/worksheets/sheet1.xml') {
+        if (workbook.subarray(offset + 30, offset + 30 + nameLength).toString() === 'xl/worksheets/sheet3.xml') {
           const data = workbook.subarray(start, start + size);
           return (workbook.readUInt16LE(offset + 8) === 8 ? inflateRawSync(data) : data).toString();
         }

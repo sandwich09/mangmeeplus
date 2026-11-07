@@ -1,3 +1,4 @@
+import { CreateAccountantPackageUseCase } from '../application/use-cases/expense-evidence.use-case';
 import { asLedgerSource, buildJournalLines } from '../../ledger/application/use-cases/journal.use-case';
 import { PrismaLedgerRepository } from '../../ledger/infrastructure/prisma-ledger.repository';
 import { CompanyVatRegistrationUseCase } from '../../data-model-core/application/use-cases/company-vat-registration.use-case';
@@ -477,6 +478,40 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     new PrismaExpenseRepository({ client } as any),
     audit ?? new AuditService(new PrismaAuditRepository({ client } as any), { error: () => undefined } as any),
   );
+
+  for (const name of ['pack v2 extra readers preserve tenant branch and selected IDs', 'pack v2 reads historical registration and branch headers without writes']) {
+    it(name, async t => {
+      if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+      const rollback = new Error('pack-v2-read-proof-rollback');
+      await assert.rejects(clients[0]!.$transaction(async tx => {
+        const shop = await tx.company.create({ data: { name: 'ชื่อแสดง', registeredName: 'ชื่อจดทะเบียน', taxId: '0105555555555', vatRegistered: false } });
+        const other = await tx.company.create({ data: { name: 'Other tenant' } });
+        const branch = await tx.branch.create({ data: { companyId: shop.id, code: 'HO', name: 'สำนักงานใหญ่', isVatEstablishment: true, taxBranchCode: '00000' } });
+        const excludedBranch = await tx.branch.create({ data: { companyId: shop.id, code: 'B2', name: 'Outside scope' } });
+        await tx.companyVatRegistrationFact.create({ data: { companyId: shop.id, status: 'REGISTERED', effectiveFrom: new Date('2020-01-01'), source: 'USER_ANSWER' } });
+        const first = await tx.expenseRecord.create({ data: { companyId: shop.id, branchId: branch.id, createdByUserId: userId,
+          status: 'CONFIRMED', expenseNumber: 'PACK-A', expenseDate: new Date('2026-09-01'), sourceDocumentType: 'TAX_INVOICE',
+          vendorNameSnapshot: 'ผู้ขาย', vendorTaxIdSnapshot: '0123456789012', vendorBranchCodeSnapshot: '00000', vendorDocumentNumber: 'INV-PACK-A',
+          vatMode: 'VAT_INCLUDED', inputVatClaimStatus: 'CLAIMABLE', taxEvidenceStatus: 'USABLE_FOR_TAX', taxableAmount: '100', vatAmount: '7', grandTotalAmount: '107', netPayableAmount: '107', outstandingAmount: '107' } });
+        const excluded = await tx.expenseRecord.create({ data: { companyId: shop.id, branchId: excludedBranch.id, createdByUserId: userId, expenseDate: first.expenseDate, status: 'CONFIRMED', expenseNumber: 'PACK-B' } });
+        const foreign = await tx.expenseRecord.create({ data: { companyId: other.id, createdByUserId: userId, expenseDate: first.expenseDate, status: 'CONFIRMED', expenseNumber: 'PACK-FOREIGN' } });
+        const before = await tx.expenseRecord.findMany({ where: { companyId: shop.id } });
+        const repo = new PrismaExpenseRepository({ client: tx } as any);
+        const useCase = new CreateAccountantPackageUseCase(repo, {} as any, { log: async () => undefined } as any, { client: tx } as any, {} as any, {} as any);
+        const result = await useCase.execute({ ...context(), companyId: shop.id, roles: [], permissions: ['expense.read', 'expense.export'], scopes: { branchIds: [branch.id] } },
+          { yearMonth: '2026-09', expenseIds: [first.id, excluded.id, foreign.id] });
+        assert.deepEqual(result.indexRows.map(row => row.expense_number), ['PACK-A']);
+        const workbook = Buffer.from(result.indexXlsxBase64, 'base64').toString();
+        assert.ok(workbook.includes('รายงานภาษีซื้อ'));
+        assert.ok(workbook.includes('INV-PACK-A'));
+        assert.ok(!workbook.includes('PACK-B') && !workbook.includes('PACK-FOREIGN'));
+        assert.deepEqual(await tx.expenseRecord.findMany({ where: { companyId: shop.id } }), before);
+        assert.equal(await tx.expenseInputVatDecision.count({ where: { companyId: shop.id } }), 0);
+        assert.equal(await tx.companyVatRegistrationFact.count({ where: { companyId: shop.id } }), 1);
+        throw rollback;
+      }), error => error === rollback);
+    });
+  }
 
   it('R7 all AI expense projections share one deduplicated snapshot', async (t) => {
     if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');

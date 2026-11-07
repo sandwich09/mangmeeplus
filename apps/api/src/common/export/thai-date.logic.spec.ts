@@ -13,12 +13,12 @@ import {
 import { buildTaxExportArtifact } from '../../modules/tax/domain/logic/tax-export.logic';
 import { formatThaiExportDate, isIsoDateLike } from './thai-date.logic';
 
-function sheetXml(workbook: Buffer): string {
+function sheetXml(workbook: Buffer, part = 'xl/worksheets/sheet1.xml'): string {
   for (let offset = 0; workbook.readUInt32LE(offset) === 0x04034b50;) {
     const size = workbook.readUInt32LE(offset + 18);
     const nameLength = workbook.readUInt16LE(offset + 26);
     const start = offset + 30 + nameLength + workbook.readUInt16LE(offset + 28);
-    if (workbook.subarray(offset + 30, offset + 30 + nameLength).toString() === 'xl/worksheets/sheet1.xml') {
+    if (workbook.subarray(offset + 30, offset + 30 + nameLength).toString() === part) {
       const data = workbook.subarray(start, start + size);
       return (workbook.readUInt16LE(offset + 8) === 8 ? inflateRawSync(data) : data).toString('utf8');
     }
@@ -77,7 +77,7 @@ describe('XLSX-only Thai export dates', () => {
     });
 
     const csv = buildAccountantIndexCsv([row]);
-    const xlsx = sheetXml(buildAccountantWorkbook({ rows: [{ ...row, last_paid_at: row.paid_at, description: row.accounting_period }], payments: [], withholding: [], visible: {}, about: { 'ช่วงวันที่': row.accounting_period } }));
+    const xlsx = sheetXml(buildAccountantWorkbook({ rows: [{ ...row, last_paid_at: row.paid_at, description: row.accounting_period }], payments: [], withholding: [], visible: {}, about: { 'ช่วงวันที่': row.accounting_period } }), 'xl/worksheets/sheet3.xml');
 
     // The full CSV now includes the appended document/evidence/address columns; dates stay ISO.
     assert.equal(csv.split('\n')[0], ACCOUNTANT_INDEX_COLUMNS.join(','));

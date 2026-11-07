@@ -145,3 +145,19 @@ Open questions: none. Q1 decided by the controller 2026-11-07 (full claim only w
 Artifacts: New spec has the requirement/evidence/step/test/acceptance/source table. New plan has five dependent steps, exact implementation files/functions and registered tests first. RD template and notices were read directly from rd.go.th, with primary links in spec §7.
 Verification: Local read-only source trace and registration checks completed. The six planned API specs have grep counts 1/1/1/1/2/1, listed in plan. Static document checks passed for headers, 16 requirement/acceptance mappings, five dependent steps, 32 exact short evidence quotes, local citation ranges and whitespace. Scoped `git diff --check` passed. Existing help and manifest checks are separately invoked, with no new assertions in their unregistered files. Runtime, Prisma and browser checks were not run in this documents-only round.
 Next: Controller reviews scope, protected-PDF classification, signed-claim selection and tax subset reconciliation. Use P1–P5 for the later implementation round and record actual verification and the 300-expense benchmark.
+
+## Pack v2 round 1 landed, 2026-11-07
+- **Plan P1 + P3:**
+  - the `ต้องตามเอกสาร`, `สรุปรายเดือน` and `รายงานภาษีซื้อ` sheets;
+  - live e-WHT payments moved out of the shop-filed WHT sheet into a separate summary block (G7);
+  - currency identity kept by code (G8);
+  - 17 new `pack v2` tests.
+- **Limitation:** retained claim files carry no receipt role, so "receipt missing" is not inferred for them. The sheet discloses this.
+- **Verification (batch31):**
+  - API 13,164 pass, 0 fail;
+  - web 5,256 pass;
+  - contracts 509 pass;
+  - tsc api/web 0.
+  - Pre-existing reds, not this change: maintenance pins, the workers demo spec typecheck, billing recipient mail R-A7.
+- **Pins repaired:** four LINE help label pins in `line-help-cards-review-2026-10-20.md` were stale after web commit `4b0030885`, and now point at the current lines.
+- **Next:** P2 (record PDFs and signed claims), then P4 and P5 (screen note, guide, browser and 300-expense proof).

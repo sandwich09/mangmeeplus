@@ -1086,7 +1086,7 @@ describe('GetSharedEvidenceViewUseCase', () => {
 });
 
 function accountantDb(db: any) {
-  return { whtCertificate: { findMany: async () => [] }, expenseRecord: { findMany: async () => [] }, whtFilingLine: { findMany: async () => [] }, taxPeriod: { findMany: async () => [] },
+  return { expenseLine: { findMany: async () => [] }, companyVatRegistrationFact: { findMany: async () => [] }, whtCertificate: { findMany: async () => [] }, expenseRecord: { findMany: async () => [] }, whtFilingLine: { findMany: async () => [] }, taxPeriod: { findMany: async () => [] },
     whtIncomeCategory: { findMany: async () => [] }, disbursementVoucherLine: { findMany: async () => [] }, attachmentLink: { findMany: async () => [] },
     whtCertificateHandoff: { findMany: async () => [] }, ...db, branch: { count: async () => 1, ...db.branch } };
 }
@@ -1312,7 +1312,7 @@ describe('export cleanup 0.2 commercial boundary', () => {
     const touched: string[] = [];
     const forbiddenWork = async () => { touched.push('export work'); throw new Error('export work reached'); };
     let company: any = { status: 'ACTIVE', archivedAt: null, planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date('2020-01-01'), billingReceiptAccountId: null, capacityOverride: null } };
-    const db = { company: { findUnique: async () => company }, billingAccount: { findMany: async () => [] },
+    const db = { expenseLine: { findMany: forbiddenWork }, companyVatRegistrationFact: { findMany: forbiddenWork }, company: { findUnique: async () => company }, billingAccount: { findMany: async () => [] },
       billingInvoice: { findFirst: async () => null }, billingReceiptGrant: { findFirst: async () => null },
       packageChangeRequest: { findFirst: async () => null }, salesAttribution: { findUnique: async () => null },
       expensePayment: { findMany: forbiddenWork }, whtCertificate: { findMany: forbiddenWork } };
@@ -1399,7 +1399,7 @@ describe('CreateAccountantPackageUseCase', () => {
     for (let offset = 0; workbook.readUInt32LE(offset) === 0x04034b50;) {
       const size = workbook.readUInt32LE(offset + 18), nameLength = workbook.readUInt16LE(offset + 26), extraLength = workbook.readUInt16LE(offset + 28);
       const start = offset + 30 + nameLength + extraLength;
-      if (workbook.subarray(offset + 30, offset + 30 + nameLength).toString() === 'xl/worksheets/sheet1.xml') {
+      if (workbook.subarray(offset + 30, offset + 30 + nameLength).toString() === 'xl/worksheets/sheet3.xml') {
         const data = workbook.subarray(start, start + size);
         sheet = (workbook.readUInt16LE(offset + 8) === 8 ? inflateRawSync(data) : data).toString();
       }
@@ -1591,10 +1591,10 @@ describe('accountant evidence bundle', () => {
     assert.deepEqual(index.indexRows, []);
     const workbook = workbookParts(Buffer.from(index.indexXlsxBase64, 'base64'));
     assert.match(workbook.get('xl/workbook.xml')!, /name="การจ่าย"/);
-    const paymentEvidence = workbook.get('xl/worksheets/sheet2.xml')!;
+    const paymentEvidence = workbook.get('xl/worksheets/sheet4.xml')!;
     assert.match(paymentEvidence, /EXP-1/);
     assert.match(paymentEvidence, /PV-1, PV-2/);
-    assert.match(workbook.get('xl/worksheets/sheet3.xml')!, /WHT-1/);
+    assert.match(workbook.get('xl/worksheets/sheet5.xml')!, /WHT-1/);
     const zipIndex = [...workbookParts(entries.get('สารบัญ.xlsx')!).values()].join('');
     for (const name of [...entries.keys()].filter(name => name !== 'สารบัญ.xlsx')) assert.ok(zipIndex.includes(name), name);
     assert.doesNotMatch(paymentEvidence, /ยอดรวม|ยอดสุทธิ|ภาษีมูลค่าเพิ่ม/);
@@ -1680,8 +1680,11 @@ describe('accountant evidence bundle', () => {
     assert.deepEqual([...unzip(first.bytes).keys()], ['เอกสารค่าใช้จ่าย/EXP-060-1.jpg', 'สารบัญ.xlsx']);
     const xml = [...workbookParts(unzip(first.bytes).get('สารบัญ.xlsx')!).values()].join('');
     assert.match(xml, /อยู่ในชุดที่ 1:/);
-    assert.ok((xml.match(/<f>/g) ?? []).length > 0);
-    for (const formula of xml.match(/<f>.*?<\/f>/g) ?? []) { assert.ok(formula.includes('EXP-060')); assert.ok(!formula.includes('EXP-000')); }
+    const formulas = xml.match(/<f>.*?<\/f>/g) ?? [];
+    const fileFormulas = formulas.filter(formula => !formula.includes('&quot;#'));
+    assert.ok(fileFormulas.length > 0);
+    for (const formula of fileFormulas) { assert.ok(formula.includes('EXP-060')); assert.ok(!formula.includes('EXP-000')); }
+    for (const formula of formulas.filter(formula => formula.includes('&quot;#'))) assert.match(formula, /HYPERLINK\(&quot;#'/);
   });
   it('checks export/read permission and branch scope before planning or downloading', async () => {
     const { useCase, queries } = fixture([]);
@@ -2129,4 +2132,158 @@ it('PWS-HISTORY-FREE-ACCESS preserves source-draft own, branch and tenant gates 
     else await history.execute(actor, record.id);
     assert.equal(reads, free ? 1 : 2);
   }
+});
+
+function packV2Workbook(bytes: Buffer): Map<string, string[][]> {
+  const files = new Map<string, string>();
+  for (let offset = 0; bytes.readUInt32LE(offset) === 0x04034b50;) {
+    const size = bytes.readUInt32LE(offset + 18), length = bytes.readUInt16LE(offset + 26);
+    const start = offset + 30 + length + bytes.readUInt16LE(offset + 28);
+    const data = bytes.subarray(start, start + size);
+    files.set(bytes.subarray(offset + 30, offset + 30 + length).toString(), (bytes.readUInt16LE(offset + 8) === 8 ? inflateRawSync(data) : data).toString());
+    offset = start + size;
+  }
+  const names = [...files.get('xl/workbook.xml')!.matchAll(/<sheet\b[^>]*name="([^"]+)"/g)].map(match => match[1]!);
+  return new Map(names.map((name, index) => [name, [...files.get(`xl/worksheets/sheet${index + 1}.xml`)!.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)].map(row =>
+    [...row[1]!.matchAll(/<c\b[^>]*>([\s\S]*?)<\/c>/g)].map(cell => (cell[1]!.match(/<t\b[^>]*>([\s\S]*?)<\/t>|<v>([^<]*)<\/v>/)?.slice(1).find(value => value !== undefined) ?? '').replace(/&amp;/g, '&')))]));
+}
+
+describe('pack v2 workbookProjection integration', () => {
+  function fixture(remittance = 'PAYER_FILES') {
+    const expense = { id: 'a', branchId: 'b1', expenseNumber: 'EXP-A', expenseDate: new Date('2026-09-01'), uploadedAt: new Date('2026-11-01'), status: 'CONFIRMED',
+      sourceDocumentType: 'TAX_INVOICE', vendorDocumentNumber: 'INV-1', vendorNameSnapshot: 'ผู้ขาย', vendorTaxIdSnapshot: '0123456789012', vendorBranchCodeSnapshot: '00000',
+      inputVatClaimStatus: 'CLAIMABLE', taxEvidenceStatus: 'USABLE_FOR_TAX', taxableAmount: '300', vatAmount: '21.01', grandTotalAmount: '321.01',
+      whtAmount: '3', whtRemittance: remittance, netPayableAmount: '318.01', paidAmount: '100', outstandingAmount: '218.01', paymentStatus: 'PARTIALLY_PAID',
+      currency: 'THB', expenseCategoryId: 'c', categoryName: 'ค่าบริการ', attachments: [], evidenceSources: { certificates: [] }, aiVerificationSummaryJson: null };
+    const lineQueries: any[] = [];
+    const db: any = accountantDb({ branch: { count: async () => 1 },
+      expenseLine: { findMany: async (query: any) => { lineQueries.push(query); return [{ expenseId: 'a', lineNumber: 1, description: 'บริการ', taxableAmount: '300', vatAmount: '21.01', vatRate: '.07', expenseCategoryId: 'c' }]; } },
+      companyVatRegistrationFact: { findMany: async () => [{ id: 'f', status: 'REGISTERED', effectiveFrom: new Date('2026-01-01'), effectiveTo: null, supersededAt: null }] },
+      expensePayment: { findMany: async () => [{ id: 'p', expenseId: 'a', amount: '100', paidAt: new Date('2026-10-01'), paidAtConfirmed: true, paymentMethod: 'CASH' }] },
+      whtIncomeCategory: { findMany: async () => [] } });
+    const live = [{ id: 'a', paymentId: 'p', sourceLineKey: 'payment:p', expenseDate: new Date('2026-10-01'), whtRemittance: remittance,
+      currency: 'THB', payeeEntityKind: 'JURISTIC', vendorName: 'ผู้ขาย', vendorTaxId: '0123456789012', vendorBranchCode: '00000', vendorAddress: 'ที่อยู่',
+      whtRate: '3', grossAmount: '100', whtAmount: '1' }];
+    const uc: any = new CreateAccountantPackageUseCase({ listCategoryNames: async () => [{ id: 'c', name: 'ค่าบริการ' }] } as any,
+      {} as any, audit, { client: db } as any, {} as any, {} as any, { findConfirmedWithWhtByCompany: async () => live } as any);
+    const records = [expense], selectedIds = new Set(['a']);
+    const company = { name: 'ชื่อแสดง', registeredName: 'ชื่อจดทะเบียน', taxId: '0105555555555' };
+    const branches = [{ id: 'b1', name: 'สำนักงานใหญ่', taxBranchCode: '00000', isVatEstablishment: true }];
+    const project = (request = { yearMonth: '2026-10' }) => uc.workbookProjection({ companyId: 'shop', permissions: ['wht.certificate.read'], scopes: {} }, request,
+      { page: { rows: records }, files: [], expenseIds: selectedIds }, company, branches);
+    return { project, expense, db, lineQueries, records, selectedIds, company, branches, live };
+  }
+  it('pack v2 XLSX summary reconciles expense WHT and purchase subsets', async () => {
+    const h = fixture(), result = await h.project(), sheets = packV2Workbook(result.data);
+    assert.deepEqual([...sheets.keys()].slice(0, 3), ['ต้องตามเอกสาร', 'สรุปรายเดือน', 'รายการค่าใช้จ่าย']);
+    const summary = sheets.get('สรุปรายเดือน')!;
+    const total = summary.find(row => row[0] === 'รายจ่ายที่เลือก')!;
+    const expenses = sheets.get('รายการค่าใช้จ่าย')!;
+    for (const [index, label] of [[3, 'มูลค่าก่อน VAT'], [4, 'VAT'], [5, 'ยอดรวมตามเอกสาร'], [6, 'หัก ณ ที่จ่าย (ทั้งเอกสาร)'], [7, 'ยอดจ่ายสุทธิ'], [8, 'จ่ายแล้ว'], [9, 'ค้างจ่าย']] as const) {
+      assert.equal(Number(total[index]), Number(expenses[1]![expenses[0]!.indexOf(label)]), label);
+    }
+    for (const kind of ['แยกตามหมวด', 'แยกตาม VAT']) {
+      for (const index of [3, 4]) assert.equal(summary.filter(row => row[0] === kind).reduce((sum, row) => sum + Number(row[index]), 0).toFixed(2), Number(total[index]).toFixed(2));
+    }
+    const wht = summary.filter(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' || row[0] === 'หัก ณ ที่จ่ายจากรายจ่ายนอกช่วงเอกสาร');
+    const sheetWht = sheets.get('หัก ณ ที่จ่าย')!;
+    assert.equal(wht.reduce((sum, row) => sum + Number(row[6]), 0), Number(sheetWht[1]![sheetWht[0]!.indexOf('ภาษีที่หัก')]));
+    const purchase = sheets.get('รายงานภาษีซื้อ')!.find(row => row[2] === 'INV-1')!;
+    assert.equal(Number(summary.find(row => row[0] === 'ภาษีซื้อในรายงาน')![4]), Number(purchase[8]));
+    assert.ok(h.lineQueries.every(query => query.where.companyId === 'shop' && JSON.stringify(query.where.expenseId.in) === '["a"]'));
+  });
+  it('pack v2 uses document month and dated registration facts', async () => {
+    const h = fixture();
+    const report = () => h.project().then((result: any) => packV2Workbook(result.data).get('รายงานภาษีซื้อ')!);
+    h.expense.expenseDate = new Date('2026-09-30T23:00:00Z');
+    assert.ok((await report()).flat().some((value: string) => value.includes('กันยายน 2569')));
+    assert.ok((await report()).flat().includes('ชื่อจดทะเบียน'));
+    h.company.registeredName = '';
+    assert.ok((await report()).flat().includes('ข้อมูลร้านยังไม่ครบสำหรับรายงานภาษีซื้อ'));
+    h.company.registeredName = 'ชื่อจดทะเบียน';
+    h.db.companyVatRegistrationFact.findMany = async () => [];
+    assert.ok((await report()).flat().includes('ยังไม่มีข้อมูลยืนยันการจด VAT ของร้านในช่วงรายการนี้'));
+    h.expense.inputVatClaimStatus = 'NON_CLAIMABLE';
+    h.db.companyVatRegistrationFact.findMany = async () => [{ id: 'not-vat', status: 'NOT_REGISTERED', effectiveFrom: new Date('2026-01-01'), effectiveTo: null, supersededAt: null }];
+    assert.ok((await report()).flat().includes('ร้านไม่ได้จด VAT ในช่วงรายการนี้ จึงไม่มีรายงานภาษีซื้อ'));
+  });
+  it('pack v2 reconciles mixed VAT rights and incomplete identity through workbookProjection', async () => {
+    const h = fixture();
+    h.expense.taxableAmount = '200'; h.expense.vatAmount = '14'; h.expense.grandTotalAmount = '214';
+    h.db.expenseLine.findMany = async () => ['CLAIMABLE', 'NONDEDUCTIBLE_EXPENSE'].map((right, index) => ({ expenseId: 'a', lineNumber: index + 1,
+      description: 'บริการ', taxableAmount: '100', vatAmount: '7', vatRate: '.07', expenseCategoryId: 'c', taxComponentsJson: { VAT: true },
+      claimabilitySnapshot: right, taxEvidenceReviewStatus: 'VERIFIED' }));
+    let sheets = packV2Workbook((await h.project()).data);
+    let report = sheets.get('รายงานภาษีซื้อ')!.find(row => row[2] === 'INV-1')!;
+    assert.equal(report[8], '7');
+    assert.equal(sheets.get('สรุปรายเดือน')!.find(row => row[0] === 'ภาษีซื้อในรายงาน')![4], '7');
+    assert.equal(sheets.get('สรุปรายเดือน')!.find(row => row[0] === 'ภาษีซื้อที่ไม่อยู่ในรายงาน')![4], '7');
+    h.expense.vendorBranchCodeSnapshot = '';
+    sheets = packV2Workbook((await h.project()).data);
+    assert.ok(!sheets.get('รายงานภาษีซื้อ')!.some(row => row[2] === 'INV-1'));
+    const exclusions = sheets.get('สรุปรายเดือน')!.filter(row => row[0] === 'ภาษีซื้อที่ไม่อยู่ในรายงาน');
+    assert.equal(exclusions.reduce((sum, row) => sum + Number(row[4]), 0), 14);
+    h.expense.vendorBranchCodeSnapshot = '00000';
+    h.expense.inputVatClaimStatus = 'NON_CLAIMABLE';
+    sheets = packV2Workbook((await h.project()).data);
+    assert.ok(!sheets.get('สรุปรายเดือน')!.some(row => row[0] === 'ภาษีซื้อในรายงาน'));
+  });
+  it('pack v2 retains filed coverage before dates and bridges prior-document rows', async () => {
+    const h = fixture();
+    h.selectedIds.clear();
+    let sheets = packV2Workbook((await h.project()).data);
+    assert.ok(sheets.get('สรุปรายเดือน')!.some(row => row[0] === 'หัก ณ ที่จ่ายจากรายจ่ายนอกช่วงเอกสาร' && row[6] === '1'));
+    h.selectedIds.add('a');
+    const filed = { id: 'filed', sourceType: 'expense.record', sourceId: 'a', filing: { formType: 'PND53', periodKey: '2026-09' },
+      lineJson: { payment: ['expense.record', 'a', '2026-09-15', 'b1', 'THB', '', '300', '3', '1', 'ชื่อที่ยื่น', '0123456789012', '00000', 'ที่อยู่ที่ยื่น'] } };
+    h.db.whtFilingLine.findMany = async () => [filed];
+    let result = await h.project();
+    assert.equal(result.withholdingRowCount, 0);
+    h.live[0]!.expenseDate = new Date('2026-11-01');
+    filed.lineJson.payment[2] = '2026-10-15';
+    result = await h.project(); sheets = packV2Workbook(result.data);
+    assert.equal(result.withholdingRowCount, 1);
+    assert.ok(sheets.get('หัก ณ ที่จ่าย')!.flat().includes('ชื่อที่ยื่น'));
+    assert.ok(sheets.get('สรุปรายเดือน')!.some(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' && row[6] === '3'));
+  });
+  it('pack v2 reconciles rounded legacy money and keeps amount-only and mixed WHT rates distinct', async () => {
+    const h = fixture();
+    h.expense.taxableAmount = '100.0050'; h.expense.vatAmount = '7.0050'; h.expense.grandTotalAmount = '107.0100';
+    h.db.expenseLine.findMany = async () => [];
+    h.live[0]!.whtRate = null as any;
+    h.live.push({ ...h.live[0]!, sourceLineKey: 'payment:p:line:2', whtRate: '5', whtAmount: '2' });
+    const sheets = packV2Workbook((await h.project()).data), summary = sheets.get('สรุปรายเดือน')!;
+    const total = summary.find(row => row[0] === 'รายจ่ายที่เลือก')!;
+    assert.deepEqual(total.slice(3, 6), ['100.01', '7.01', '107.01']);
+    assert.equal(summary.filter(row => row[0] === 'แยกตามหมวด').reduce((sum, row) => sum + Number(row[5]), 0).toFixed(2), '107.01');
+    assert.ok(summary.some(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' && row[1]!.includes('ยังไม่ระบุอัตรา')));
+    assert.ok(summary.some(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' && row[1]!.includes('5%')));
+    assert.equal(summary.filter(row => row[0] === 'หัก ณ ที่จ่ายในช่วง').reduce((sum, row) => sum + Number(row[6]), 0), 3);
+  });
+  it('pack v2 summary separates currency identity and PND2 PND3 PND53 groups', async () => {
+    const h = fixture();
+    for (const [id, currency, kind, code] of [['b', 'USD', 'INDIVIDUAL', 'PND2'], ['c', 'ZZZ', 'INDIVIDUAL', null], ['d', 'QQQ', 'JURISTIC', null]]) {
+      h.records.push({ ...h.expense, id: id!, expenseNumber: `EXP-${id}`, currency: currency! }); h.selectedIds.add(id!);
+      h.live.push({ ...h.live[0]!, id, currency, payeeEntityKind: kind, incomeCategoryCode: code } as any);
+    }
+    h.db.whtIncomeCategory.findMany = async () => [{ code: 'PND2', nameTh: 'เงินได้บุคคล', filingRoute: 'SEPARATE_PND2' }];
+    const sheets = packV2Workbook((await h.project()).data), summary = sheets.get('สรุปรายเดือน')!;
+    assert.equal(summary.filter(row => row[0] === 'รายจ่ายที่เลือก').length, 4);
+    for (const form of ['ภ.ง.ด.2', 'ภ.ง.ด.3', 'ภ.ง.ด.53']) assert.ok(summary.some(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' && row[1]!.startsWith(form)));
+    for (const code of ['ZZZ', 'QQQ']) assert.ok(summary.some(row => row[2] === `สกุลเงินอื่น (${code})`));
+    const columns = sheets.get('หัก ณ ที่จ่าย')![0]!;
+    const currencies = [...new Set(sheets.get('หัก ณ ที่จ่าย')!.slice(1).map(row => row[columns.indexOf('สกุลเงิน')]))];
+    for (const currency of currencies) {
+      const tax = sheets.get('หัก ณ ที่จ่าย')!.slice(1).filter(row => row[columns.indexOf('สกุลเงิน')] === currency).reduce((sum, row) => sum + Number(row[columns.indexOf('ภาษีที่หัก')]), 0);
+      assert.equal(summary.filter(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' && row[2] === currency).reduce((sum, row) => sum + Number(row[6]), 0), tax);
+    }
+  });
+  it('pack v2 separates document WHT payment WHT and e-WHT', async () => {
+    const h = fixture('E_WHT'), result = await h.project(), sheets = packV2Workbook(result.data);
+    assert.equal(result.withholdingRowCount, 0);
+    assert.ok(!sheets.has('หัก ณ ที่จ่าย'));
+    assert.ok(sheets.get('สรุปรายเดือน')!.some(row => row[0] === 'e-WHT' && row[6] === '1'));
+    assert.ok(!sheets.get('ต้องตามเอกสาร')!.some(row => row.join(' ').includes('50 ทวิ')));
+    assert.ok(sheets.get('เกี่ยวกับไฟล์นี้')!.some(row => row[1] === 'ไม่มีแถวในแผ่นหัก ณ ที่จ่าย'));
+  });
 });
