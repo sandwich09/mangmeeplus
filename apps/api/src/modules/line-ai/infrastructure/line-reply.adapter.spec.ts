@@ -325,3 +325,12 @@ it('U5 legacy reply and push sanitize all visible plan wording while preserving 
     }
   } finally { globalThis.fetch = original; }
 });
+
+it('R14 the delivery placeholder is rejected before reply push frozen or virtual transport', async () => {
+  const adapter = new LineReplyAdapter({ get: async () => assert.fail('sentinel must not reach credentials') } as any, {} as any);
+  const messages = [{ type: 'text' as const, text: 'ผลลัพธ์นี้ใช้การส่งรุ่นใหม่' }];
+  assert.equal(await adapter.sendReply('token', messages), 'failed_other');
+  assert.equal(await adapter.sendPush('target', messages), 'failed_other');
+  assert.equal(await adapter.sendReply('Vdemo-test', messages), 'failed_other');
+  assert.equal((await adapter.sendFrozenV2({ channelId: 'line', transport: 'REPLY', target: 'token', messages, pushRetryKey: '00000000-0000-4000-8000-000000000000', timeoutMs: 1000 })).kind, 'rejected');
+});

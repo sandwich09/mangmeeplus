@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeLineText, classifyIntent, chooseAgent, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand, isPendingFieldAnswer, lineWorkflowPickerText, isLineWorkflowCountRead } from './line-ai-classifier.logic';
+import { normalizeLineText, classifyIntent, chooseAgent, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand, isPendingFieldAnswer, lineWorkflowPickerText, isLineWorkflowCountRead, lineDocumentNumberMatches } from './line-ai-classifier.logic';
 
 describe('normalizeLineText', () => {
   it('trims and collapses whitespace', () => {
@@ -239,4 +239,67 @@ it('R13 a claim number is a locator rather than a claim amount', async () => {
   const candidates = (await extractValueCandidatesV2(evidence, '2026-11-07'))!;
   const row = { id: 'claim', requestNo: 'RB-0002', amount: '1877', currency: 'THB' };
   assert.deepEqual(matchLineClaimTargets(text, [row], candidates.amounts, 'user'), [row]);
+});
+
+it('R14 particles are empty field answers and A-or-B questions stay questions', async () => {
+  const { stripLineFieldParticles } = await import('@watchdog-bms/contracts') as any;
+  for (const particle of ['ค่ะ', 'คะ', 'ครับ', 'คับ', 'งับ', 'จ้ะ', 'จ๊ะ', 'จ้า', 'จ้าา', 'จา', 'ฮะ', 'ค่า', 'นะ', 'นะคะ', 'นะจ๊ะ', 'น้า', 'เด้อ']) {
+    for (const field of ['claim', 'payee', 'reason'] as const) assert.equal(isPendingFieldAnswer(`${particle}${particle}`, field), false);
+    assert.equal(stripLineFieldParticles(`ไปส่งเอกสาร${particle}${particle}`), 'ไปส่งเอกสาร');
+  }
+  assert.equal(lineWorkflowPickerText('ช่องนี้ใส่ชื่อคนรับเงินจริงหรือชื่อร้านคะ').question, true);
+  assert.equal(lineWorkflowPickerText('เงินสดหรือโอน').question, false);
+});
+
+it('R14 glued document suffixes and spoken ordinals retain exact identifiers', () => {
+  for (const tail of ['ให้หน่อย', 'จ้ะ', ' ']) assert.deepEqual(lineWorkflowPickerText(`เลขที่ ทดสอบ-0012${tail}`).documents, ['ทดสอบ-0012']);
+  assert.equal(lineWorkflowPickerText('เอาอันแรกที่ขึ้นมาค่ะ').ordinal, 1);
+  assert.equal(lineWorkflowPickerText('ข้อ 2').ordinal, 2);
+  assert.equal(lineWorkflowPickerText('ของผมเองจ้ะ', true).requester, 'ฉัน');
+});
+
+it('R14 alternatives ask the claim amount before receipt collection', async () => {
+  const { createLineAiInputEvidence, extractValueCandidatesV2 } = await import('@watchdog-bms/contracts');
+  const { parseManualClaimLine } = await import('./line-ai-classifier.logic');
+  const text = 'ขอเบิก ค่าขนของ210 หรือ230บาท วันนี้ ไม่แน่ใจยอด';
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'r14', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+  const parsed = await parseManualClaimLine(evidence, (await extractValueCandidatesV2(evidence, '2026-11-07'))!);
+  assert.equal(parsed?.values.amount, undefined); assert.equal(parsed?.amountChoices.length, 2);
+});
+
+it('R14 open expense prices accept bare and particle-suffixed amount answers', async () => {
+  const { buildInitialLineExpenseDraftContinuation, applyLineExpenseDraftAnswer } = await import('../../../expenses/domain/logic/line-expense-draft-conversation.logic');
+  for (const messageText of ['210', '210 บ. จ้ะ', '210บาทนะคะ']) {
+    const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'r14-price', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat', targetRevision: '2026-08-18T00:00:00.000Z', provisionalExpenseDate: '2026-08-18', messageText: 'ซื้อกระดาษ', webhookEventId: 'price', categories: [], now: '2026-08-18T01:00:00.000Z', hints: { confidence: 1, description: 'กระดาษ' } });
+    const result = applyLineExpenseDraftAnswer({ state, messageText, categories: [], now: '2026-08-18T02:00:00.000Z' });
+    assert.equal(Number(result.state.items[0]!.totalAmount), 210, messageText);
+    const purpose = applyLineExpenseDraftAnswer({ state, messageText: 'วัตถุประสงค์ ไปส่งเอกสารจ้ะ', categories: [] });
+    assert.equal(purpose.state.header.businessPurpose, 'ไปส่งเอกสาร');
+  }
+});
+
+it('R14 an expense collector cannot use a round number as its proposed price', async () => {
+  const { buildInitialLineExpenseDraftContinuation, applyLineExpenseDraftAnswer } = await import('../../../expenses/domain/logic/line-expense-draft-conversation.logic');
+  const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'r14-round', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat', targetRevision: '2026-08-18T00:00:00.000Z', provisionalExpenseDate: '2026-08-18', messageText: 'ค่าเดินทาง รอบ 4', webhookEventId: 'round', categories: [], hints: { confidence: 1, description: 'ค่าเดินทาง รอบ 4', amount: '4' } });
+  assert.equal(state.items[0]?.totalAmount, undefined);
+  const result = applyLineExpenseDraftAnswer({ state, messageText: 'ค่าเดินทาง รอบ 4', categories: [], hints: { confidence: 1, amount: '4' } });
+  assert.equal(result.state.items[0]?.totalAmount, undefined);
+  const keyed = applyLineExpenseDraftAnswer({ state, messageText: `${state.items[0]!.itemRef}-PRICE รอบ 4`, categories: [] });
+  assert.equal(keyed.state.items[0]?.totalAmount, undefined); assert.equal(keyed.state.items[0]?.unitPrice, undefined);
+});
+
+it('R14 a typed number names a record by the whole number or its last dash part, never by a shared prefix', () => {
+  assert.equal(lineDocumentNumberMatches('ทดสอบ-0012', 'ทดสอบ-0012'), true);
+  assert.equal(lineDocumentNumberMatches('ทดสอบ-0012', '0012'), true);
+  assert.equal(lineDocumentNumberMatches('RB-2569/0012', '0012'), true);
+  assert.equal(lineDocumentNumberMatches('ทดสอบ-00120', 'ทดสอบ-0012'), false);
+  assert.equal(lineDocumentNumberMatches('ทดสอบ-0012', '012'), false);
+  assert.equal(lineDocumentNumberMatches('ทดสอบ-0012', ''), false);
+});
+
+it('R14 amount alternatives and "ก็ได้" statements are not side questions', () => {
+  assert.equal(lineWorkflowPickerText('ขอเบิก ค่าขนของ 210 หรือ 230 บาทค่ะ').question, false);
+  assert.equal(lineWorkflowPickerText('เงินสดหรือโอนก็ได้ครับ').question, false);
+  assert.equal(lineWorkflowPickerText('ใส่ชื่อร้านหรือชื่อเจ้าของจ้ะ').question, false);
+  assert.equal(lineWorkflowPickerText('ต้องใส่ชื่อจริงหรือชื่อเล่นครับ').question, true);
 });

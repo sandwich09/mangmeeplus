@@ -17,7 +17,7 @@ export type LineWorkflowRecordTarget = { id: string; label: string; amount: stri
   documentNumbers?: string[]; roundText?: string; revision?: string; branchId?: string };
 export type LineWorkflowRecordTargets = { targets: LineWorkflowRecordTarget[]; total: number; exhaustive: boolean;
   latestPaidWithoutWithholding?: boolean; latestOnly?: boolean; sellers?: Array<{ id: string; label: string }>; sellerSearch?: string };
-type WorkflowSlots = { search?: string; vendorName?: string; vendorCounterpartyId?: string };
+type WorkflowSlots = { search?: string; vendorName?: string; vendorCounterpartyId?: string; includeIneligible?: boolean };
 export type LineWorkflowTargets = { targets: ReimbursementRequestSummary[]; total: number; exhaustive: boolean; receiptBlocked?: ReimbursementRequestSummary[]; notAssigned?: ReimbursementRequestSummary[] };
 
 @Injectable()
@@ -45,7 +45,7 @@ export class LineWorkflowTargetService {
     const scanned = new Set<string>();
     for (let page = 1; page <= 3; page++) {
       const result = await this.claims.execute(ctx, { page, pageSize: 100, search: slots.search,
-        ...(act === 'REIMBURSEMENT_SUBMIT' ? { bucket: 'draft' as const }
+        ...(slots.includeIneligible ? {} : act === 'REIMBURSEMENT_SUBMIT' ? { bucket: 'draft' as const }
           : act === 'REIMBURSEMENT_RECORD_PAYMENT' ? { bucket: 'payment' as const }
             : act === 'REIMBURSEMENT_APPROVE' || act === 'REIMBURSEMENT_REJECT' ? { status: 'PENDING_APPROVAL' as const } : {}) });
       total = result.total;

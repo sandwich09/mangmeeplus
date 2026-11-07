@@ -189,8 +189,10 @@ test('collectionState is snapshotted separately and excluded from scored busines
   assert.deepEqual(runtimeDatabaseEffects(prior.business, next.business), []);
   assert.deepEqual(runtimeDatabaseEffects(before, after).map(row => row.kind).sort(), ['ExpenseRecord.update', 'ReimbursementDraftAction.update']);
   assert.deepEqual(runtimeBusinessEffects(before, after), []);
-  assert.equal(runtimeBusinessEffects(before, { ...after, ExpenseRecord: [{ ...after.ExpenseRecord[0]!, updatedByUserId: 'actor' }] }).length, 1,
-    'an incomplete continuation-only change remains a business effect');
+  assert.deepEqual(runtimeBusinessEffects(before, { ...after, ExpenseRecord: [{ ...after.ExpenseRecord[0]!, updatedByUserId: 'actor' }] }), [],
+    'a second pause by the same actor changes only metadata and updatedAt');
+  assert.equal(runtimeBusinessEffects(before, { ...after, ExpenseRecord: [{ ...after.ExpenseRecord[0]!, updatedByUserId: 'actor', amount: '11' }] }).length, 1,
+    'a business field changed alongside continuation metadata remains a business effect');
 });
 
 test('existing turns keep their message and attachment defaults without a typed action', () => {

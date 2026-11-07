@@ -2305,3 +2305,24 @@ export function parseLineFixedReadControl(data: string | undefined): LineFixedRe
   return [...params.keys()].length === 2 && params.getAll('action').length === 1 && params.getAll('id').length === 1
     && params.get('action') === 'fixed-read' && params.get('id') === 'expense_month' ? { id: 'expense_month' } : null;
 }
+
+/** User politeness is never a collected business field. */
+const LINE_FIELD_PARTICLE = /^(?:(?:ค่ะ|คะ|ค่า|ครับ|คับ|ค้าบ|งับ|จ้ะ|จ๊ะ|จ้า|จ๋า|จา|ฮะ|นะ|น้า|เด้อ)[าะ]*)+$/u;
+const lineFieldWords = new Intl.Segmenter('th', { granularity: 'word' });
+// Thai has no spaces, so a particle is dropped only when the word segmenter reads it as its own
+// word: "บังคับ", "หน้า", "มูลค่า", "เจ้า" and "ชนะ" keep their last syllable.
+export function stripLineFieldParticles(text: string): string {
+  const words = [...lineFieldWords.segment(text.trim())].map(part => part.segment);
+  let removed = false;
+  for (;;) {
+    while (words.length && /^[\s.!?,…ๆ]+$/u.test(words.at(-1)!)) words.pop();
+    const last = words.at(-1);
+    if (last === undefined) break;
+    if (/^[าะ]+$/u.test(last) && words.length > 1 && LINE_FIELD_PARTICLE.test(words.at(-2)!)) { words.pop(); continue; }
+    if (last === 'ผม' && words.at(-2) === 'ครับ') { words.splice(-2); removed = true; continue; }
+    if (!LINE_FIELD_PARTICLE.test(last)) break;
+    words.pop(); removed = true;
+  }
+  // Punctuation alone is kept ("หจก."); it goes only together with a removed particle.
+  return removed ? words.join('').trim() : text.trim();
+}

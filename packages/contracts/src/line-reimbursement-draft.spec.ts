@@ -109,3 +109,24 @@ describe('Line reimbursement draft contract', () => {
     ]) assert.equal(parseLineReimbursementDraftProposalV1(proposal, { evidence: built.inputEvidence }), undefined);
   });
 });
+
+
+it('R14 text particle trimming preserves exact user proofs and leaves particle-only fields missing', async () => {
+  for (const text of ['ไปส่งของจ้ะนะคะ', 'จ้ะจ้ะ']) {
+    const built = (await createLineAiInputEvidence({ turnKey: 'r14-fields', parts: [{ partId: 'p', eventIdHash: hash, acceptedAtMs: 1, rawText: text }] }))!;
+    const value = { value: text, proof: { kind: 'USER_TEXT', refs: [{ partId: 'p', rawSha256: built.inputEvidence.parts[0]!.rawSha256, startUtf16: 0, endUtf16: text.length }] } };
+    const parsed = parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId, taskRevision: 1, operation: 'CREATE', fields: { reason: value, missingReceiptReason: value, title: value }, lineChanges: [{ operation: 'ADD', values: { description: value, purpose: value } }] }, { evidence: built.inputEvidence });
+    assert.ok(parsed);
+    if (text === 'จ้ะจ้ะ') {
+      assert.deepEqual(parsed.fields, {}); assert.deepEqual(parsed.lineChanges?.[0]?.operation === 'ADD' && parsed.lineChanges[0].values, {});
+    } else {
+      for (const field of Object.values(parsed.fields ?? {})) {
+        assert.equal(field?.value, 'ไปส่งของ');
+        assert.equal(field?.proof.kind === 'USER_TEXT' && field.proof.refs[0]?.endUtf16, 'ไปส่งของ'.length);
+      }
+      const line = parsed.lineChanges?.[0];
+      assert.equal(line?.operation === 'ADD' && line.values.description?.value, 'ไปส่งของ');
+      assert.equal(line?.operation === 'ADD' && line.values.purpose?.value, 'ไปส่งของ');
+    }
+  }
+});

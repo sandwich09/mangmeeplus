@@ -1,3 +1,4 @@
+import { stripLineFieldParticles } from './line-ai.js';
 import type { LineAiInputEvidenceV2, LineAiSourceRefV2 } from './line-ai-input-evidence.js';
 import { validateLineAiSourceRefV2 } from './line-ai-input-evidence.js';
 import type { ReimbursementReceiptRequirementStatus, ReimbursementSourceSnapshot } from './reimbursements.js';
@@ -251,7 +252,18 @@ function parseProof(value: unknown, context: ParseContext, fieldPath: string, pr
 function proposed<T>(value: unknown, context: ParseContext, fieldPath: string, validate: (candidate: unknown) => candidate is T): LineReimbursementProposedValueV1<T> | undefined {
   if (!object(value) || !exact(value, ['value', 'proof']) || !validate(value['value'])) return undefined;
   const proof = parseProof(value['proof'], context, fieldPath, value['value']);
-  return proof ? { value: value['value'], proof } : undefined;
+  if (!proof) return undefined;
+  if (typeof value['value'] === 'string' && /(?:reason|purpose|description|title)$/iu.test(fieldPath) && proof.kind === 'USER_TEXT') {
+    const clean = stripLineFieldParticles(value['value']);
+    if (clean !== value['value']) {
+      if (!validate(clean) || proof.refs.length !== 1) return undefined;
+      const offset = value['value'].indexOf(clean), ref = proof.refs[0]!;
+      const adjusted = { ...proof, refs: [{ ...ref, startUtf16: ref.startUtf16 + offset, endUtf16: ref.startUtf16 + offset + clean.length }] };
+      const checked = parseProof(adjusted, context, fieldPath, clean);
+      return checked ? { value: clean, proof: checked } : undefined;
+    }
+  }
+  return { value: value['value'], proof };
 }
 
 function line(value: unknown, context: ParseContext, path: string): LineReimbursementProposedClaimLineV1 | undefined {
@@ -262,11 +274,11 @@ function line(value: unknown, context: ParseContext, path: string): LineReimburs
     const item = proposed(value['incurredDate'], context, `${path}.incurredDate`, (candidate): candidate is string => typeof candidate === 'string' && DATE.test(candidate));
     if (!item) return undefined; result.incurredDate = item;
   }
-  if (value['description'] != null) {
+  if (value['description'] != null && !(object(value['description']) && typeof value['description']['value'] === 'string' && !stripLineFieldParticles(value['description']['value']))) {
     const item = proposed(value['description'], context, `${path}.description`, (candidate): candidate is string => bounded(candidate, LINE_REIMBURSEMENT_DRAFT_LIMITS.descriptionUtf16, false));
     if (!item) return undefined; result.description = item;
   }
-  if (value['purpose'] != null) {
+  if (value['purpose'] != null && !(object(value['purpose']) && typeof value['purpose']['value'] === 'string' && !stripLineFieldParticles(value['purpose']['value']))) {
     const item = proposed(value['purpose'], context, `${path}.purpose`, (candidate): candidate is string => bounded(candidate, LINE_REIMBURSEMENT_DRAFT_LIMITS.purposeUtf16));
     if (!item) return undefined; result.purpose = item;
   }
@@ -304,7 +316,7 @@ export function parseLineReimbursementDraftProposalV1(value: unknown, context: P
   for (const [key, max, allowEmpty] of fieldSpecs) {
     const raw = value['fields'][key];
     // A bare null is "not given" (models send it for unknown fields); clearing uses {value: null, proof}.
-    if (raw == null) continue;
+    if (raw == null || object(raw) && typeof raw['value'] === 'string' && !stripLineFieldParticles(raw['value'])) continue;
     const item = proposed(raw, context, `fields.${key}`, (candidate): candidate is string | null =>
       (key === 'missingReceiptReason' && candidate === null) || bounded(candidate, max, allowEmpty));
     if (!item) return undefined;

@@ -1,3 +1,4 @@
+import { stripLineFieldParticles } from '@watchdog-bms/contracts';
 import { matchLineClaimTargets, lineWorkflowPickerText } from '../domain/logic/line-ai-classifier.logic';
 import { effectivePolicy } from '../../reimbursements/domain/reimbursement.constants';
 import { todayCivilDate } from '@watchdog-bms/contracts';
@@ -339,9 +340,10 @@ export class LineReimbursementDraftAdapterService {
 
   async answerLine(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number;
     evidence: LineAiInputEvidenceV2; text: string; workflowDescription?: string }): Promise<LineReimbursementDraftResult | null> {
-    if (input.ctx.freeExpenseDrafts || lineWorkflowPickerText(input.text).question) return null;
+    if (input.ctx.freeExpenseDrafts || lineWorkflowPickerText(input.text).question || /^(?:เหตุผล|วัตถุประสงค์|เพื่อ)/u.test(input.text.trim())) return null;
     const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
     const accepted = active && this.accepted(active);
+    if (active?.status === 'COLLECTING' && !stripLineFieldParticles(input.text)) return this.draftService.get({ ...input, actionId: active.id });
     if (active?.status === 'COLLECTING' && active.operation === 'UPDATE' && accepted && Date.parse(accepted.options.expiresAt) > Date.now() && !accepted.pickedTargetRef) {
       const choices = accepted.options.choices.filter(choice => choice.kind === 'TARGET');
       const rows = (await Promise.all(choices.map(choice => this.repo.findRequestById(input.ctx.companyId, String(choice.raw['id']), true)))).filter((row): row is NonNullable<typeof row> => !!row && this.canUpdate(input.ctx, row));
@@ -404,16 +406,17 @@ export class LineReimbursementDraftAdapterService {
           ...this.publicOptions(accepted.options, accepted.proposal, accepted.awaitingPhoto).control, choice: 'no-receipt' } });
       return null; // A combined answer keeps its other fields on the proposal path.
     }
+    const amountOnly = /^[\d๐-๙, .฿]+(?:บาท|บ\.?|THB)?$/iu.test(stripLineFieldParticles(text));
     const view = this.publicOptions(accepted.options, accepted.proposal, accepted.awaitingPhoto);
-    if (view.collection.lineChosen || accepted.awaitingPhoto
-      || input.workflowDescription === undefined && (!accepted.options.selected.branchChoiceId || !accepted.options.selected.requesterChoiceId)) return null;
+    if (view.collection.lineChosen && !accepted.lineQuestion && !amountOnly || accepted.awaitingPhoto && !amountOnly
+      || input.workflowDescription === undefined && !amountOnly && (!accepted.options.selected.branchChoiceId || !accepted.options.selected.requesterChoiceId)) return null;
     if (input.workflowDescription === undefined && !isPendingFieldAnswer(text, 'claim')) return null;
     const candidates = await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok'));
     const parsed = candidates && await parseManualClaimLine(input.evidence, candidates, input.workflowDescription);
     if (!parsed) return this.draftService.get({ ...input, actionId: active.id });
     // A pending answer fills the missing line fields, keeping already accepted facts.
     if (lines[0]?.values.description) delete parsed.values.description;
-    if (lines[0]?.values.amount) delete parsed.values.amount;
+    if (lines[0]?.values.amount && !amountOnly) delete parsed.values.amount;
     if (!Object.keys(parsed.values).length && !parsed.amountChoices.length) return null;
     const candidateValues = Object.fromEntries([...candidates!.amounts.map(item => [item.candidateId, item.value]),
       ...candidates!.dates.map(item => [item.candidateId, item.isoDate]), ...candidates!.periods.map(item => [item.candidateId, item.fromDate])]);
@@ -456,7 +459,7 @@ export class LineReimbursementDraftAdapterService {
       const categories = options.choices.filter(choice => {
         if (choice.kind !== 'CATEGORY' || !remaining.slice(start).startsWith(choice.label)) return false;
         const suffix = remaining.slice(start + choice.label.length);
-        return !suffix || /^(?:(?:ค่ะ|คะ|ครับ|จ้า|จ้ะ|นะ|ด้วย)|[\s,;.!])*$/u.test(suffix) || /^[\s,;]/u.test(suffix) || suffix.startsWith('เหตุผล');
+        return !stripLineFieldParticles(suffix).replace(/ด้วย$/u, '').trim() || /^[\s,;]/u.test(suffix) || suffix.startsWith('เหตุผล');
       });
       if (categories.length === 1) {
         await this.currentChoice(input.ctx, this.findChoice(accepted.options, categories[0]!.choiceId, 'CATEGORY'), accepted.options);
@@ -470,7 +473,7 @@ export class LineReimbursementDraftAdapterService {
     const reason = remaining.match(/(?:^|[\s,;])เหตุผล\s*[:：]?\s*.+$/u)?.[0].trim();
     const fields = (active.commandJson as { fieldPaths?: string[] }).fieldPaths ?? [];
     const missingReason = noReceipt && !prefix && !reason && effectivePolicy(await this.repo.findPolicy(input.ctx.companyId, null)).allowMissingReceiptWithReason
-      ? remaining.replace(/(?:(?:ค่ะ|คะ|ครับ|จ้า|จ้ะ|นะ|ด้วย)|[\s.!])+$/u, '').trim() : '';
+      ? stripLineFieldParticles(remaining).replace(/ด้วย$/u, '').trim() : '';
     const answer = reason || (missingReason ? `เหตุผล ${missingReason}` : '') || ((line.values.categoryChoiceId || options.collection.categoryChosen)
       && fields.some(field => field === 'fields.reason' || field === 'fields.missingReceiptReason') ? remaining : '');
     const result = answer ? await this.answerReason({ ...input, text: answer, collected: { active, accepted: next, missingReceiptReason: !!missingReason } }) : null;
@@ -483,17 +486,27 @@ export class LineReimbursementDraftAdapterService {
   async answerReason(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number;
     evidence: LineAiInputEvidenceV2; text: string; purposeFallback?: boolean;
     collected?: { active: ReimbursementDraftActionRecord; accepted: Accepted; missingReceiptReason?: boolean } }): Promise<LineReimbursementDraftResult | null> {
-    if (input.ctx.freeExpenseDrafts) return null;
+    if (input.ctx.freeExpenseDrafts || lineWorkflowPickerText(input.text).question) return null;
     const active = input.collected?.active ?? await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
     // The persisted preview owns a plain answer even when intake omitted its continuation hint.
-    const explicitReason = active?.status === 'COLLECTING' ? input.text.trim().match(/^เหตุผล\s*[:：]?\s*(.+)$/u) : null;
-    const value = explicitReason?.[1]?.trim() ?? input.text.trim();
+    const explicitReason = input.text.trim().match(/^เหตุผล(?:คือ)?\s*[:：]?\s*(.+)$/u);
+    const value = stripLineFieldParticles(explicitReason?.[1]?.trim().replace(/^คือ\s*/u, '') ?? input.text.trim().replace(/^(?:วัตถุประสงค์(?:คือ)?|เพื่อ)\s*/u, ''));
     if (!isPendingFieldAnswer(value, 'claim')
       || (await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok')))?.amounts.length !== 0) return null;
+    const purposeAnswer = /^(?:วัตถุประสงค์(?:คือ)?|เพื่อ)\s*/u.test(input.text.trim());
+    if (purposeAnswer && active?.status === 'COLLECTING') {
+      const accepted = this.accepted(active), part = input.evidence.parts.length === 1 ? input.evidence.parts[0] : undefined;
+      const lines = accepted?.proposal?.lineChanges?.filter(change => change.operation === 'ADD');
+      if (accepted?.proposal && lines?.length === 1 && part && part.rawText.includes(value)) {
+        const start = part.rawText.indexOf(value);
+        const fragment = parseLineReimbursementDraftProposalV1({ ...accepted.proposal, fields: {}, lineChanges: [{ operation: 'ADD', values: { purpose: { value, proof: { kind: 'USER_TEXT', refs: [{ partId: part.partId, rawSha256: part.rawSha256, startUtf16: start, endUtf16: start + value.length }] } } } }] }, { evidence: input.evidence });
+        if (fragment) return this.proposeCollected(input, active, { ...accepted, proposal: this.mergeProposal(accepted.proposal, fragment) });
+      }
+    }
     const combined = input.collected ? null : await this.answerCombinedClaimFields(input);
     if (combined) return combined;
     if (input.purposeFallback && active?.status === 'PREVIEW')
-      return this.answerPurpose(input, active, value);
+      return this.answerPurpose(input, active, value, explicitReason ? 'reason' : 'purpose');
     const accepted = input.collected?.accepted ?? (active && this.accepted(active));
     if (!active || active.status !== 'COLLECTING' || active.operation !== 'CREATE' || !accepted?.proposal
       || Date.parse(accepted.options.expiresAt) <= Date.now() || accepted.awaitingPhoto) return null;
@@ -503,7 +516,7 @@ export class LineReimbursementDraftAdapterService {
     const part = input.evidence.parts.length === 1 ? input.evidence.parts[0] : undefined;
     if (!part || !part.rawText.includes(value)) return null;
     if (!explicitReason && view.collection.receiptChosen && !view.collection.categoryChosen) {
-      const categories = accepted.options.choices.filter(choice => choice.kind === 'CATEGORY' && choice.label === value.replace(/^เลือกหมวดค่าใช้จ่าย\s*/u, '').replace(/(?:(?:ค่ะ|คะ|ครับ|จ้า|จ้ะ|นะ|ด้วย)|\s)+$/u, ''));
+      const categories = accepted.options.choices.filter(choice => choice.kind === 'CATEGORY' && choice.label === stripLineFieldParticles(value.replace(/^เลือกหมวดค่าใช้จ่าย\s*/u, '')).replace(/ด้วย$/u, '').trim());
       return categories.length === 1 ? this.choose({ ...input, control: { action: 'reimbursement_choice',
         ...view.control, choice: categories[0]!.choiceId } }) : this.draftService.get({ ...input, actionId: active.id });
     }
@@ -523,7 +536,7 @@ export class LineReimbursementDraftAdapterService {
   }
 
   private async answerPurpose(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number;
-    evidence: LineAiInputEvidenceV2 }, active: ReimbursementDraftActionRecord, purpose: string): Promise<LineReimbursementDraftResult | null> {
+    evidence: LineAiInputEvidenceV2 }, active: ReimbursementDraftActionRecord, purpose: string, field: 'purpose' | 'reason' = 'purpose'): Promise<LineReimbursementDraftResult | null> {
     if (active.status !== 'PREVIEW' || active.operation !== 'CREATE' || lineWorkflowPickerText(purpose).question
       || lineWorkflowPickerText(input.evidence.parts.map(part => part.rawText).join('\n')).question) return null;
     const result = await this.draftService.get({ ctx: input.ctx, owner: input.owner, ownerEpoch: input.ownerEpoch, actionId: active.id });
@@ -534,17 +547,17 @@ export class LineReimbursementDraftAdapterService {
         ? [{ partId: part.partId, rawSha256: part.rawSha256, startUtf16: start, endUtf16: start + purpose.length }] : [];
     });
     const fragment = refs.length === 1 && parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: active.taskId,
-      taskRevision: this.accepted(active)?.options.taskRevision ?? 0, operation: 'CREATE', fields: {},
-      lineChanges: [{ operation: 'ADD', values: { purpose: { value: purpose, proof: { kind: 'USER_TEXT', refs } } } }] },
+      taskRevision: this.accepted(active)?.options.taskRevision ?? 0, operation: 'CREATE', fields: field === 'reason' ? { reason: { value: purpose, proof: { kind: 'USER_TEXT', refs } } } : {},
+      lineChanges: field === 'purpose' ? [{ operation: 'ADD', values: { purpose: { value: purpose, proof: { kind: 'USER_TEXT', refs } } } }] : undefined },
     { evidence: input.evidence, candidateValues: {}, candidateSources: {} });
     if (fragment) {
       const after = result.preview.after;
       const updated = await this.draftService.propose({ ctx: input.ctx, owner: input.owner, ownerEpoch: input.ownerEpoch,
         proposal: { key: { actionId: active.id, taskId: active.taskId, actionOrdinal: active.actionOrdinal, operation: active.operation }, status: 'ready', operation: 'CREATE', request: { requesterUserId: after.requesterUserId,
-          branchId: after.branchId, title: after.title, reason: after.reason, missingReceiptReason: after.missingReceiptReason,
-          lines: after.lines.map(line => ({ ...line, purpose })) }, sourceProof: { schemaVersion: 1, receipts: [
+          branchId: after.branchId, title: after.title, reason: field === 'reason' ? purpose : after.reason, missingReceiptReason: after.missingReceiptReason,
+          lines: after.lines.map(line => field === 'purpose' ? { ...line, purpose } : line) }, sourceProof: { schemaVersion: 1, receipts: [
           ...(object(active.sourceProofJson) && Array.isArray(active.sourceProofJson['receipts']) ? active.sourceProofJson['receipts'] : [])
-            .filter(receipt => !object(receipt) || receipt['fieldPath'] !== 'lineChanges.0.purpose'),
+            .filter(receipt => !object(receipt) || receipt['fieldPath'] !== (field === 'reason' ? 'fields.reason' : 'lineChanges.0.purpose')),
           ...this.proposalReceipts(fragment),
         ] } } });
       return updated;
@@ -799,6 +812,13 @@ export class LineReimbursementDraftAdapterService {
     if (!parsed || parsed.taskId !== active.taskId || parsed.taskRevision !== options.taskRevision || parsed.operation !== operation) {
       return this.domainResult(toolName, key, { status: 'blocked', errorCode: 'invalid_provenance' });
     }
+    if (lineWorkflowPickerText(authority.evidence.parts.map(part => part.rawText).join('\n')).question) {
+      return this.domainResult(toolName, key, await this.draftService.get({ ctx: authority.ctx, owner, ownerEpoch, actionId: active.id }));
+    }
+    const fieldValues = [...Object.values(parsed.fields), ...(parsed.lineChanges ?? []).flatMap(change => change.operation === 'ADD' || change.operation === 'SET' ? Object.values(change.values) : [])];
+    if (fieldValues.some(field => object(field) && typeof field['value'] === 'string' && lineWorkflowPickerText(field['value']).question)) {
+      return this.domainResult(toolName, key, await this.draftService.get({ ctx: authority.ctx, owner, ownerEpoch, actionId: active.id }));
+    }
     try {
       // The new fragment was verified against THIS turn above. Prior fields were verified when saved;
       // their exact historical spans are deliberately absent from this turn, so do not reparse them as new input.
@@ -829,7 +849,7 @@ export class LineReimbursementDraftAdapterService {
       const receipts = this.proposalReceipts(proposal);
       let result: LineReimbursementDraftResult;
       if (operation === 'CREATE') {
-        const hydrated = await this.hydrateCreate(authority.ctx, options, proposal, receipts, accepted.awaitingPhoto);
+        const hydrated = await this.hydrateCreate(authority.ctx, options, proposal, receipts, accepted.awaitingPhoto, accepted.admission?.source === 'workflow');
         const sourceProof = parseLineReimbursementSourceProofV1({ schemaVersion: 1, receipts: hydrated.receipts });
         if (!sourceProof) return this.domainResult(toolName, key, { status: 'blocked', errorCode: 'invalid_provenance' });
         result = hydrated.missing.length

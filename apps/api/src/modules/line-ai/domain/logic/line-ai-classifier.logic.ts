@@ -3,7 +3,7 @@ import Decimal from 'decimal.js';
  * Pure domain logic for LINE AI message classification.
  * No NestJS, Prisma, HTTP, LINE SDK, AI provider, or storage imports.
  */
-import { verifyLineAiValueCandidatesV2, mapThaiDigits, type LineAiIntent, type LineAiAgent, LINE_CHAT_ACTIONS } from '@watchdog-bms/contracts';
+import { stripLineFieldParticles, verifyLineAiValueCandidatesV2, mapThaiDigits, type LineAiIntent, type LineAiAgent, LINE_CHAT_ACTIONS } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 import { staffMenuCommand } from './line-staff-menu.logic';
 // Thai and English mutation keywords that LINE must block
@@ -100,8 +100,8 @@ export function chooseAgent(intent: LineAiIntent, normalizedText: string): LineA
 
 /** Pending fields own plain answers; questions and new commands keep their normal route. */
 export function isPendingFieldAnswer(text: string, field: 'claim' | 'reason' | 'payee'): boolean {
-  const value = text.trim();
-  return !!value && value.length <= 2000 && !lineWorkflowPickerText(value).question && !/[?？\n]/u.test(value)
+  const value = stripLineFieldParticles(text);
+  return !!value && value.length <= 2000 && !lineWorkflowPickerText(text).question && !/[?？\n]/u.test(value)
     && (field === 'claim'
       ? !/^(?:ขอ|ช่วย|สร้าง|เบิก|บันทึก|ดู|ยกเลิก|ไม่ทำ|เปลี่ยน|แก้|ทำข้อ|ทำรายการ|ให้ทำ|ติดต่อเจ้าหน้าที่)/u.test(value)
       : !staffMenuCommand(value) && !parseLineCompanyCommand(value)
@@ -110,17 +110,30 @@ export function isPendingFieldAnswer(text: string, field: 'claim' | 'reason' | '
     && !/(?:อะไร|ยังไง|อย่างไร|ไหม|มั้ย|เท่าไร|เท่าไหร่|ทำไม|หรอ|เหรอ|บ้าง|หรือเปล่า|รึเปล่า|ไหน|ใคร|เมื่อไร|เมื่อไหร่)\s*(?:คะ|ค่ะ|ครับ|นะ|จ๊ะ|จ้า)?$|^(?:ทำไม|ยังไง|อย่างไร|ใคร|ที่ไหน|เมื่อไร|เมื่อไหร่)|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu.test(value);
 }
 
+/** A typed number names a record when it is the whole number, or its last part after a dash or slash
+ *  ("0012" names "ทดสอบ-0012"); a shared prefix never does ("ทดสอบ-0012" does not name "ทดสอบ-00120"). */
+export function lineDocumentNumberMatches(recordNumber: string, typed: string): boolean {
+  const norm = (value: string) => mapThaiDigits(value).normalize('NFC').toLowerCase().replace(/\s+/gu, '');
+  const record = norm(recordNumber), want = norm(typed);
+  return !!want && (record === want || record.endsWith(want) && /[-/]$/u.test(record.slice(0, -want.length)));
+}
+
 /** Shared cues for the delivered-card matcher and the permitted-list matcher. */
 export function lineWorkflowPickerText(rawText: string, claim = false) {
   const text = mapThaiDigits(rawText.trim());
-  const ordinalMatch = /(?:อัน|ใบ|รายการ|ร่าง)ที่\s*(\d+)/u.exec(text);
+  const ordinalMatch = /(?:(?:อัน|ใบ|รายการ|ร่าง)ที่|ข้อ)\s*(\d+)/u.exec(text);
   const ordinal = /(?:อัน|ใบ|รายการ)แรก/u.test(text) ? 1 : ordinalMatch ? Number(ordinalMatch[1]) : undefined;
-  const namedRequester = claim ? /(?:^|\s|ใบเบิก)ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ(?:ฉัน|คุณ)|\d|[?？]|$)/u.exec(text)?.[1]?.trim().replace(/(?:นะคะ|นะครับ|ค่ะ|ครับ|คะ)$/u, '').trim() : undefined;
+  const namedRequester = claim ? stripLineFieldParticles(/(?:^|\s|ใบเบิก)ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ(?:ฉัน|คุณ)|\d|[?？]|$)/u.exec(text)?.[1] ?? '') || undefined : undefined;
   const self = claim && /ของ(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ|\d|[?？]|นะคะ|นะครับ|ค่ะ|ครับ|คะ|$)/u.test(text);
   const requester = self || namedRequester && /^(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)$/u.test(namedRequester) ? 'ฉัน' : namedRequester;
-  const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?เลขที่\s*([^\s,]+)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
+  const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?เลขที่\s*([A-Za-zก-๙]+[-/]\d[\d/-]*|[A-Za-z0-9][A-Za-z0-9/-]*)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
   const questionText = text.replace(/(?:อะไร|ใคร|ที่ไหน)ก็ได้/gu, '');
-  const question = /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
+  const questionTail = text.replace(/[.!?,…ๆ]+$/u, '').trim();
+  // "A หรือ B" ending in a question particle asks; amount alternatives and "…ก็ได้" are statements.
+  const alternativeQuestion = /หรือ/u.test(text) && /(?:คะ|จ๊ะ|ครับ|คับ|ฮะ|งับ)[าะ]*$/u.test(questionTail)
+    && stripLineFieldParticles(questionTail) !== questionTail && !/\d[\d,.]*\s*(?:บาท|บ\.?)?\s*หรือ\s*\d/u.test(text)
+    && !/ก็ได้/u.test(text) && !/^(?:เงินสด|โอน|บัตร|เช็ค)/u.test(text);
+  const question = alternativeQuestion || /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
     .test((ordinal !== undefined || documents.length || /^(?:(?:ช่วย|ขอ)\s*)?(?:อนุมัติ|ส่ง|ยกเลิก|ลบ|บันทึก|ทำ|สร้าง|จ่าย|เลือก|เอา|ใช้)/u.test(text)) ? questionText.replace(/(?:หน่อย)?ได้(?:ไหม|มั้ย|ปะ)/gu, '') : questionText);
   const rounds = [...text.matchAll(/รอบ\s*(\d+)/gu)].map(match => match[1]!);
   const explicit = ordinal !== undefined || documents.length > 0 || rounds.length > 0 || /สาขา\s*\S+/u.test(text) || !!requester;
@@ -130,7 +143,7 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
 /** Explicit action language is also used before admission and when a person changes jobs. */
 export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/contracts').LineWorkflowId | undefined {
   if (lineWorkflowPickerText(rawText).question) return;
-  const text = rawText.trim().replace(/^ขอทำอย่างเดียวก่อน[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ)\s*)+/u, '');
+  const text = rawText.trim().replace(/^(?:หมายถึง|ขอทำอย่างเดียวก่อน)[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ)\s*)+/u, '');
   return ([
     ['reimbursement_reject', /^ไม่อนุมัติใบเบิก/u], ['approvals', /^อนุมัติใบเบิก/u],
     ['reimbursement_submit', /^ส่งใบเบิก.*อนุมัติ/u], ['reimbursement_cancel', /^(?:ยกเลิก|ถอน|ดึงกลับ)ใบเบิก/u],
@@ -160,7 +173,7 @@ export async function parseManualClaimLine(
   const verified = await verifyLineAiValueCandidatesV2(candidates, evidence);
   if (!verified || verified.completeness !== 'complete') return null;
   const thb = verified.amounts.filter(item => item.currencyToken && /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(item.currencyToken));
-  const amounts = thb.length === 1 ? thb : verified.amounts.filter(item => !item.currencyToken || /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(item.currencyToken));
+  const amounts = thb.length === 1 && !/หรือ/u.test(evidence.parts.map(part => part.rawText).join(' ')) ? thb : verified.amounts.filter(item => !item.currencyToken || /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(item.currencyToken));
   const dates = [...verified.dates.map(item => ({ ...item, value: item.isoDate })),
     ...verified.periods.filter(item => item.kind === 'day' && item.fromDate === item.toDate).map(item => ({ ...item, value: item.fromDate }))];
   if (dates.length > 1) return null;
@@ -176,8 +189,7 @@ export async function parseManualClaimLine(
     let start = 0;
     for (const span of [...spans, { startUtf16: part.rawText.length, endUtf16: part.rawText.length }]) {
       const raw = part.rawText.slice(start, span.startUtf16);
-      const value = raw.replace(/^(?:(?:บาท|ค่ะ|คะ|ครับ|นะ)|[\s\p{P}])+/u, '')
-        .replace(/(?:(?:บาท|ค่ะ|คะ|ครับ|นะ)|[\s\p{P}])+$/u, '');
+      const value = stripLineFieldParticles(raw.replace(/^(?:บาท|[\s\p{P}])+/u, ''));
       if (Array.from(value).length >= 2) {
         const offset = start + raw.indexOf(value);
         descriptions.push({ value, proof: { kind: 'USER_TEXT', refs: [{ partId: part.partId, rawSha256: part.rawSha256,
@@ -220,7 +232,7 @@ export function matchLineClaimTargets<T>(text: string, rows: T[], amounts: Array
     return (parsed.ordinal === undefined || parsed.ordinal === index + 1)
       && (!parsed.requester || (parsed.requester === 'ฉัน' ? r.requesterUserId === userId : normalize(r.requesterDisplayNameSnapshot ?? '').includes(normalize(parsed.requester))))
       && parsed.rounds.every(round => [...mapThaiDigits(corpus).matchAll(/รอบ\s*(\d+)/gu)].some(m => m[1] === round))
-      && parsed.documents.every(d => normalize(r.requestNo ?? '').includes(normalize(d)))
+      && parsed.documents.every(d => lineDocumentNumberMatches(r.requestNo ?? '', d))
       && money.length <= 1 && (!money.length || (!r.currency || r.currency === 'THB') && new Decimal(r.amount ?? 0).eq(money[0]!.value))
       && (parsed.explicit || money.length === 1 || terms.every(term => normalize(corpus).includes(normalize(term))));
   });

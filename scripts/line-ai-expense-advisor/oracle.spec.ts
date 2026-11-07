@@ -464,3 +464,19 @@ describe('created LINE claim gold', () => {
     assert.equal(checkWorkflowGold(task, turns).wrongApplied, 3);
   });
 });
+
+it('R14 a gold claim legacy fallback replacement allows only an identical line in the same turn', () => {
+  const task: any = { id: 'edit', kind: 'reimbursement_claim', startTurn: 0, endTurn: 1, confirmTurn: 1, minimalTurns: 2, completable: true, goldTerminal: { effect: 'REIMBURSEMENT_DRAFT_SAVED', records: [{ table: 'ReimbursementRequest', ref: '$seed:claim', status: 'DRAFT' }] } };
+  const values = { companyId: 'c', reimbursementRequestId: 'claim', lineNo: 1, incurredDate: '2026-11-05', description: 'ค่ารถ', purpose: null, amount: '85', categoryKey: 'travel', attachmentId: null, linkedExpenseId: null };
+  const before: any = { turnIndex: 0, businessSnapshot: { business: { ReimbursementRequest: [{ id: 'claim', companyId: 'c', status: 'DRAFT' }], ReimbursementLine: [{ ...values, id: 'rbl_claim' }] } }, unintendedEffects: [] };
+  const after: any = { turnIndex: 1, businessSnapshot: { business: { ReimbursementRequest: [{ id: 'claim', companyId: 'c', status: 'DRAFT' }], ReimbursementLine: [{ ...values, id: 'real-line' }] } }, unintendedEffects: [{ kind: 'ReimbursementLine.delete', recordId: 'rbl_claim' }, { kind: 'ReimbursementLine.create', recordId: 'real-line' }] };
+  assert.equal(checkWorkflowGold(task, [before, after]).wrongApplied, 0);
+  const changed = structuredClone(after); changed.businessSnapshot.business.ReimbursementLine[0].amount = '99';
+  assert.equal(checkWorkflowGold(task, [before, changed]).wrongApplied, 2);
+  const dateChanged = structuredClone(after); dateChanged.businessSnapshot.business.ReimbursementLine[0].incurredDate = '2026-11-06';
+  assert.equal(checkWorkflowGold(task, [before, dateChanged]).wrongApplied, 2);
+  const extra = structuredClone(after); extra.businessSnapshot.business.ReimbursementLine.push({ ...values, id: 'extra' });
+  extra.unintendedEffects.push({ kind: 'ReimbursementLine.create', recordId: 'extra' });
+  assert.equal(checkWorkflowGold(task, [before, extra]).wrongApplied, 1);
+  assert.equal(checkWorkflowGold({ ...task, confirmTurn: 2 }, [before, after]).wrongApplied, 2);
+});

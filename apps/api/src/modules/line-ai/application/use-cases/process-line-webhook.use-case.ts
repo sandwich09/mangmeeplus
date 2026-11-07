@@ -1,3 +1,4 @@
+import { REIMBURSEMENT_STATUS_LABELS } from '@watchdog-bms/contracts';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { DEMO_READ_LIMIT_TEXT, isVirtualDemoTarget } from '@watchdog-bms/contracts';
 import { matchLineClaimTargets, lineWorkflowCommand } from '../../domain/logic/line-ai-classifier.logic';
@@ -3988,6 +3989,11 @@ export class ProcessLineWebhookUseCase {
         if (!saved || !bound || saved.ownerEpoch !== bound.epoch || saved.userId !== ctx.userId) return false;
         const evidence = await this.textEvidenceV2(event);
         if (!evidence) return false;
+        const ordinal = lineWorkflowPickerText(event.messageText).ordinal;
+        if (ordinal && saved.options[ordinal - 1]) {
+          event.workflowControl = { action: 'wf_choice', token: meta.token, pick: saved.options[ordinal - 1]! };
+          try { return await this.handleWorkflowChoice(event, ctx, features); } finally { delete event.workflowControl; }
+        }
         const options: LineWorkflowId[] = [];
         let named = false;
         for (const workflow of saved.options) {
@@ -4006,7 +4012,8 @@ export class ProcessLineWebhookUseCase {
           await this.startClassifiedWorkflow(event, ctx, features, options[0]!, { ...saved.classifierDecision, label: options[0]! }, evidence);
         } else {
           this.workflowChoiceTokens.set(event, meta.token);
-          const messages = parseOutcomeMessages(outcome.messagesJson);
+          const states = parseDeliveryBatchStates(outcome.deliveryPlan.batchStateJson, plan)!;
+          const messages = parseOutcomeMessages(plan.batches.flatMap((batch, index) => batch[states[index]!.variant]!.messages));
           if (!messages) return false;
           await this.deliverRequiredMessages(event, messages);
           await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
@@ -4199,7 +4206,7 @@ export class ProcessLineWebhookUseCase {
 
   private async handlePendingWorkflowPicker(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null): Promise<boolean> {
     const text = mapThaiDigits(event.messageText.trim());
-    if (lineWorkflowPickerText(text).question) return false;
+    if (lineWorkflowPickerText(text).question || lineWorkflowCommand(text)) return false;
     if (ctx.freeExpenseDrafts || event.workflowControl || event.workflowStart || event.expenseActionControl
       || event.channelKind === 'GROUP' || event.channelKind === 'ROOM' || event.pushTargetId && event.pushTargetId !== event.lineUserId
       || isExactStandaloneGreeting(text) || LINE_CHAT_ACTIONS.some(action => action.command === text) || staffMenuCommand(text) || parseLineCompanyCommand(text)
@@ -4271,7 +4278,7 @@ export class ProcessLineWebhookUseCase {
       const numberMatch = documents(r).some(value => normalized(text).includes(normalized(value)));
       const wordMatch = words(row).some(value => normalized(text).includes(normalized(value)));
       if (parsed.rounds.some(round => ![...mapThaiDigits([r?.title, r?.note, r?.internalMemo, ...(r?.lines ?? []).map((line: any) => line.description)].filter(Boolean).join(' ')).matchAll(/รอบ\s*(\d+)/gu)].some(match => match[1] === round))) return false;
-      if (parsed.documents.some(document => !documents(r).some(number => normalized(number).includes(normalized(document))))) return false;
+      if (parsed.documents.some(document => !documents(r).some(number => normalized(number) === normalized(document)))) return false;
       if (ordinal !== undefined && ordinal !== index + 1 || documentCue && !numberMatch || hasKnownDocument && !numberMatch) return false;
       if ((branchText || namedBranches.length) && !namedBranches.some(branch => branch.id === r?.branchId)) return false;
       if (amounts.length > 1) return false;
@@ -4328,9 +4335,11 @@ export class ProcessLineWebhookUseCase {
     const selected = await this.expenseActions.resolveNamedTargets(ctx, chatKeyHashOf(event), action as any, workflow, evidence, {}, true);
     if (!('targets' in selected) || !selected.hasIdentifier || !selected.targets?.length) return false;
     if (selected.targets.length === 1 && !(selected.exhaustive || selected.searchedExact)) return false;
+    const intent = workflow === 'expense_pay' ? await this.expenseActions.paymentIntentFromText(event.messageText, event.inputEvidence) : undefined;
+    const payment = { ...(intent?.paymentMethod ? { pm: intent.paymentMethod } : {}), ...(intent?.paidAt ? { pd: intent.paidAt } : {}), ...(intent?.paidAmount ? { pa: intent.paidAmount } : {}) };
     const card = Object.hasOwn(CLAIM_WORKFLOW_ACTIONS, workflow)
-      ? buildClaimWorkflowPicker({ targets: selected.targets as any, total: selected.targets.length, exhaustive: selected.exhaustive === true }, workflow as ClaimWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl)
-      : buildExpenseWorkflowPicker({ targets: selected.targets as any, total: selected.targets.length, exhaustive: selected.exhaustive === true }, workflow as ExpenseWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl);
+      ? buildClaimWorkflowPicker({ targets: selected.targets as any, total: selected.targets.length, exhaustive: selected.exhaustive === true }, workflow as ClaimWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl, payment)
+      : buildExpenseWorkflowPicker({ targets: selected.targets as any, total: selected.targets.length, exhaustive: selected.exhaustive === true }, workflow as ExpenseWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl, payment);
     if (selected.targets.length > 1) {
       await this.deliverRequiredMessages(event, [card]);
       await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);
@@ -4428,6 +4437,26 @@ export class ProcessLineWebhookUseCase {
       if (!(error instanceof ForbiddenException)) throw error;
       await this.deliverReply(event, copy.forbidden, lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
       await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, ctx.companyId); return;
+    }
+    if (['approvals', 'reimbursement_reject'].includes(workflow)) {
+      const parsed = lineWorkflowPickerText(event.messageText, true), evidence = await this.textEvidenceV2(event);
+      if (parsed.explicit && !parsed.question && parsed.ordinal === undefined && evidence) {
+        const search = parsed.documents[0] ?? (parsed.rounds.length ? parsed.rounds.map(round => `รอบ ${round}`).join(' ') : parsed.requester === 'ฉัน' ? undefined : parsed.requester);
+        const readable = await this.workflowTargets.pick(ctx, chatKeyHashOf(event), workflow, { ...slots, search, includeIneligible: true }, 1);
+        const candidates = await extractValueCandidatesV2(evidence, todayCivilDate('Asia/Bangkok'));
+        const matches = matchLineClaimTargets(event.messageText, [...readable.targets, ...(readable.notAssigned ?? [])], candidates?.amounts ?? [], ctx.userId);
+        if (readable.exhaustive && matches.length === 1 && !readable.targets.some(row => row.id === matches[0]!.id)) {
+          const claim = matches[0]!, label = REIMBURSEMENT_STATUS_LABELS[claim.status];
+          if (label) {
+            this.workflowTaskOutcomes.set(event, { kind: workflow, status: 'REFUSED' });
+            const text = replyLanguage(event) === 'en' ? `This claim is not awaiting your approval and its current status is ${lineUiLabel(label, 'en').toLowerCase()}.`
+              : `ใบเบิกนี้ไม่ได้รอคุณอนุมัติ ตอนนี้${claim.status === 'DRAFT' ? 'เป็นร่าง' : label}ค่ะ`;
+            await this.deliverRequiredMessages(event, [buildWorkflowExitMessage(text, `/companies/${ctx.companyId}/reimbursements/${claim.id}`, ctx.companyId, this.config.webBaseUrl, replyLanguage(event), 'เปิดใบเบิก')]);
+            await this.updateEventLog(event.webhookEventId, 'forbidden', undefined, ctx.companyId);
+            return;
+          }
+        }
+      }
     }
     if (result.exhaustive && !result.targets.length && ['approvals', 'reimbursement_reject'].includes(workflow)) {
       const evidence = await this.textEvidenceV2(event), text = event.messageText;
@@ -8002,9 +8031,30 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
       permissions: resolvedAccess.permissions, entitlementDeniedPermissions: resolvedAccess.entitlementDeniedPermissions, scopes: resolvedAccess.scopes, authProvider: 'line',
     };
+    const claimLocator = lineWorkflowPickerText(event.messageText, true);
+    if (!/^(?:เหตุผล|วัตถุประสงค์|เพื่อ|แก้|เปลี่ยน|บันทึก(?:รายจ่าย|ค่าใช้จ่าย|ค่า)|สร้าง(?:รายจ่าย|ค่าใช้จ่าย)|จ่ายค่า)/u.test(event.messageText.trim()) && !lineWorkflowCommand(event.messageText) && !claimLocator.question && claimLocator.rounds.length && /ใบเบิก|ค่า/u.test(event.messageText)) {
+      const owner = this.boundConversations.get(event);
+      const collecting = owner && await this.reimbursementDrafts?.active?.({ ctx: expenseDraftCtx, owner: owner.owner, ownerEpoch: owner.epoch });
+      if (collecting?.status !== 'COLLECTING') {
+        await this.deliverReply(event, 'ต้องการทำอะไรกับใบเบิกนี้คะ', lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
+    }
     const explicitWorkflow = lineWorkflowCommand(event.messageText);
     if (explicitWorkflow && !this.mayStartWorkflow(explicitWorkflow, expenseDraftCtx, entitledFeatureKeys)) {
       await this.refuseWorkflowStart(event, expenseDraftCtx, entitledFeatureKeys, explicitWorkflow);
+      return;
+    }
+    if (boundSemanticV2 && this.workflowTargets && typeof this.aiGateway.requestLineWorkflowClassify === 'function'
+      && explicitWorkflow && !isLineWorkflowCountRead(event.messageText)
+      && (/เดี๋ยวบอก|บอกทีหลัง|^หมายถึง/u.test(event.messageText)
+        || /หน่อย|มีหลายใบ/u.test(event.messageText) && !lineWorkflowPickerText(event.messageText, true).explicit)) {
+      this.classifiedWorkflowStarts.set(event, explicitWorkflow);
+      const previous = event.workflowStart;
+      event.workflowStart = explicitWorkflow;
+      try { await this.handleWorkflowControl(event, expenseDraftCtx, entitledFeatureKeys); }
+      finally { event.workflowStart = previous; }
       return;
     }
     if (await this.handleWorkflowChoice(event, expenseDraftCtx, entitledFeatureKeys)) return;
@@ -9850,6 +9900,7 @@ View expenses: ${listLink}` : `ยังไม่พบรายการจา�
         metadataJson: { intent: turnResponse.intent },
       });
     }
+    if (turnResponse.refused) this.workflowTaskOutcomes.set(event, { status: 'REFUSED' });
     const resumeCapsules = [substituteInterruption?.resumeCapsule, mediaResumeCapsule, expenseDraftInterruption].filter((item): item is string => !!item);
     if (resumeCapsules.length > 0) {
       const resumeText = resumeCapsules.length === 1

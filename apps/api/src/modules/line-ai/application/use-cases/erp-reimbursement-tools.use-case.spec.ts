@@ -336,3 +336,12 @@ describe('Owner 2026-10-17: ROLE_GRANTS × pending claim visibility and approval
     assert.equal((result.data as any).items[0].waitingOn, 'สมศรี');
   });
 });
+
+it('R14 staff with all-branch scope still read only their own pending claims', async () => {
+  const calls: any[] = [];
+  const { ListReimbursementsUseCase } = await import('../../../reimbursements/application/use-cases/reimbursement-request.use-case');
+  const repo = { findPolicy: async () => null, listRequestPage: async (input: any) => { calls.push(input); return { rows: [], groups: [], duplicateBlockedCount: 0 }; }, findPendingApprovalSteps: async () => [], getUserDisplayNames: async () => ({}) } as any;
+  const tool = new ReimbursementListPendingApprovalsTool({ execute: async () => assert.fail('own read is not an approval action') } as any, new ListReimbursementsUseCase(repo));
+  const result = await tool.execute({ ...baseCtx, userId: 'staff', roles: ['STAFF'], permissions: ['reimbursement.read_own'], branchIds: undefined });
+  assert.equal(result.status, 'ok'); assert.equal(calls[0].requesterUserId, 'staff'); assert.equal(calls[0].scopes.branchIds, undefined); assert.equal(calls[0].companyId, baseCtx.companyId);
+});

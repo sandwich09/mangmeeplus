@@ -1,3 +1,4 @@
+import { LINE_DELIVERY_PLAN_SENTINEL } from '../domain/logic/line-delivery-plan.logic';
 import { lineCustomerVisibleText } from '../domain/logic/line-language.logic';
 import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 /**
@@ -147,6 +148,7 @@ export class LineReplyAdapter {
   constructor(private readonly lineCredentials: LineMessagingCredentialsService, private readonly config: AppConfigService, @Optional() private readonly prisma?: PrismaService) {}
 
   async sendReply(replyToken: string, messages: LineReplyMessage[], onSent?: (ids: string[]) => Promise<void>): Promise<LineDeliveryResult> {
+    if (JSON.stringify(messages).includes(LINE_DELIVERY_PLAN_SENTINEL[0].text)) return 'failed_other';
     if (isVirtualDemoTarget(replyToken)) return this.sendVirtual(replyToken, messages);
     return this.postMessage(this.LINE_REPLY_URL, { replyToken, messages: providerMessages(messages) }, 'reply', messages, undefined, onSent);
   }
@@ -154,12 +156,14 @@ export class LineReplyAdapter {
   /** Push delivery consumes the OA monthly message quota (replies are free).
    *  Used for expired-token fallback, slow-turn feedback, and receipt acknowledgement (spec §10). */
   async sendPush(to: string, messages: LineReplyMessage[], operationId: string = randomUUID(), onSent?: (ids: string[]) => Promise<void>): Promise<LineDeliveryResult> {
+    if (JSON.stringify(messages).includes(LINE_DELIVERY_PLAN_SENTINEL[0].text)) return 'failed_other';
     if (isVirtualDemoTarget(to)) return this.sendVirtual(to, messages, operationId);
     return this.postMessage(this.LINE_PUSH_URL, { to, messages: providerMessages(messages) }, 'push', messages, linePushRetryKey(operationId, to, messages), onSent);
   }
 
   /** Exact frozen v2 wire. A thrown request/body read is uncertainty, never a token rejection. */
   async sendFrozenV2(input: { channelId?: string; transport: 'REPLY' | 'PUSH'; target: string; messages: LineReplyMessage[]; pushRetryKey: string; timeoutMs: number }): Promise<LineDeliveryResultV2> {
+    if (JSON.stringify(input.messages).includes(LINE_DELIVERY_PLAN_SENTINEL[0].text)) return { kind: 'rejected', code: 'INVALID_FROZEN_WIRE', rejection: 'PERMANENT' };
     if (!parseOutcomeMessages(input.messages) || input.messages.some(m => m.type === 'flex' && m.canonicalText !== undefined)
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.pushRetryKey)
       || !input.target || !Number.isFinite(input.timeoutMs) || input.timeoutMs < 500) return { kind: 'rejected', code: 'INVALID_FROZEN_WIRE', rejection: 'PERMANENT' };

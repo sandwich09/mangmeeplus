@@ -1,3 +1,4 @@
+import { stripLineFieldParticles } from '@watchdog-bms/contracts';
 import { lineWorkflowPickerText } from '../../../line-ai/domain/logic/line-ai-classifier.logic';
 import { createHash } from 'node:crypto';
 import { lineUiLabel } from '../../../line-ai/domain/logic/line-language.logic';
@@ -121,7 +122,7 @@ export type LineExpenseDraftRejectedCandidate = {
 function normalized(value: string): string {
   // NFC, not NFKC: NFKC decomposes สระอำ (U+0E33 → U+0E4D U+0E32) and NFC cannot recompose it,
   // so NFKC-normalized text can never match the precomposed Thai phrase regexes in this file.
-  return value.normalize('NFC').replace(/\s+/gu, ' ').trim();
+  return stripLineFieldParticles(value.normalize('NFC').replace(/\s+/gu, ' '));
 }
 
 function bounded(value: unknown, max = MAX_TEXT): string | undefined {
@@ -143,21 +144,12 @@ function decimal(value: unknown, positive = false): string | undefined {
   }
 }
 
-function numericValues(text: string): Decimal[] {
-  return text.match(/\d[\d,]*(?:\.\d{1,4})?/gu)?.flatMap((value) => {
-    try { return [new Decimal(value.replace(/,/gu, ''))]; } catch { return []; }
-  }) ?? [];
-}
-
 function groundedNumber(text: string, value: string | undefined, positive = false): string | undefined {
   const parsed = decimal(value, positive);
   if (!parsed) return undefined;
   const wanted = new Decimal(parsed);
-  // A spoken amount ("สามร้อยบาท", NAT-12) is the same evidence as its digits.
-  const spoken = () => extractValueCandidates(text).amounts.some((amount) => {
-    try { return new Decimal(amount.value).eq(wanted); } catch { return false; }
-  });
-  return numericValues(text).some((candidate) => candidate.eq(wanted)) || spoken() ? parsed : undefined;
+  // Shared candidates exclude dates and record locators, and include spoken amounts.
+  return extractValueCandidates(text).amounts.some(amount => new Decimal(amount.value).eq(wanted)) ? parsed : undefined;
 }
 
 function groundedText(text: string, value: unknown): string | undefined {
@@ -221,7 +213,7 @@ export function lineExpenseItemDescription(text: string | undefined, fallback?: 
     }
   }
   const cleaned = text.split('').map((char, index) => ranges.some(([start, end]) => index >= start && index < end) ? ' ' : char).join('');
-  const result = cleaned.replace(/\s+/gu, ' ').replace(/^[\s,;:—–-]+|[\s,;:—–-]+$/gu, '').trim();
+  const result = stripLineFieldParticles(cleaned.replace(/\s+/gu, ' ').replace(/^[\s,;:—–-]+|[\s,;:—–-]+$/gu, ''));
   return result ? result.slice(0, maxLength) : fallback ? lineExpenseItemDescription(fallback, undefined, maxLength) : undefined;
 }
 
@@ -231,9 +223,9 @@ export function lineExpenseNoteDescription(text: string): string | undefined {
   const values = extractValueCandidates(text, todayCivilDate('Asia/Bangkok'));
   let source = text;
   for (const value of [...values.amounts, ...values.dates, ...(values.periods ?? [])]) source = source.replace(value.span, '\n');
-  return source.split('\n').map(part => part
+  return source.split('\n').map(part => stripLineFieldParticles(part)
     .replace(/^(?:(?:ช่วย|ขอ|รบกวน|จด|บันทึก|บันทก|ลง|เพิ่ม|ทำ|สร้าง|เบิก|สำรองจ่าย|ค่าใช้จ่าย|คชจ|บิล|รายการ|ให้)\s*|(?:please|record|recrod|log|add|claim|an?|expense|of|for|paid)\b\s*)+/iu, '')
-    .replace(/(?:ให้หน่อย|ให้ที|หน่อย|ด้วย|นะคะ|นะ|ค่ะ|ครับ|คะ|บาท|บ\.|baht|bath|for)\s*$/giu, '').trim())
+    .replace(/(?:ให้หน่อย|ให้ที|หน่อย|ด้วย|บาท|บ\.|baht|bath|for)\s*$/giu, '').trim())
     .find(part => part.length > 1)?.slice(0, 120);
 }
 
@@ -558,6 +550,8 @@ export function applyLineExpenseDraftAnswer(input: {
   if (!isDeterministicLineExpenseDraftInput(input.messageText)) {
     const dates = extractValueCandidates(input.messageText).dates.filter(candidate => !isAmbiguousDateCandidate(candidate));
     if (new Set(dates.map(candidate => candidate.isoDate)).size === 1) plainSegments.push({ id: 'D-DATE', value: dates[0]!.span });
+    const purpose = input.messageText.match(/^(?:วัตถุประสงค์(?:คือ)?|เพื่อ)\s*[:：]?\s*(.+)$/u)?.[1];
+    if (purpose) plainSegments.push({ id: 'D-PURPOSE', value: purpose });
     const vendor = input.messageText.match(/^(?:ผู้ขาย|ร้าน)\s*[:=]?\s*(.+)$/u)?.[1];
     if (vendor && input.state.unresolvedQuestions.some(question => question.id === 'D-VENDOR')) plainSegments.push({ id: 'D-VENDOR', value: vendor });
     const soleItem = next.items.length === 1 ? next.items[0] : undefined;
@@ -567,7 +561,7 @@ export function applyLineExpenseDraftAnswer(input: {
       if (quantity) plainSegments.push({ id: `${soleItem.itemRef}-QTY`, value: quantity });
       if (price) plainSegments.push({ id: `${soleItem.itemRef}-PRICE`, value: price });
       if (!price && input.state.unresolvedQuestions.some(question => question.id === `${soleItem.itemRef}-PRICE`)
-        && /^\s*\d[\d,]*(?:\.\d{1,4})?\s*(?:บาท|บ\.?|฿|THB|baht)\s*$/iu.test(input.messageText)) {
+        && /^\s*฿?\s*\d[\d,]*(?:\.\d{1,4})?\s*(?:บาท|บ\.?|฿|THB|baht)?\s*$/iu.test(stripLineFieldParticles(input.messageText))) {
         plainSegments.push({ id: `${soleItem.itemRef}-PRICE`, value: `ยอดรวม ${input.messageText}` });
       }
     }
@@ -685,8 +679,7 @@ export function applyLineExpenseDraftAnswer(input: {
       else reject(segment.id, 'NOT_GROUNDED_OR_INVALID');
     }
     if (segment.id.endsWith('-PRICE')) {
-      const amount = extractValueCandidates(segment.value).amounts[0]?.value
-        ?? decimal(segment.value.match(/\d[\d,]*(?:\.\d{1,4})?/u)?.[0]?.replace(/,/gu, ''));
+      const amount = extractValueCandidates(segment.value).amounts[0]?.value;
       if (amount) {
         if (/(รวม|ยอดรวม)/u.test(segment.value)) {
           item.totalAmount = decimal(amount);

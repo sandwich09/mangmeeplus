@@ -1,3 +1,4 @@
+import { stripLineFieldParticles } from '@watchdog-bms/contracts';
 import { matchLineClaimTargets } from '../domain/logic/line-ai-classifier.logic';
 import { createLineAiInputEvidence, extractValueCandidatesV2, mapThaiDigits, type LineWorkflowId } from '@watchdog-bms/contracts';
 import { LINE_CLAIM_PICKER_COPY, LINE_EXPENSE_PICKER_COPY } from '../domain/logic/line-business-card.logic';
@@ -5,7 +6,7 @@ import { LineWorkflowTargetService, type LineWorkflowTargets, type LineWorkflowR
 import { CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ClaimWorkflowId, type ExpenseWorkflowId } from '../domain/logic/line-reimbursement-approval-control.logic';
 import { verifyLineWorkflowOpenSig, lineWorkflowOpenData } from '../domain/logic/line-reimbursement-approval-control.logic';
 import type { LineAiInputEvidenceV2, LineWorkflowControl } from '@watchdog-bms/contracts';
-import { isPendingFieldAnswer, lineWorkflowPickerText } from '../domain/logic/line-ai-classifier.logic';
+import { isPendingFieldAnswer, lineDocumentNumberMatches, lineWorkflowPickerText } from '../domain/logic/line-ai-classifier.logic';
 import { REIMBURSEMENT_DRAFT_CHANGED } from '../domain/logic/line-reimbursement-draft-card.logic';
 import { DISBURSEMENT_VOUCHER_MAX_LINES, DISBURSEMENT_VOUCHER_ERROR_WORDS, E_WHT_WORDS, eWhtRateKind, eWhtReducedRateOn, LINE_WORKFLOW_OPEN_ACTIONS, lineReplyLanguage } from '@watchdog-bms/contracts';
 import { lineUiLabel, lineDisplayDate, lineExpenseEvidenceNotes, type LineReplyLanguage } from '../domain/logic/line-language.logic';
@@ -486,7 +487,7 @@ export class LineExpenseActionService {
     const text = mapThaiDigits(evidence.parts.map(part => part.rawText).join('\n'));
     const parsed = lineWorkflowPickerText(text, this.isClaim(action));
     if (pickerAnswer && parsed.question) return { targets: [], hasIdentifier: false };
-    let documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?เลขที่\s*([^\s,]+)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
+    let documents = parsed.documents;
     const rounds = parsed.rounds;
     const isTargetAmount = (amount: typeof candidates.amounts[number]) => {
       if (amount.currencyToken) return /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(amount.currencyToken);
@@ -574,7 +575,7 @@ export class LineExpenseActionService {
     };
     const eligible = namedClaims ? namedClaims.filter(target => !/สาขา/u.test(text) || namedBranches.some(branch => branch.id === target.branchId)) : result.targets.filter(matches);
     const byDocument = documents.map(document => eligible.filter(target => numbers(target).some(number => searchedDocument
-      ? normalize(number) === normalize(searchedDocument) : mapThaiDigits(number).includes(document))));
+      ? normalize(number) === normalize(searchedDocument) : lineDocumentNumberMatches(number, document))));
     const targets = documents.length ? [...new Map(byDocument.flat().map(target => [target.id, target])).values()] : eligible;
     const unique = result.exhaustive && (documents.length ? byDocument.every(rows => rows.length === 1) : targets.length === 1)
       && (action === 'VOUCHER_CREATE' || targets.length === 1);
@@ -605,7 +606,12 @@ export class LineExpenseActionService {
       if (pending) return { reply: pending.reply };
     }
     input = { ...input };
-    for (const field of ['reason', 'payeeName', 'payeeAddress']) if (typeof input[field] === 'string' && lineWorkflowPickerText(input[field] as string).question) delete input[field];
+    for (const field of ['reason', 'payeeName', 'payeeAddress']) {
+      const value = input[field];
+      if (typeof value !== 'string') continue;
+      if (lineWorkflowPickerText(value).question) delete input[field];
+      else input[field] = stripLineFieldParticles(field === 'reason' ? value.replace(/^เหตุผล(?:คือ)?\s*[:：]?\s*/u, '') : value);
+    }
     let action = input.action as ExpenseAction;
     const requestedId = this.isVoucher(action ?? '') && action !== 'VOUCHER_CREATE' ? input.voucherId : this.isClaim(action ?? '') ? input.reimbursementId : action === 'VOUCHER_CREATE' && typeof input.expenseIds === 'string' ? input.expenseIds.split(',')[0]?.trim() : input.expenseId;
     if (!EXPENSE_ACTIONS.some(value => value === action) || typeof requestedId !== 'string' || !requestedId || requestedId.length > 200) return { reply: (en ? 'Which record and action would you like?' : 'ต้องการทำอะไรกับรายการไหนคะ') };
@@ -952,6 +958,8 @@ export class LineExpenseActionService {
       return { reply: (language === 'en' ? 'Why should this evidence be used instead of a receipt?' : 'ใช้หลักฐานนี้แทนใบเสร็จเพราะอะไรคะ') };
     }
     if (entry.stage !== 'reason') return null;
+    text = stripLineFieldParticles(text.replace(/^เหตุผล(?:คือ)?\s*[:：]?\s*/u, ''));
+    if (!text) return { reply: language === 'en' ? 'Why should this evidence be used instead of a receipt?' : 'ใช้หลักฐานนี้แทนใบเสร็จเพราะอะไรคะ' };
     const assessment: ExpenseEvidenceAssessment = { route: 'ALTERNATIVE_EVIDENCE', receiptProblem: 'NOT_AVAILABLE',
       attachmentIds: [...new Set(expense.attachments.filter(isExpenseEvidenceFile).map(file => file.id))], reason: text.trim() };
     const error = expenseEvidenceInputError(assessment, expense, true);
@@ -1279,6 +1287,8 @@ export class LineExpenseActionService {
     const entry = await this.store.load(ctx.companyId, this.key(chat));
     if (!(entry?.awaitingReason || entry?.awaitingField) || !await this.bound(ctx, chat, entry)) return null;
     if (lineWorkflowPickerText(reason).question) return null;
+    reason = stripLineFieldParticles(entry.awaitingReason || entry.awaitingField === 'reason' ? reason.replace(/^เหตุผล(?:คือ)?\s*[:：]?\s*/u, '') : reason);
+    if (!reason) return { reply: this.question(entry) };
     const language: LineReplyLanguage = /[\u0E00-\u0E7F]/u.test(reason) ? 'th' : entry.awaitingField && entry.awaitingField !== 'reason' ? entry.preview.language ?? 'th' : lineReplyLanguage(reason, entry.preview.language ?? 'th');
     if (!/^(ไม่ทำ|ยกเลิก|cancel)$/iu.test(reason.trim()) && !(entry.awaitingField === 'paymentMethod' && entry.preview.action === 'RECORD_PAYMENT') && !isPendingFieldAnswer(reason, entry.awaitingField === 'payeeName' || entry.awaitingField === 'payeeAddress' ? 'payee' : 'reason')) return null;
     const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher).catch(() => null);

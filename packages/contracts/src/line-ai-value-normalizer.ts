@@ -669,6 +669,8 @@ export function extractValueCandidates(
     }
   }
 
+  for (const match of mapped.matchAll(/(?:รอบ|ข้อ|(?:อัน|ใบ|รายการ|ร่าง)ที่)\s*\d+/gu)) recordDateRange(match.index, match.index + match[0].length);
+
   // 6) Digit amounts (Thai digits already mapped). Tokens inside date spans are excluded so
   //    a year like 2537 can never legitimize an amount of 2537.
   for (const match of mapped.matchAll(/\d[\d,]*(?:\.\d+)?/g)) {

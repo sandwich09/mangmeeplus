@@ -285,7 +285,8 @@ export function runtimeBusinessEffects(before: Record<string, JsonRow[]>, after:
       return ![oldRow, newRow].filter(Boolean).every(row => COLLECTION_STATE_STATUSES.has(row!.status));
     if (effect.kind !== 'ExpenseRecord.update' || !oldRow || !newRow) return true;
     const changed = new Set([...Object.keys(oldRow), ...Object.keys(newRow)].filter(key => reliabilityDigest(oldRow[key] ?? null) !== reliabilityDigest(newRow[key] ?? null)));
-    return !(changed.size === EXPENSE_CONTINUATION_FIELDS.size && [...changed].every(key => EXPENSE_CONTINUATION_FIELDS.has(key)));
+    // A continuation write by the same actor changes only metadata and updatedAt; any subset of these fields is not a business change.
+    return !(changed.size > 0 && [...changed].every(key => EXPENSE_CONTINUATION_FIELDS.has(key)));
   });
 }
 

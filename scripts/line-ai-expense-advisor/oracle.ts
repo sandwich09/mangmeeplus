@@ -216,8 +216,17 @@ export function checkWorkflowGold(task: WorkflowTask, evidence: GoldTurn[], gold
     const createdClaimLine = effect.kind === 'ReimbursementLine.create' && records.some(record => record.table === 'ReimbursementRequest'
       && record.ref.startsWith('$created:') && resolveGoldRecord(record, turn.businessSnapshot.business, records, bindings)?.id === row?.reimbursementRequestId
       && turn.unintendedEffects.some(parent => parent.kind === 'ReimbursementRequest.create' && parent.recordId === row?.reimbursementRequestId));
-    const allowed = turn.turnIndex === task.confirmTurn && (explicit ? effect.kind.endsWith('.delete') && task.goldTerminal.effect === 'EXPENSE_DELETED'
-      || !!row && recordMatches(explicit, row, turn.businessSnapshot.business) : !!row && linkedToGoldParent(table, row, parents, turn.businessSnapshot.business, createdClaimLine));
+    const legacyLine = table === 'ReimbursementLine' && row && linkedToGoldParent(table, row, parents, turn.businessSnapshot.business, true)
+      ? window.filter(prior => prior.turnIndex < turn.turnIndex).at(-1)?.businessSnapshot.business.ReimbursementLine
+        ?.find(line => line.id === `rbl_${row.reimbursementRequestId}`) : undefined;
+    const replacement = legacyLine && turn.unintendedEffects.some(item => item.kind === 'ReimbursementLine.delete' && item.recordId === legacyLine.id)
+      ? (turn.businessSnapshot.business.ReimbursementLine ?? []).find(line => turn.unintendedEffects.some(item => item.kind === 'ReimbursementLine.create' && item.recordId === line.id)
+        && ['companyId', 'reimbursementRequestId', 'lineNo', 'incurredDate', 'description', 'purpose', 'categoryKey', 'categoryLabelSnapshot', 'amount', 'attachmentId', 'linkedExpenseId', 'sourceExpenseSnapshotJson', 'attachmentSnapshotJson']
+          .every(key => isDeepStrictEqual(goldValue(line, key) ?? null, goldValue(legacyLine, key) ?? null))) : undefined;
+    const fallbackReplacement = replacement && (effect.kind === 'ReimbursementLine.delete' && effect.recordId === legacyLine!.id
+      || effect.kind === 'ReimbursementLine.create' && effect.recordId === replacement.id);
+    const allowed = turn.turnIndex === task.confirmTurn && (fallbackReplacement || (explicit ? effect.kind.endsWith('.delete') && task.goldTerminal.effect === 'EXPENSE_DELETED'
+      || !!row && recordMatches(explicit, row, turn.businessSnapshot.business) : !!row && linkedToGoldParent(table, row, parents, turn.businessSnapshot.business, createdClaimLine)));
     if (!allowed) wrongApplied++;
   }
   const previewTurn = window.find(turn => turn.turnIndex === (task.previewTurn ?? (task.confirmTurn ?? -1) - 1));

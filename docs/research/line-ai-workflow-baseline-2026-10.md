@@ -291,3 +291,50 @@ Even with all 25 counted as passes, W3 would be 110/156 (70.5%). The gate fails 
   - every press label checked against a literal in `apps/api/src`;
   - overlap with the tuning, v2 and v3 texts is 0.
 - Set v4 is the next gate, run once. Tier 1 stays unreleased until it passes.
+
+## Rounds 12–13 and blind sets v4 and v5, measured 2026-11-07
+
+### Blind set v4 (main `cc055ca42`, 225.18 THB)
+- **Result:** MA3/MA6 not met. W3 workflow 53/119 (44.5%); advisor tasks 82/87.
+- **Wrong applied:** 0. Every preview shown was on the gold record.
+- **Biggest cause.** 45 tasks were blocked in company B, the seeded shop with more than 300 records. A record the user named was never looked up, and the reply was "too many to search in chat". Outside those tasks the result is 49/74 (66%).
+- **Round 13 fixes:**
+  - a bounded lookup for a named record in a big shop;
+  - a record typed after a choice card;
+  - a day number read as an amount, and the generic error in claim collection;
+  - "ของผมเอง" read as a requester name;
+  - claim labels that hid the round;
+  - the auditor's untrue "nothing to confirm";
+  - foreign or expired presses not logged as `REFUSED`;
+  - switching jobs during collection.
+
+### Blind set v5 (main `d8c6d10fd`, 167.33 THB)
+- **Result:** MA3/MA6 not met. W3 workflow 111/169 (65.7%); 114/169 (67.5%) after the scorer allowance below. Advisor tasks 88/96. W2 145/169. W7 median calls per task: 1.
+- **Wrong applied is not 0. The first real wrong writes:**
+  - **Particle as reason.** 14 claim drafts were saved with a politeness particle as their reason, left over after the description, amount and date were read. The preview showed it, and the user saved.
+  - **An expense nobody asked for.** One expense draft was captured from a message that named a claim by category and round; the round number became the amount. The message before it ("…, I'll say which one") had been classified unclear.
+- **Scorer artifact.** A claim's first edit replaces its legacy fallback line `rbl_<id>` by design (`replaceLines`). The scorer counted that as a wrong write in 3 tasks, and now allows the identical replacement.
+- **Wrong-target count.** All 29 counted wrong-target previews were binding misses on the new claim drafts, caused by the wrong reason. None was a preview on another existing record.
+- **Product causes, with their task counts:**
+  - a document number glued to Thai text, which was not matched (21);
+  - a particle saved as the claim reason (14);
+  - an amount reply that left an open claim collection after a two-amount opener (6);
+  - a deferred-target opener that started nothing (4);
+  - a correction or ordinal after a choice card, which delivered the internal delivery-plan placeholder text to the customer (4);
+  - an opener's payment method lost after the picker (2);
+  - a named claim not waiting for this approver, which showed the picker instead of a true refusal (2);
+  - an "A หรือ B" side question stored as the payee (1);
+  - a model-route package refusal not logged as `REFUSED` (1).
+- **Gold dispute.** Two v5 golds expect different question orders for the same voucher record. The product asks for the payee first, and the product is kept.
+
+### Round 14
+Round 14 fixes the v5 causes:
+- **Particles.** A particle is dropped only when Thai word segmentation (`Intl.Segmenter`) reads it as a word of its own, so real words such as "บังคับ", "หน้า" and "มูลค่า" keep their last syllable.
+- **Document numbers.** A typed number matches the whole document number or its last part after a dash, never a shared prefix.
+- **Collection and pickers.** Amount replies stay in the open collection; deferred-target openers start the picker; picker rows match category and round; "รอบ N" is never an amount.
+- **Delivery.** The placeholder text can no longer reach LINE on any transport.
+- **Truthful replies.** Opener slots survive the picker, and a named claim that is not waiting for this user gets a true refusal.
+
+The harness also stops counting a same-actor substitute pause, which writes metadata only, as a business write.
+
+Blind set v6 is ready: 219 conversations, 644 turns, overlap 0 with every earlier set, and 0 unknown press labels. It is the next gate, run once.

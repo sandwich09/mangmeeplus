@@ -1332,3 +1332,18 @@ it('R13 spoken days in this month are verified dates rather than amounts', async
     assert.ok(await normalizer.verifyLineAiValueCandidatesV2(candidates, evidence));
   }
 });
+
+it('R14 round and ordinal numbers are locators rather than money', () => {
+  for (const text of ['ค่าเดินทาง รอบ 4 ค่ะ', 'ข้อ 2', 'ใบที่ 3', 'อันที่ 2']) assert.deepEqual(extractValueCandidates(text, '2026-11-07').amounts, [], text);
+  assert.deepEqual(extractValueCandidates('ค่าขนของ210บาท', '2026-11-07').amounts.map(a => a.value), ['210']);
+});
+
+it('R14 particle trimming drops only whole particle words, never the end of a real word', async () => {
+  const { stripLineFieldParticles } = await import('./line-ai.js');
+  for (const [text, want] of [['ประกันภาคบังคับ', 'ประกันภาคบังคับ'], ['ซ่อมป้ายหน้า', 'ซ่อมป้ายหน้า'], ['ภาษีมูลค่า', 'ภาษีมูลค่า'], ['ค่าเจรจา', 'ค่าเจรจา'],
+    ['ร้านชนะ', 'ร้านชนะ'], ['ค่าของไหว้เจ้า', 'ค่าของไหว้เจ้า'], ['หจก. สมใจ', 'หจก. สมใจ'], ['ร้านสมใจ หจก.', 'ร้านสมใจ หจก.'],
+    ['ไปส่งของจ้ะ', 'ไปส่งของ'], ['ไปส่งของจ้า', 'ไปส่งของ'], ['ไปส่งของนะคะ', 'ไปส่งของ'], ['ค่าแท็กซี่ค่า', 'ค่าแท็กซี่'], ['รับของครับผม', 'รับของ'],
+    ['ร้านป้านะ', 'ร้านป้า'], ['ค่าน้ำมันน้าา', 'ค่าน้ำมัน'], ['ไปส่งของ จ้ะ ', 'ไปส่งของ'], ['จ้ะจ้ะ', ''], ['จ้าาา', '']] as const) {
+    assert.equal(stripLineFieldParticles(text), want, text);
+  }
+});
