@@ -212,7 +212,7 @@ export async function parseManualClaimLine(
     let start = 0;
     for (const span of [...spans, { startUtf16: part.rawText.length, endUtf16: part.rawText.length }]) {
       const raw = part.rawText.slice(start, span.startUtf16);
-      const value = stripLineFieldParticles(raw.replace(/^(?:บาท|บ\.?(?=\s|กับ|และ|$)|฿|THB|baht|[\s\p{P}])+/iu, '').replace(/^(?:(?:ขอ)?(?:สร้าง|ทำ)?ใบเบิก|ขอเบิก|เบิก|กับ|และ)\s*/u, ''));
+      const value = stripLineFieldParticles(raw.replace(/^(?:บาท|บ\.?(?=\s|กับ|และ|$)|฿|THB|baht|[\s\p{P}])+/iu, '').replace(/^(?:(?:ขอ|ช่วย)\s*)*(?:(?:สร้าง|ทำ)?ใบเบิก|เบิก)\s*|^(?:กับ|และ)\s*/u, ''));
       const amount = amounts.find(amount => amount.source.partId === part.partId && amount.source.startUtf16 === span.startUtf16);
       if (Array.from(value).length >= 2 && value !== 'หรือ') {
         const offset = start + raw.indexOf(value);

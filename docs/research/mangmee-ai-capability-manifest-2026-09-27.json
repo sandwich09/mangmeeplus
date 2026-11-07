@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "82871827871eaf6b1b402e9b4dbb6e5f810a6f7d",
+  "sourceRevision": "9b1bb8ed3d87e148c2393730f01c7aee07b3d25f",
   "checkoutBranch": null,
   "checkoutDirty": true,
   "sourceHashes": [
@@ -10285,6 +10285,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-07T23:46:32.750Z",
+  "generatedAt": "2026-11-07T23:55:09.747Z",
   "manifestDigest": "5dd3e70644de941d20134f63618cf896df56709347d4bad719a2d79f15a765f0"
 }

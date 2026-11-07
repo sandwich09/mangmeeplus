@@ -104,6 +104,8 @@ for (const [text, description, amount, date] of [
     ['ค่าแท็กซี่ ๒๕๐ บาท ๓/๑๑', 'ค่าแท็กซี่', '250', '2026-11-03'],
     ['ค่าแท็กซี่ 250 บาท 3 พ.ย.', 'ค่าแท็กซี่', '250', '2026-11-03'],
     ['Taxi fare 250 บาท เมื่อวานค่ะ', 'Taxi fare', '250', '2026-11-03'],
+    ['ช่วยเบิกค่ารถไปโกดัง 125 บ. เมื่อวาน', 'ค่ารถไปโกดัง', '125', '2026-11-03'],
+    ['ขอเบิกค่าแท็กซี่ 250 บาท เมื่อวาน', 'ค่าแท็กซี่', '250', '2026-11-03'],
   ]) {
   it(`R5 manual claim USER_TEXT proofs: ${text}`, async () => {
     const { createLineAiInputEvidence, extractValueCandidatesV2, parseLineReimbursementDraftProposalV1 } = await import('@watchdog-bms/contracts');
