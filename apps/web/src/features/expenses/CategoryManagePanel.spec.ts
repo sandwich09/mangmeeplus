@@ -81,22 +81,30 @@ test('category load failures offer retry, keep typed input and recover the list'
   } finally { view.cleanup(); read.mock.restore(); capture.mock.restore(); notifications.mock.restore(); }
 });
 
-test('office mapping shows plain Thai fields and historical categories without switches, and free shops see no fields', () => {
-  const categories = [{ id: 'old', companyId: null, name: 'หมวดเก่า', status: 'ACTIVE', referencedOnly: true }];
+// Owner 2026-11-06: two open boxes on every row looked broken. The row says the code once it is set; the
+// boxes are in the edit dialog, for a built-in or historical category too.
+test('office mapping lives in the edit dialog, the row shows only a set code, and free shops see no fields', () => {
+  const categories = [{ id: 'a', companyId: 'co', name: 'หมวดทดสอบ', status: 'ACTIVE', accountantAccount: { accountCode: '5310', accountName: 'ค่ารับรอง' } },
+    { id: 'old', companyId: null, name: 'หมวดเก่า', status: 'ACTIVE', referencedOnly: true }];
   const capture = mock.method(policy, 'useExpenseCapturePolicy', () => ({ mode: 'SIMPLE' }));
   const notifications = mock.method(toast, 'useToast', () => ({ success: noop, warning: noop, error: noop }));
   try {
     for (const freeExpenseDrafts of [false, true]) {
       const view = certificateHarness(() => h(CategoryManagePanel, { companyId: 'co', createOpen: false, onCreateOpenChange: noop, freeExpenseDrafts }), [[], '', categories, false, null, null, null]);
       const html = view.render();
-      if (freeExpenseDrafts) assert.doesNotMatch(html, /รหัสหมวดในไฟล์|ชื่อหมวดในไฟล์/);
-      else { for (const text of ['รหัสหมวดในไฟล์', 'ชื่อหมวดในไฟล์', 'หมวดเก่าที่ยังมีรายการ']) assert.ok(html.includes(text)); assert.equal(view.nodes.some(n => n.tag === 'button' && n.props.role === 'switch'), false); }
+      if (freeExpenseDrafts) { assert.doesNotMatch(html, /รหัสหมวดในไฟล์|ชื่อหมวดในไฟล์/); view.cleanup(); continue; }
+      assert.equal(view.nodes.some(n => n.tag === 'input' && /ในไฟล์/.test(n.props['aria-label'] ?? '')), false);
+      assert.ok(html.includes('รหัสหมวดในไฟล์ 5310 · ค่ารับรอง')); assert.ok(html.includes('หมวดเก่าที่ยังมีรายการ'));
+      assert.equal(view.nodes.some(n => n.tag === 'button' && n.props.role === 'switch' && n.props['aria-label'] === 'ใช้หมวดหมู่ หมวดเก่า'), false);
+      view.find('button', p => String(p.children).includes('แก้ชื่อ')).onClick(); view.render();
+      assert.equal(view.find('input', p => p['aria-label'] === 'รหัสหมวดในไฟล์ หมวดทดสอบ').value, '5310');
+      assert.equal(view.find('input', p => p['aria-label'] === 'ชื่อหมวดในไฟล์ หมวดทดสอบ').placeholder, 'เช่น ค่ารับรอง');
       view.cleanup();
     }
   } finally { capture.mock.restore(); notifications.mock.restore(); }
 });
 
-test('office mapping keeps input after failure, retries the same values and clears only when both fields are empty', async () => {
+test('the edit dialog keeps input after a failed save, refuses half a code, and clears only when both fields are empty', async () => {
   const categories = [{ id: 'a', companyId: 'co', name: 'หมวดทดสอบ', status: 'ACTIVE' }];
   let attempts = 0; const calls: any[] = [];
   const write = mock.method(api, 'setCategoryAccountantAccount', async (...args: any[]) => { calls.push(args); if (++attempts === 1) throw new Error('unavailable'); return args[2]; });
@@ -105,15 +113,19 @@ test('office mapping keeps input after failure, retries the same values and clea
   const notifications = mock.method(toast, 'useToast', () => ({ success: noop, warning: noop, error: noop }));
   const view = certificateHarness(() => h(CategoryManagePanel, { companyId: 'co', createOpen: false, onCreateOpenChange: noop }), [[], '', categories, false, null, null, null]);
   const field = (name: string) => view.find('input', p => p['aria-label'] === name + ' หมวดทดสอบ');
+  const save = () => view.find('button', p => String(p.children).includes('บันทึก')).onClick();
   try {
-    view.render(); field('รหัสหมวดในไฟล์').onChange({ target: { value: '52031' } }); view.render();
-    field('ชื่อหมวดในไฟล์').onChange({ target: { value: 'ค่าเช่า' } }); view.render(); field('ชื่อหมวดในไฟล์').onBlur();
-    await view.settle(); assert.match(view.render(), /บันทึกไม่ได้ ข้อมูลยังอยู่/);
+    view.render(); view.find('button', p => String(p.children).includes('แก้ชื่อ')).onClick(); view.render();
+    field('รหัสหมวดในไฟล์').onChange({ target: { value: '52031' } }); view.render();
+    save(); await view.settle(); view.render(); assert.equal(view.find('ErrorBanner').message, 'กรอกทั้งรหัสและชื่อในไฟล์ หรือเว้นว่างทั้งสองช่อง'); assert.equal(calls.length, 0);
+    field('ชื่อหมวดในไฟล์').onChange({ target: { value: 'ค่าเช่า' } }); view.render();
+    save(); await view.settle(); view.render(); assert.ok(String(view.find('p', p => p.role === 'alert').children).includes('บันทึกไม่ได้ ข้อมูลยังอยู่'));
     assert.equal(field('รหัสหมวดในไฟล์').value, '52031'); assert.equal(field('ชื่อหมวดในไฟล์').value, 'ค่าเช่า');
-    view.find('button', p => p.children.includes('ลองอีกครั้ง')).onClick(); await view.settle(); view.render();
+    save(); await view.settle(); view.render();
     assert.equal(calls.length, 2); assert.deepEqual(calls[0], calls[1]);
-    field('รหัสหมวดในไฟล์').onChange({ target: { value: '' } }); view.render(); assert.equal(clear.mock.callCount(), 0);
-    field('ชื่อหมวดในไฟล์').onChange({ target: { value: '' } }); view.render(); field('ชื่อหมวดในไฟล์').onBlur(); await view.settle();
+    view.find('button', p => String(p.children).includes('แก้ชื่อ')).onClick(); view.render();
+    field('รหัสหมวดในไฟล์').onChange({ target: { value: '' } }); view.render();
+    field('ชื่อหมวดในไฟล์').onChange({ target: { value: '' } }); view.render(); save(); await view.settle();
     assert.equal(clear.mock.callCount(), 1);
   } finally { view.cleanup(); write.mock.restore(); clear.mock.restore(); capture.mock.restore(); notifications.mock.restore(); }
 });

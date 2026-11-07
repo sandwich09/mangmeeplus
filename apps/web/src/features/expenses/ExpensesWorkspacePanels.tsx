@@ -196,13 +196,13 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
     catch (e) { setActionError(err(e)); return false; }
     finally { setUpdatingId(null); }
   };
-  const saveName = async (id: string) => {
+  /** True when the name is saved or was not changed; a refusal keeps what was typed. */
+  const saveName = async (id: string): Promise<boolean> => {
     const trimmed = editName.trim();
     const forbidden = findForbiddenChars(editName);
-    if (forbidden.length > 0) { setActionError(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`); return; }
-    if (!trimmed) return;
-    // The dialog closes only when the name is saved (or was not changed): a refused save keeps what was typed.
-    if (trimmed === categories.find((category) => category.id === id)?.name || await runUpdate(id, { name: trimmed }, 'แก้ชื่อหมวดหมู่แล้ว')) setEditId(null);
+    if (forbidden.length > 0) { setActionError(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`); return false; }
+    if (!trimmed) { setActionError('กรอกชื่อหมวดหมู่'); return false; }
+    return trimmed === categories.find((category) => category.id === id)?.name || await runUpdate(id, { name: trimmed }, 'แก้ชื่อหมวดหมู่แล้ว');
   };
 
   // One way to stop using a category: its switch. The bin that did the same thing behind a
@@ -212,7 +212,13 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
     return runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? `ปิดหมวดหมู่ “${c.name}” แล้ว เปิดใช้ใหม่ได้ที่สวิตช์` : `เปิดใช้หมวดหมู่ “${c.name}” แล้ว`);
   };
   const editTarget = categories.find((c) => c.id === editId);
-  const openRename = (c: ExpenseCategorySummary) => { setActionError(null); setEditId(c.id); setEditName(c.name); };
+  // Owner 2026-11-06: the office code and name were two open boxes on every row. They are edited here,
+  // in the same dialog as the name; the row shows them only once they are set.
+  const openEdit = (c: ExpenseCategorySummary) => {
+    setActionError(null); setEditId(c.id); setEditName(c.name);
+    setAccountDrafts(previous => ({ ...previous, [c.id]: c.accountantAccount ?? { accountCode: '', accountName: '' } }));
+    setAccountErrors(previous => ({ ...previous, [c.id]: false }));
+  };
   const switchWithWord = (c: ExpenseCategorySummary) => {
     const active = c.status === 'ACTIVE';
     return (
@@ -231,40 +237,49 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
       {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.displayName}</option>)}
     </ThemedSelect>
   );
-  const saveAccount = async (category: ExpenseCategorySummary) => {
-    if (updating || freeExpenseDrafts) return;
+  /** True when the office code is saved or was not changed. */
+  const saveAccount = async (category: ExpenseCategorySummary): Promise<boolean> => {
+    if (freeExpenseDrafts) return true;
     const draft = accountDrafts[category.id] ?? category.accountantAccount ?? { accountCode: '', accountName: '' };
     const input = { accountCode: draft.accountCode.trim(), accountName: draft.accountName.trim() };
-    if (Boolean(input.accountCode) !== Boolean(input.accountName)) return;
-    if (input.accountCode === (category.accountantAccount?.accountCode ?? '') && input.accountName === (category.accountantAccount?.accountName ?? '')) return;
+    if (Boolean(input.accountCode) !== Boolean(input.accountName)) { setActionError(t('expenses.category_account_incomplete', locale)); return false; }
+    if (input.accountCode === (category.accountantAccount?.accountCode ?? '') && input.accountName === (category.accountantAccount?.accountName ?? '')) return true;
     const version = loadRequest.current;
     setUpdatingId(category.id); setAccountErrors(previous => ({ ...previous, [category.id]: false }));
     try {
       if (input.accountCode) await setCategoryAccountantAccount(companyId, category.id, input);
       else await clearCategoryAccountantAccount(companyId, category.id);
-      if (version !== loadRequest.current) return;
+      if (version !== loadRequest.current) return false;
       setCategories(previous => previous.map(row => row.id === category.id ? { ...row, accountantAccount: input.accountCode ? input : null } : row));
       setAccountDrafts(previous => ({ ...previous, [category.id]: input }));
       toast.success('บันทึกแล้ว');
-    } catch { if (version === loadRequest.current) setAccountErrors(previous => ({ ...previous, [category.id]: true })); }
+      return true;
+    } catch { if (version === loadRequest.current) setAccountErrors(previous => ({ ...previous, [category.id]: true })); return false; }
     finally { if (version === loadRequest.current) setUpdatingId(null); }
   };
+  const saveEdit = async (category: ExpenseCategorySummary) => {
+    if (updating) return;
+    const owned = !!category.companyId && !category.referencedOnly;
+    if (owned && !await saveName(category.id)) return;
+    if (await saveAccount(category)) setEditId(null);
+  };
+  // A set office code under the name; nothing at all while it is unset.
+  const accountText = (category: ExpenseCategorySummary) => category.accountantAccount
+    ? <p className="mt-0.5 text-sm font-normal text-gray-500">{t('expenses.category_account_code', locale)} {category.accountantAccount.accountCode} · {category.accountantAccount.accountName}</p> : null;
   const accountFields = (category: ExpenseCategorySummary) => {
     const value = accountDrafts[category.id] ?? category.accountantAccount ?? { accountCode: '', accountName: '' };
     return <div className="space-y-2">
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[8rem_minmax(0,1fr)]">
-        {(['accountCode', 'accountName'] as const).map(field => <label key={field} className="block min-w-0 space-y-1">
-          <span className="block text-sm text-gray-700 sm:sr-only">{t(field === 'accountCode' ? 'expenses.category_account_code' : 'expenses.category_account_name', locale)}</span>
+      <p className="text-sm text-gray-600">{t('expenses.category_account_hint', locale)}</p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[8rem_minmax(0,1fr)]">
+        {(['accountCode', 'accountName'] as const).map(field => <label key={field} className="block min-w-0 space-y-1.5">
+          <span className="block text-sm font-medium text-gray-700">{t(field === 'accountCode' ? 'expenses.category_account_code' : 'expenses.category_account_name', locale)}</span>
           <input className={`${inputClass} w-full`} aria-label={`${t(field === 'accountCode' ? 'expenses.category_account_code' : 'expenses.category_account_name', locale)} ${category.name}`}
             maxLength={field === 'accountCode' ? 20 : 120} value={value[field]} disabled={updating}
-            onChange={event => { setAccountDrafts(previous => ({ ...previous, [category.id]: { ...value, [field]: event.target.value } })); setAccountErrors(previous => ({ ...previous, [category.id]: false })); }}
-            onBlur={field === 'accountName' ? () => void saveAccount(category) : undefined} />
+            placeholder={field === 'accountCode' ? 'เช่น 5310' : 'เช่น ค่ารับรอง'}
+            onChange={event => { setAccountDrafts(previous => ({ ...previous, [category.id]: { ...value, [field]: event.target.value } })); setAccountErrors(previous => ({ ...previous, [category.id]: false })); setActionError(null); }} />
         </label>)}
       </div>
-      {updatingId === category.id && <p className="text-sm text-gray-500" role="status">{t('expenses.saving', locale)}</p>}
-      {accountErrors[category.id] && <div className="space-y-2" role="alert"><p>{t('expenses.category_account_failed', locale)}</p>
-        <ActionGroup align="start"><button type="button" className={ghostClass} onClick={() => void saveAccount(category)} disabled={updating} aria-busy={updating}>{t('expenses.export_retry', locale)}</button></ActionGroup>
-      </div>}
+      {accountErrors[category.id] && <p role="alert" className="text-sm text-red-700">{t('expenses.category_account_failed', locale)}</p>}
     </div>;
   };
   const orderedCategories = [...categories.filter(category => !category.referencedOnly), ...categories.filter(category => category.referencedOnly)];
@@ -273,10 +288,12 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
 
   // No controls on a built-in row already says it cannot be changed; the note only says where it came from.
   const builtInNote = <span className="text-sm text-gray-500">มากับระบบ</span>;
+  // The guide's words stay true: a shop's own category is renamed with "แก้ชื่อ" (its office code is in the
+  // same dialog); a built-in one keeps its name, so its button says what it does.
+  const editLabel = (owned: boolean) => owned ? 'แก้ชื่อ' : 'ใส่รหัสในไฟล์';
 
   return (
     <div>
-      <p className="mb-3 text-sm text-gray-600">{t('expenses.category_account_hint', locale)}</p>
       <MangmeeCard className="overflow-hidden">
         {actionError && !editTarget && <div className="p-4 pb-0"><ErrorBanner message={actionError} /></div>}
         {error ? <ErrorState description={error} onRetry={() => void load()} /> : loading ? (
@@ -292,37 +309,31 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
                 const owned = !!c.companyId && !c.referencedOnly;
                 return (
                   <Fragment key={c.id}>{c.id === firstHistorical && <li className="px-4 py-3 font-semibold">{t('expenses.category_historical', locale)}</li>}<li className={cx('space-y-2 px-4 py-3', c.status !== 'ACTIVE' && 'opacity-60')}>
-                    <div className="min-w-0 flex-1 font-semibold text-gray-900">{c.name}</div>
+                    <div className="min-w-0 flex-1 font-semibold text-gray-900">{c.name}{accountText(c)}</div>
                     {showsTax && owned && <div>{taxCodeSelect(c)}</div>}
-                    {accountFields(c)}
-                    {owned ? (
-                      <div className="flex items-center justify-between gap-3">
-                        <button type="button" className={ghostClass} onClick={() => openRename(c)}>แก้ชื่อ</button>
-                        {switchWithWord(c)}
-                      </div>
-                    ) : <div>{builtInNote}</div>}
+                    <div className="flex items-center justify-between gap-3">
+                      <button type="button" className={ghostClass} onClick={() => openEdit(c)}>{editLabel(owned)}</button>
+                      {owned ? switchWithWord(c) : builtInNote}
+                    </div>
                   </li></Fragment>
                 );
               })}
             </ul>
             <div className="mangmee-table-scroll hidden sm:block">
               <table className="mangmee-table">
-                <thead><tr>{['ชื่อหมวดหมู่', ...(showsTax ? [t('expenses.category_default_tax_code', locale)] : []), t('expenses.category_account_code', locale), t('expenses.category_account_name', locale), 'ใช้งาน', ''].map((h) => <th key={h} className={cx('!text-[13px]', h === 'ใช้งาน' && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
+                <thead><tr>{['ชื่อหมวดหมู่', ...(showsTax ? [t('expenses.category_default_tax_code', locale)] : []), 'ใช้งาน', ''].map((h) => <th key={h} className={cx('!text-[13px]', h === 'ใช้งาน' && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {categories.length === 0 && <tr><td colSpan={showsTax ? 6 : 5} className="py-8 text-center text-gray-500">ยังไม่มีหมวดหมู่</td></tr>}
+                  {categories.length === 0 && <tr><td colSpan={showsTax ? 4 : 3} className="py-8 text-center text-gray-500">ยังไม่มีหมวดหมู่</td></tr>}
                   {orderedCategories.map((c) => {
                     const owned = !!c.companyId && !c.referencedOnly;
                     return (
-                      <Fragment key={c.id}>{c.id === firstHistorical && <tr><th colSpan={showsTax ? 6 : 5}>{t('expenses.category_historical', locale)}</th></tr>}<tr className={c.status === 'ACTIVE' ? '' : 'opacity-60'}>
-                        <td className="font-semibold text-gray-900">{c.name}</td>
+                      <Fragment key={c.id}>{c.id === firstHistorical && <tr><th colSpan={showsTax ? 4 : 3}>{t('expenses.category_historical', locale)}</th></tr>}<tr className={c.status === 'ACTIVE' ? '' : 'opacity-60'}>
+                        <td className="font-semibold text-gray-900">{c.name}{accountText(c)}</td>
                         {showsTax && <td className="whitespace-nowrap text-sm">
                           {owned ? taxCodeSelect(c) : <span className="text-gray-500">{c.defaultInputTaxCode ? taxCodes.find((code) => code.externalCode === c.defaultInputTaxCode)?.displayName ?? 'รูปแบบ VAT ที่บันทึกไว้' : 'ไม่กำหนด'}</span>}
                         </td>}
-                        <td colSpan={2}>{accountFields(c)}</td>
-                        {owned ? <>
-                          <td className="whitespace-nowrap">{switchWithWord(c)}</td>
-                          <td className="w-px whitespace-nowrap text-right"><button type="button" className={ghostClass} onClick={() => openRename(c)}>แก้ชื่อ</button></td>
-                        </> : <td colSpan={2} className="whitespace-nowrap">{builtInNote}</td>}
+                        <td className="whitespace-nowrap">{owned ? switchWithWord(c) : builtInNote}</td>
+                        <td className="w-px whitespace-nowrap text-right"><button type="button" className={ghostClass} onClick={() => openEdit(c)}>{editLabel(owned)}</button></td>
                       </tr></Fragment>
                     );
                   })}
@@ -352,18 +363,20 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
           </div>
       </Modal>
 
-      {/* Renaming happens in the same small dialog as adding, at every width: a box and two buttons
-          inside a table cell were cut off on a phone. */}
-      <Modal open={Boolean(editTarget)} title="แก้ชื่อหมวดหมู่" size="sm" onClose={() => { if (!updating) setEditId(null); }}
-        footer={<><button type="button" className={ghostClass} onClick={() => setEditId(null)} disabled={updating}>ยกเลิก</button><button type="button" className={btnClass} onClick={() => { if (!editName.trim()) { setActionError('กรอกชื่อหมวดหมู่'); return; } if (editTarget) void saveName(editTarget.id); }} disabled={updating} aria-busy={Boolean(updating)}>{updating ? 'กำลังบันทึก...' : 'บันทึก'}</button></>}>
-          <div className="space-y-3">
+      {/* Editing happens in the same small dialog as adding, at every width: a box and two buttons
+          inside a table cell were cut off on a phone. A built-in category keeps its name; only its
+          office code is set here. */}
+      <Modal open={Boolean(editTarget)} title={editTarget && (!editTarget.companyId || editTarget.referencedOnly) ? t('expenses.category_account_code', locale) : 'แก้ชื่อหมวดหมู่'} size="sm" onClose={() => { if (!updating) setEditId(null); }}
+        footer={<><button type="button" className={ghostClass} onClick={() => setEditId(null)} disabled={updating}>ยกเลิก</button><button type="button" className={btnClass} onClick={() => { if (editTarget) void saveEdit(editTarget); }} disabled={updating} aria-busy={Boolean(updating)}>{updating ? 'กำลังบันทึก...' : 'บันทึก'}</button></>}>
+          {editTarget && <div className="space-y-4">
           {actionError && <ErrorBanner message={actionError} />}
-          <label className="block space-y-1.5">
+          {!!editTarget.companyId && !editTarget.referencedOnly ? <label className="block space-y-1.5">
             <span className="block text-sm font-medium text-gray-700">ชื่อหมวดหมู่</span>
             <input autoFocus className={inputClass} value={editName} disabled={updating} onChange={(e) => { setEditName(stripDisallowed(e.target.value)); setActionError(null); }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && editTarget && editName.trim()) void saveName(editTarget.id); }} />
-          </label>
-          </div>
+              onKeyDown={(e) => { if (e.key === 'Enter') void saveEdit(editTarget); }} />
+          </label> : <p className="font-semibold text-gray-900">{editTarget.name}</p>}
+          {accountFields(editTarget)}
+          </div>}
       </Modal>
     </div>
   );

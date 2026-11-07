@@ -22,7 +22,7 @@ test('Thai category names are never squeezed or cut on a phone (Owner, 2026-09-3
   // (rename, the switch) sat off the screen there. What the owner asked for stays: the name is never squeezed
   // into a narrow column and never cut. On a phone it has a line of its own at the full width of the row.
   const phone = /<ul className="divide-y divide-gray-100 sm:hidden" data-category-rows>([\s\S]*?)<\/ul>/u.exec(source)?.[1] ?? '';
-  assert.match(phone, /<div className="min-w-0 flex-1 font-semibold text-gray-900">\{c\.name\}<\/div>/u);
+  assert.match(phone, /<div className="min-w-0 flex-1 font-semibold text-gray-900">\{c\.name\}\{accountText\(c\)\}<\/div>/u);
   assert.doesNotMatch(phone, /truncate|line-clamp|whitespace-nowrap|break-all/u);
   // From 640 px the table stays in the shared scroller, like the other migrated tables.
   assert.match(source, /<div className="mangmee-table-scroll hidden sm:block">\s*<table className="mangmee-table">\s*<thead><tr>\{\['ชื่อหมวดหมู่'/u);
