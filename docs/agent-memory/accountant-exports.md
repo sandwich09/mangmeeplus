@@ -161,3 +161,26 @@ Next: Controller reviews scope, protected-PDF classification, signed-claim selec
   - Pre-existing reds, not this change: maintenance pins, the workers demo spec typecheck, billing recipient mail R-A7.
 - **Pins repaired:** four LINE help label pins in `line-help-cards-review-2026-10-20.md` were stale after web commit `4b0030885`, and now point at the current lines.
 - **Next:** P2 (record PDFs and signed claims), then P4 and P5 (screen note, guide, browser and 300-expense proof).
+
+## Pack v2 round 2 landed, 2026-11-07
+- **Plan P2.**
+  - **Record packets** go in `ชุดเอกสารรายการ/`:
+    - a paid voucher gives one PDF, voucher first, then each line's evidence;
+    - an expense without a voucher gets a generated cover page;
+    - every page carries the export-date footer.
+  - **Signed ใบเบิก** (`ใบเบิก/`) come from the acknowledged signed copy or the digital render.
+    - They are added only when every expense of the claim is selected (Q1 / RC-F2) and the claim is signed.
+    - Otherwise the `ต้องตามเอกสาร` sheet lists `CLAIM_UNSIGNED` / `CLAIM_UNAVAILABLE`.
+  - **Protected and unsupported PDFs** stay as original references.
+  - **Workbook link:** the expense sheet gains a `ชุดเอกสารรายการ` link column.
+- **Permissions reused:** `assertCanReadRequest`, `disbursementVoucherReadWhere`, `branchScopeWhere`. A co-voucher with an unselected line is never packed, and its rows get a note instead.
+- **Tests:** 17 new `pack v2` tests (E/D/C pass). The real-PG P test needs the proof stack.
+- **Verification (batch33):**
+  - API 13,196 pass, 0 fail;
+  - web 5,256;
+  - contracts 511;
+  - gateway 2,799;
+  - tsc 0.
+  - Pre-existing reds only: pins, the workers demo spec, billing R-A7.
+- **Known risk for P5.** Each plan and each part download rebuilds every record packet to measure it, and the convergence loop can rebuild them again. P5 must measure this against spec §3 budgets: plan ≤ 30 s, part ≤ 30 s, 16 parts ≤ 8.5 min, RSS ≤ 256 MiB.
+- **Next:** P4 (access note, guide, help-pack hash), then P5 (journeys, browser at 390/1280/1556, the 300-expense envelope).

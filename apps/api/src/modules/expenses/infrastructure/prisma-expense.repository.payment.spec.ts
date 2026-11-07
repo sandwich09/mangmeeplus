@@ -1,3 +1,5 @@
+import { PreviewReimbursementClaimFormUseCase } from '../../reimbursements/application/use-cases/reimbursement-claim-form.use-case';
+import { PrismaReimbursementRepository } from '../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import { CreateAccountantPackageUseCase } from '../application/use-cases/expense-evidence.use-case';
 import { asLedgerSource, buildJournalLines } from '../../ledger/application/use-cases/journal.use-case';
 import { PrismaLedgerRepository } from '../../ledger/infrastructure/prisma-ledger.repository';
@@ -478,6 +480,29 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     new PrismaExpenseRepository({ client } as any),
     audit ?? new AuditService(new PrismaAuditRepository({ client } as any), { error: () => undefined } as any),
   );
+
+  it('pack v2 validates claim projection lineage in PostgreSQL', async t => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const rollback = new Error('claim-export-lineage-rollback');
+    await assert.rejects(clients[0]!.$transaction(async tx => {
+      const original = await tx.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId, status: 'CONFIRMED', expenseDate: new Date('2026-10-01') } });
+      const claim = await tx.reimbursementRequest.create({ data: { companyId, branchId, requesterUserId: userId, requesterDisplayNameSnapshot: 'ผู้เบิก',
+        reason: 'ค่าเดินทาง', categoryKey: 'travel', amount: '100', incurredDate: new Date('2026-10-01'), createdByUserId: userId,
+        status: 'PAID', requestNo: `RB-${randomUUID()}`, lines: { create: [{ companyId, lineNo: 1, incurredDate: new Date('2026-10-01'), description: 'ค่าเดินทาง', categoryKey: 'travel', amount: '100', linkedExpenseId: original.id }] } }, include: { lines: true } });
+      const projection = await tx.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId, status: 'CONFIRMED', expenseDate: new Date('2026-10-01'),
+        sourceReimbursementRequestId: claim.id, sourceReimbursementLineId: claim.lines[0]!.id } });
+      const repo = new PrismaReimbursementRepository({ client: tx } as any, {} as any);
+      const reader = new PreviewReimbursementClaimFormUseCase(repo, {} as any, {} as any, {} as any);
+      const actor = { ...context(), roles: [], permissions: ['reimbursement.read'], scopes: { branchIds: [branchId] } };
+      const result = await reader.executeSignedForExport(actor, claim.id, [projection.id], { render: false, sourceLineIds: new Map([[projection.id, claim.lines[0]!.id]]) });
+      assert.equal(result.problem?.key, 'CLAIM_UNSIGNED');
+      const wrongSource = await reader.executeSignedForExport(actor, claim.id, [original.id], { render: false });
+      assert.equal(wrongSource.problem?.key, 'CLAIM_UNAVAILABLE');
+      await assert.rejects(() => reader.executeSignedForExport({ ...actor, scopes: { branchIds: ['unrelated'] } }, claim.id, [projection.id]));
+      assert.equal((await tx.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.id } })).updatedAt.getTime(), claim.updatedAt.getTime());
+      throw rollback;
+    }), error => error === rollback);
+  });
 
   for (const name of ['pack v2 extra readers preserve tenant branch and selected IDs', 'pack v2 reads historical registration and branch headers without writes']) {
     it(name, async t => {

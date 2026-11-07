@@ -1927,7 +1927,7 @@ export type AccountantPackageRequest = SharedEvidenceFilter & {
 
 export type AccountantEvidenceBundlePlan = {
   fileCount: number; partCount: number;
-  counts: { receipts: number; substituteReceipts: number; paymentSlips: number; vouchers: number; supportingFiles?: number; whtCertificates: number };
+  counts: { receipts: number; substituteReceipts: number; paymentSlips: number; vouchers: number; supportingFiles?: number; whtCertificates: number; claimForms?: number; recordPacks?: number };
   missingReceiptCount: number;
 };
 
@@ -2214,7 +2214,7 @@ export const ACCOUNTANT_FILES_SHEET_COLUMN_LABELS: Record<typeof ACCOUNTANT_FILE
 };
 
 export const ACCOUNTANT_WORKBOOK_OPTIONAL_COLUMNS = ['shop_branch'] as const;
-export const ACCOUNTANT_WORKBOOK_OPTIONAL_COLUMN_LABELS = { shop_branch: 'สาขาของร้าน' } as const;
+export const ACCOUNTANT_WORKBOOK_OPTIONAL_COLUMN_LABELS = { shop_branch: 'สาขาของร้าน', record_files: 'ชุดเอกสารรายการ' } as const;
 
 export const EXPENSE_PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
   CASH: 'เงินสด', BANK_TRANSFER: 'โอนเงิน', CARD: 'บัตรเครดิต', CHEQUE: 'เช็ค', OTHER: 'อื่นๆ',

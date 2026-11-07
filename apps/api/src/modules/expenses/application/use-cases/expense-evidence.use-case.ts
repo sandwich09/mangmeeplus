@@ -7,8 +7,8 @@ import { filedLineCoversPayment } from '../../../tax/application/services/withho
 import { withholdingRowFaults } from '../../../tax/application/services/withholding-filing-validation';
 import { formPeriodKey, withholdingIssueDescription, makeReviewIssue } from '../../../tax/domain/logic/tax-period.logic';
 import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
-import { civilDayRangeToUtc, civilInstantDayRangeToUtc, expenseDocumentDateStatus, civilDate, utcDateToCivilDate, expenseEvidenceAssessment, expenseEvidenceImageMissing, TAX_EVIDENCE_REASON_LABELS, EXPENSE_STATUS_LABELS } from '@watchdog-bms/contracts';
-import { Injectable, ForbiddenException, NotFoundException, UnprocessableEntityException, Logger } from '@nestjs/common';
+import { civilDayRangeToUtc, civilInstantDayRangeToUtc, expenseDocumentDateStatus, civilDate, utcDateToCivilDate, expenseEvidenceAssessment, expenseEvidenceImageMissing, TAX_EVIDENCE_REASON_LABELS, EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
+import { Injectable, Inject, ForbiddenException, NotFoundException, UnprocessableEntityException, Logger } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { CreateDownloadUrlUseCase } from '../../../data-model-core/application/use-cases/create-download-url.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -25,6 +25,8 @@ import { disbursementVoucherReadWhere } from '../../infrastructure/prisma-disbur
 import { IssueWhtCertificateFromHandoffUseCase } from '../../../tax/application/use-cases/issue-wht-certificate-from-handoff.use-case';
 import { zipStore } from '../../../../common/export/xlsx.logic';
 import { assertExpenseFinancialAccess } from '../expense-commercial-access';
+import { PreviewReimbursementClaimFormUseCase } from '../../../reimbursements/application/use-cases/reimbursement-claim-form.use-case';
+import { buildExpenseRecordPdf, recordFileReadFailure, recordMoney as money, type RecordPdfFile } from '../../domain/logic/expense-record-pdf.logic';
 import { canonicalAttachmentExtension } from '../../../data-model-core/domain/logic/attachment.logic';
 
 // Bound memory and download size: stored images/PDFs gain nothing from compression.
@@ -58,10 +60,10 @@ function toAttachmentRef(a: { id: string; purpose: string; originalFileName: str
 
 type BundleKind = keyof AccountantEvidenceBundlePlan['counts'];
 type BundleFile = {
-  kind: BundleKind; expenseIds: string[]; expenseNumber: string; fileName: string; legacyFileName: string; part: number;
+  kind: BundleKind; expenseIds: string[]; expenseNumber: string; fileName: string; legacyFileName?: string; part: number; skippedReason?: string; referenceReason?: string;
   version?: 'current' | 'superseded'; replacedBy?: string; paymentId?: string;
   attachment: { id: string; byteSize: number; status: string; originalFileName: string };
-  extension: string | null; load?: () => Promise<Buffer>; number?: string;
+  extension: string | null; mimeType?: string; load?: () => Promise<Buffer>; number?: string;
 };
 const bundleName = (value: string) => value.replace(/[^A-Za-z0-9_\u0E00-\u0E7F-]/g, '_');
 
@@ -179,6 +181,7 @@ export class CreateAccountantPackageUseCase {
     private readonly vouchers: DisbursementVoucherUseCase,
     private readonly wht: IssueWhtCertificateFromHandoffUseCase,
     private readonly expenseSource: ExpenseSourceAdapter = new ExpenseSourceAdapter(prisma),
+    @Inject(PreviewReimbursementClaimFormUseCase) private readonly claimForms?: PreviewReimbursementClaimFormUseCase,
   ) {}
 
   async execute(ctx: RequestContext, request: AccountantPackageRequest): Promise<AccountantPackageResult> {
@@ -186,7 +189,7 @@ export class CreateAccountantPackageUseCase {
   }
 
   private async createIndex(ctx: RequestContext, request: AccountantPackageRequest, contents: Awaited<ReturnType<CreateAccountantPackageUseCase['bundleContents']>>, download?: { part: number; included: Set<string>; skipped: Map<string, string> }): Promise<AccountantPackageResult> {
-    const { page, files, expenseIds } = contents;
+    const { page, files, expenseIds, exportedAt } = contents;
     const columnSet = 'full' as const;
 
     const company = await this.prisma.client.company.findUnique({
@@ -284,7 +287,7 @@ export class CreateAccountantPackageUseCase {
     }));
 
     for (const [i, row] of page.rows.entries()) {
-      const linked = files.filter(file => file.expenseIds.includes(row.id));
+      const linked = files.filter(file => file.legacyFileName && file.expenseIds.includes(row.id));
       indexRows[i]!.voucher_numbers = [...new Set(linked.filter(file => file.kind === 'vouchers').map(file => file.number!))].join(', ');
       indexRows[i]!.wht_certificate_numbers = [...new Set(linked.filter(file => file.kind === 'whtCertificates').map(file => file.number!))].join(', ');
       indexRows[i]!.bundle_file_names = linked.map(file => file.legacyFileName).join('\n');
@@ -353,7 +356,7 @@ export class CreateAccountantPackageUseCase {
     });
 
     return {
-      generatedAt: new Date().toISOString(),
+      generatedAt: exportedAt.toISOString(),
       filterSummary,
       rowCount: expenseIndexRows.length,
       totalMatched: page.total,
@@ -369,7 +372,7 @@ export class CreateAccountantPackageUseCase {
   }
 
   private async workbookProjection(ctx: RequestContext, request: AccountantPackageRequest,
-    { page, files, expenseIds }: Awaited<ReturnType<CreateAccountantPackageUseCase['bundleContents']>>,
+    { page, files, expenseIds, claimProblems, packetNotes, exportedAt = new Date() }: Awaited<ReturnType<CreateAccountantPackageUseCase['bundleContents']>>,
     company: { name: string; registeredName?: string | null; taxId?: string | null; timezone?: string; baseCurrency?: string } | null,
     branches: { id: string; name: string; taxBranchCode: string | null; isVatEstablishment: boolean }[],
     download?: { part: number; included: Set<string>; skipped: Map<string, string> }) {
@@ -415,7 +418,8 @@ export class CreateAccountantPackageUseCase {
     const range = accountantRange(request), timezone = company?.timezone ?? 'Asia/Bangkok';
     const inRange = (date: Date | string) => { const day = civilDate(date instanceof Date ? date : new Date(date), timezone); return (!range.from || day >= range.from) && (!range.to || day <= range.to); };
     const fileRows: AccountantWorkbookFile[] = files.map(file => ({ attachmentId: file.attachment.id, expenseIds: file.expenseIds, expenseNumber: file.expenseNumber, kind: file.kind, path: file.fileName, part: file.part,
-      version: file.version, replacedBy: file.replacedBy,
+      version: file.version, replacedBy: file.replacedBy, referenceReason: file.referenceReason,
+      ...(file.skippedReason ? { skippedReason: file.skippedReason } : {}),
       ...(download?.skipped.has(file.fileName) ? { skippedReason: download.skipped.get(file.fileName) } : download && file.part === download.part && !download.included.has(file.fileName) ? { skippedReason: 'ไม่พบไฟล์' } : {}) }));
     const workbookRows: AccountantWorkbookRow[] = page.rows.filter(row => expenseIds.has(row.id)).map(row => {
       const latest = payments.filter(payment => payment.expenseId === row.id).sort((a, b) => b.paidAt.getTime() - a.paidAt.getTime() || b.id.localeCompare(a.id))[0];
@@ -436,9 +440,9 @@ export class CreateAccountantPackageUseCase {
         tax_evidence_status: row.taxEvidenceStatus, wht_amount: String(row.whtAmount), net_payable_amount: String(row.netPayableAmount), paid_amount: String(row.paidAmount), outstanding_amount: String(row.outstandingAmount),
         last_paid_at: latest ? toIso(latest.paidAt) : '', lastPaidAtConfirmed: latest?.paidAtConfirmed,
         advanced_by: row.evidenceSources?.requesterName ?? (cert?.fundingSource === 'PERSONAL_ADVANCE' ? cert.payerName : ''), expense_status: row.status,
-        notes: accountantNotes({ hasImage: !expenseEvidenceImageMissing(evidenceSource), evidenceNote: evidence?.note,
+        notes: [packetNotes?.get(row.id), accountantNotes({ hasImage: !expenseEvidenceImageMissing(evidenceSource), evidenceNote: evidence?.note,
           taxEvidenceStatus: row.taxEvidenceStatus, taxEvidenceReason: row.taxEvidenceReasonCode ? (TAX_EVIDENCE_REASON_LABELS as Record<string, string>)[row.taxEvidenceReasonCode] : '',
-          inputVatClaimStatus: row.inputVatClaimStatus, inputVatReason: row.latestInputVatDecision?.reason }),
+          inputVatClaimStatus: row.inputVatClaimStatus, inputVatReason: row.latestInputVatDecision?.reason })].filter(Boolean).join(' · '),
         primaryFile: primary ? fileRows[files.indexOf(primary)] : undefined };
     });
     const paymentRows: AccountantPaymentRow[] = payments.filter(payment => inRange(payment.paidAt)).map(payment => {
@@ -491,7 +495,7 @@ export class CreateAccountantPackageUseCase {
     }
     const about: Record<string, string | number> = { 'ร้าน': company?.registeredName?.trim() || company?.name || '', 'เลขประจำตัวผู้เสียภาษีของร้าน': company?.taxId ?? '',
       'ช่วงวันที่': [range.from, range.to].filter(Boolean).map(formatThaiExportDate).join(' – ') || 'ทุกเดือน', 'นับตาม': request.dateField === 'uploadedAt' ? 'วันที่ส่งเข้า' : 'วันที่เอกสาร',
-      'สถานะเอกสาร': EXPENSE_STATUS_LABELS[request.status ?? 'CONFIRMED'], 'สาขา': request.branchId ? branches.find(branch => branch.id === request.branchId)?.name ?? '' : 'ทุกสาขา', 'สร้างเมื่อ': formatThaiExportDate(new Date().toISOString()) };
+      'สถานะเอกสาร': EXPENSE_STATUS_LABELS[request.status ?? 'CONFIRMED'], 'สาขา': request.branchId ? branches.find(branch => branch.id === request.branchId)?.name ?? '' : 'ทุกสาขา', 'สร้างเมื่อ': formatThaiExportDate(civilDate(exportedAt, timezone)) };
     if (request.page !== undefined || request.pageSize !== undefined) about['หน้า'] = `หน้าที่ ${request.page ?? 1} — การจ่ายและหัก ณ ที่จ่ายมีเฉพาะรายการในหน้านี้`;
     if (coveredOutsideRangeCount) about['รวมในแบบที่ยื่นแล้ว'] = `การจ่ายหัก ณ ที่จ่าย ${coveredOutsideRangeCount} รายการในช่วงนี้ ระบบถือว่ารวมอยู่ในแบบที่ยื่นแล้วซึ่งลงวันที่จ่ายนอกช่วงนี้ จึงไม่แสดงในแผ่นนี้`;
     const shop = bundleName(company?.registeredName?.trim() || company?.name || 'ร้าน').slice(0, 40), period = request.yearMonth ?? (range.from || range.to ? `${range.from ?? ''}_${range.to ?? ''}` : 'ทุกเดือน');
@@ -502,6 +506,7 @@ export class CreateAccountantPackageUseCase {
       categoryName: categoryNames.get(row.expenseCategoryId ?? '') ?? row.categoryName,
       certificateNumber: certificateNumbers(row.id), substituteStatuses: row.evidenceSources?.certificates.filter(certificate => certificate.status !== 'SUPERSEDED').slice(-1).map(certificate => certificate.status),
       sourceEvidenceUnavailable: row.evidenceSources?.sourceEvidenceUnavailable,
+      claimProblem: claimProblems?.get(row.id),
       substituteAttachmentIds: row.evidenceSources?.certificates.flatMap(certificate => [certificate.artifactAttachmentId, certificate.wetSignedScanAttachmentId].filter((id): id is string => !!id)),
       // Retained v1 claim snapshots carry file IDs/checksums, but no original receipt role.
       receiptCheckUnavailable: !!row.evidenceSources?.sourceSnapshot && row.attachments.some(file => ['ACTIVE', 'active'].includes(file.status))
@@ -515,6 +520,7 @@ export class CreateAccountantPackageUseCase {
 
 
   private async bundleContents(ctx: RequestContext, request: AccountantPackageRequest, bundle = true) {
+    const exportedAt = new Date();
     const page = await readPackageRows(this.repo, this.prisma, ctx, request, bundle);
     const expenseIds = new Set(page.rows.map(row => row.id));
     const db = this.prisma.client;
@@ -537,7 +543,7 @@ export class CreateAccountantPackageUseCase {
       ? await db.disbursementVoucher.findMany({ where: { ...disbursementVoucherReadWhere({ companyId: ctx.companyId, scopes: ctx.scopes ?? {} }, request.branchId),
         status: 'PAID', paidDate: dated,
         ...(request.expenseIds ? { AND: [{ lines: { some: { expenseId: { in: request.expenseIds } } } }] } : {}) },
-        select: { id: true, documentNumber: true, slipAttachmentId: true, lines: { select: { expenseId: true } } }, orderBy: { id: 'asc' } }) : [];
+        select: { id: true, documentNumber: true, slipAttachmentId: true, lines: { orderBy: { position: 'asc' }, select: { expenseId: true, expensePaymentId: true, position: true } } }, orderBy: { id: 'asc' } }) : [];
     // Same any-permission gate as GET .../system-certificate, then the download rechecks source scope.
     const certificates = ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link'].some(permission => hasPerm(ctx, permission))
       ? await db.whtCertificate.findMany({ where: { companyId: ctx.companyId, status: 'ISSUED', paymentDate: dated },
@@ -563,6 +569,8 @@ export class CreateAccountantPackageUseCase {
     page.rows.sort((a, b) => (a.expenseNumber ?? a.id).localeCompare(b.expenseNumber ?? b.id) || a.id.localeCompare(b.id));
     const names = new Map(page.rows.map(row => [row.id, row.expenseNumber ?? row.id]));
     const files: BundleFile[] = [];
+    const claimProblems = new Map<string, AccountantExportSource['claimProblem']>();
+    const packetNotes = new Map<string, string>();
     const usedNames = new Set<string>(), publicNames = new Set<string>();
     const displayNames = new Map(page.rows.map(row => [row.id, row.expenseNumber ?? 'ยังไม่มีเลขที่']));
     const paymentSequence = new Map<string, number>();
@@ -582,7 +590,7 @@ export class CreateAccountantPackageUseCase {
         usedNames.add(legacyFileName);
         const fileName = publicFileName(`${substitute ? 'ใบรับรองแทนใบเสร็จ' : 'เอกสารค่าใช้จ่าย'}/${bundleName(displayNames.get(row.id)!)}-${index + 1}${attachment.isHistorical ? '-ฉบับเดิม' : ''}`, extension);
         files.push({ attachment, expenseIds: [row.id], expenseNumber: displayNames.get(row.id)!, fileName, legacyFileName, part: 0, extension,
-          kind: substitute ? 'substituteReceipts' : 'receipts' });
+          mimeType: attachment.mimeType, kind: substitute ? 'substituteReceipts' : 'receipts' });
       });
     }
     for (const slip of slips) {
@@ -590,18 +598,21 @@ export class CreateAccountantPackageUseCase {
       if (!names.has(expenseId)) continue;
       const extension = canonicalAttachmentExtension(slip.attachment.mimeType) ?? null;
       files.push({ kind: 'paymentSlips', expenseIds: [expenseId], expenseNumber: displayNames.get(expenseId)!, paymentId: slip.targetId, part: 0, attachment: { ...slip.attachment, byteSize: Number(slip.attachment.byteSize) }, extension,
-        legacyFileName: legacyBundleFileName('สลิปการจ่าย', names.get(expenseId)!, extension, { id: slip.targetId }),
+        mimeType: slip.attachment.mimeType, legacyFileName: legacyBundleFileName('สลิปการจ่าย', names.get(expenseId)!, extension, { id: slip.targetId }),
         fileName: publicFileName(paymentStem(expenseId), extension) });
     }
     const addDocument = async (kind: BundleKind, ids: string[], id: string, number: string, folder: string,
-      load: () => Promise<{ data: Buffer; mimeType?: string }>, name?: string, displayNumber = number) => {
+      load: () => Promise<{ data: Buffer; mimeType?: string }>, name?: string, displayNumber = number, legacy = true) => {
       if (!ids.length || ids.some(expenseId => !names.has(expenseId))) return;
       // Measure generated documents with the real downloader, one at a time. Do not retain a
       // month's PDF buffers in memory; parts still obey the existing byte and file limits.
       let document: { data: Buffer; mimeType?: string };
       try { document = await load(); } catch (error) {
-        if (error instanceof ForbiddenException || error instanceof NotFoundException) return;
-        throw error;
+        if (!(error instanceof ForbiddenException || error instanceof NotFoundException)) throw error;
+        const fileName = publicFileName(`เอกสารที่เปิดไม่ได้/${bundleName(displayNames.get(ids[0]!)!)}`, 'pdf');
+        files.push({ kind, expenseIds: ids, expenseNumber: ids.map(expenseId => displayNames.get(expenseId)!).join(', '), fileName, part: 0, extension: 'pdf',
+          attachment: { id: `unavailable-${files.length}`, byteSize: 0, status: 'UNAVAILABLE', originalFileName: 'เอกสารที่เปิดไม่ได้' }, skippedReason: error instanceof ForbiddenException ? 'ไม่มีสิทธิ์เปิดเอกสารประกอบรายการนี้' : 'ไม่พบเอกสารประกอบรายการนี้' });
+        return;
       }
       const extension = canonicalAttachmentExtension(document.mimeType ?? 'application/pdf') ?? null;
       const expenseNumber = ids.map(expenseId => names.get(expenseId)!).sort()[0]!;
@@ -609,7 +620,7 @@ export class CreateAccountantPackageUseCase {
       const publicFolder = kind === 'whtCertificates' ? 'หนังสือรับรอง 50 ทวิ' : folder;
       const stem = kind === 'paymentSlips' ? paymentStem(ids[0]!) : `${publicFolder}/${bundleName(displayNumber)}${name ? name.match(/-\d+$/)?.[0] ?? '' : ''}`;
       const fileName = publicFileName(stem, extension);
-      files.push({ kind, expenseIds: ids, expenseNumber: ids.map(expenseId => displayNames.get(expenseId)!).sort()[0]!, fileName, legacyFileName, part: 0, number, extension,
+      files.push({ kind, expenseIds: ids, expenseNumber: ids.map(expenseId => displayNames.get(expenseId)!).sort()[0]!, fileName, ...(legacy ? { legacyFileName } : {}), part: 0, number, extension, mimeType: document.mimeType ?? 'application/pdf',
         attachment: { id, byteSize: document.data.length, status: 'ACTIVE', originalFileName: fileName }, load: async () => (await load()).data });
     };
     for (const voucher of paidVouchers) {
@@ -619,6 +630,7 @@ export class CreateAccountantPackageUseCase {
         let supporting: Awaited<ReturnType<DisbursementVoucherUseCase['supportingFiles']>> = [];
         try { supporting = await this.vouchers.supportingFiles(ctx, voucher.id); } catch (error) {
           if (!(error instanceof ForbiddenException || error instanceof NotFoundException)) throw error;
+          await addDocument('supportingFiles', ids, `${voucher.id}-supporting`, '', 'เอกสารประกอบการจ่าย', async () => { throw error; });
         }
         for (const [index, file] of supporting.entries()) await addDocument('supportingFiles', ids, file.id, voucher.documentNumber ?? voucher.id, 'เอกสารประกอบการจ่าย',
           () => this.vouchers.supportingFileBytes(ctx, voucher.id, file.id), `${voucher.documentNumber ?? voucher.id}-${index + 1}`, voucher.documentNumber ?? 'ยังไม่มีเลขที่');
@@ -632,12 +644,162 @@ export class CreateAccountantPackageUseCase {
         return { data: Buffer.from(result.pdfArtifact.contentBase64, 'base64') };
       });
     }
+    let packetVouchers = paidVouchers;
+    const loadedIds = page.rows.map(row => row.id);
+    const history = bundle && loadedIds.length ? await db.expensePayment.findMany({
+      where: { companyId: ctx.companyId, expenseId: { in: loadedIds }, status: 'RECORDED', expense: expenseWhere },
+      orderBy: [{ paidAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, expenseId: true, paidAt: true, paidAtConfirmed: true, paymentMethod: true, amount: true, bankAccountRef: true },
+    }) : [];
+    if (bundle && loadedIds.length) {
+      const historicalSlips = history.length ? await db.attachmentLink.findMany({ where: { companyId: ctx.companyId,
+        targetType: 'expense.payment', purpose: 'expense.payment.evidence', targetId: { in: history.map(payment => payment.id) },
+        attachment: { companyId: ctx.companyId, ...branchScopeWhere(ctx.scopes ?? {}) } }, include: { attachment: true }, orderBy: { id: 'asc' } }) : [];
+      for (const slip of historicalSlips) {
+        const expenseId = history.find(payment => payment.id === slip.targetId)?.expenseId;
+        if (!expenseId || files.some(file => file.attachment.id === slip.attachment.id && file.paymentId === slip.targetId)) continue;
+        const extension = canonicalAttachmentExtension(slip.attachment.mimeType) ?? null;
+        files.push({ kind: 'paymentSlips', expenseIds: [expenseId], expenseNumber: displayNames.get(expenseId)!, paymentId: slip.targetId,
+          part: 0, attachment: { ...slip.attachment, byteSize: Number(slip.attachment.byteSize) }, extension, mimeType: slip.attachment.mimeType,
+          fileName: publicFileName(paymentStem(expenseId), extension) });
+      }
+      if (ctx.authProvider !== 'line' && hasPerm(ctx, 'expense.disbursement.read')) {
+        packetVouchers = await db.disbursementVoucher.findMany({ where: { ...disbursementVoucherReadWhere({ companyId: ctx.companyId, scopes: ctx.scopes ?? {} }, request.branchId),
+          status: 'PAID', AND: [{ lines: { some: { expenseId: { in: loadedIds } } } }] },
+          select: { id: true, documentNumber: true, slipAttachmentId: true, lines: { orderBy: { position: 'asc' }, select: { expenseId: true, expensePaymentId: true, position: true } } }, orderBy: { id: 'asc' } });
+        for (const voucher of packetVouchers) {
+          const ids = voucher.lines.map(line => line.expenseId);
+          if (!ids.length || ids.some(id => !names.has(id))) {
+            for (const id of ids.filter(id => names.has(id))) packetNotes.set(id, 'ใบสำคัญจ่ายรวมรายการนอกชุดที่เลือก จึงไม่ได้รวมใบนี้');
+            continue;
+          }
+          if (paidVouchers.some(original => original.id === voucher.id)) continue;
+          await addDocument('vouchers', ids, voucher.id, voucher.documentNumber ?? voucher.id, 'ใบสำคัญจ่าย', () => this.vouchers.documentPdf(ctx, voucher.id), undefined, voucher.documentNumber ?? 'ยังไม่มีเลขที่', false);
+          let supporting: Awaited<ReturnType<DisbursementVoucherUseCase['supportingFiles']>> = [];
+          try { supporting = await this.vouchers.supportingFiles(ctx, voucher.id); }
+          catch (error) {
+            if (!(error instanceof ForbiddenException || error instanceof NotFoundException)) throw error;
+            await addDocument('supportingFiles', ids, `${voucher.id}-supporting`, '', 'เอกสารประกอบการจ่าย', async () => { throw error; });
+          }
+          for (const [index, file] of supporting.entries()) await addDocument('supportingFiles', ids, file.id, voucher.documentNumber ?? voucher.id,
+            'เอกสารประกอบการจ่าย', () => this.vouchers.supportingFileBytes(ctx, voucher.id, file.id), `${voucher.documentNumber ?? voucher.id}-${index + 1}`, voucher.documentNumber ?? 'ยังไม่มีเลขที่', false);
+          if (voucher.slipAttachmentId) await addDocument('paymentSlips', ids, voucher.slipAttachmentId, voucher.documentNumber ?? voucher.id,
+            'สลิปการจ่าย', () => this.vouchers.slipBytes(ctx, voucher.id), undefined, voucher.documentNumber ?? 'ยังไม่มีเลขที่', false);
+        }
+      }
+      if (['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link'].some(permission => hasPerm(ctx, permission))) {
+        const historicalHandoffs = await db.whtCertificateHandoff.findMany({ where: { companyId: ctx.companyId, sourcePaymentType: 'expense.record',
+          sourcePaymentId: { in: loadedIds }, status: 'SYSTEM_ISSUED', ...(ctx.scopes?.branchIds ? { sourceBranchId: { in: ctx.scopes.branchIds } } : {}) },
+          select: { id: true, certificateId: true, sourcePaymentId: true } });
+        const historicalCertificates = historicalHandoffs.length ? await db.whtCertificate.findMany({ where: { companyId: ctx.companyId,
+          id: { in: historicalHandoffs.flatMap(handoff => handoff.certificateId ? [handoff.certificateId] : []) }, status: 'ISSUED' }, select: { id: true, certificateNumber: true } }) : [];
+        for (const handoff of historicalHandoffs) {
+          const certificate = historicalCertificates.find(certificate => certificate.id === handoff.certificateId);
+          if (!certificate || !handoff.sourcePaymentId || files.some(file => file.kind === 'whtCertificates' && file.attachment.id === certificate.id)) continue;
+          await addDocument('whtCertificates', [handoff.sourcePaymentId], certificate.id, certificate.certificateNumber, '50ทวิ', async () => {
+            const result = await this.wht.download(ctx, handoff.id); return { data: Buffer.from(result.pdfArtifact.contentBase64, 'base64') };
+          }, undefined, certificate.certificateNumber, false);
+        }
+      }
+    }
+    const claimIds = [...new Set(page.rows.flatMap(row => row.sourceReimbursementRequestId ? [row.sourceReimbursementRequestId] : []))];
+    for (const id of claimIds) {
+      const claimRows = page.rows.filter(row => row.sourceReimbursementRequestId === id);
+      const ids = claimRows.map(row => row.id);
+      const sourceLineIds = new Map(claimRows.map(row => [row.id, row.sourceReimbursementLineId ?? null]));
+      const problem = (message: string) => { for (const expenseId of ids) claimProblems.set(expenseId, { key: 'CLAIM_UNAVAILABLE', message }); };
+      if (!this.claimForms) { problem('สิทธิ์นี้ตรวจใบเบิกต้นทางไม่ได้'); continue; }
+      try {
+        const claim = await this.claimForms.executeSignedForExport(ctx, id, ids, { render: false, sourceLineIds, exportedAt });
+        if (claim.problem) { for (const expenseId of ids) claimProblems.set(expenseId, claim.problem); continue; }
+        if (!bundle) continue;
+        const attachment = claim.attachmentId ? await db.attachmentObject.findFirst({ where: { companyId: ctx.companyId, id: claim.attachmentId }, select: { mimeType: true } }) : null;
+        if (claim.attachmentId && !attachment) { problem('เปิดใบเบิกที่เซ็นแล้วไม่ได้'); continue; }
+        await addDocument('claimForms', ids, id, claim.requestNo!, 'ใบเบิก', async () => {
+          const current = await this.claimForms!.executeSignedForExport(ctx, id, ids, { sourceLineIds, exportedAt });
+          if (current.problem || current.attachmentId !== claim.attachmentId) throw new NotFoundException();
+          return { data: current.attachmentId ? await this.downloadUrl.readBytes(ctx, { attachmentId: current.attachmentId }) : current.data!, mimeType: attachment?.mimeType ?? 'application/pdf' };
+        }, undefined, claim.requestNo!, false);
+        if (files.some(file => file.kind === 'claimForms' && file.attachment.id === id && file.skippedReason)) problem('เปิดใบเบิกที่เซ็นแล้วไม่ได้');
+      } catch (error) {
+        problem(error instanceof ForbiddenException ? 'สิทธิ์นี้ตรวจใบเบิกต้นทางไม่ได้' : 'เปิดใบเบิกที่เซ็นแล้วไม่ได้');
+      }
+    }
+    if (bundle && loadedIds.length) {
+      const company = await db.company.findUnique({ where: { id: ctx.companyId }, select: { timezone: true } });
+      const originals = files.slice();
+      const descriptor = (file: BundleFile): RecordPdfFile => ({ path: file.fileName, part: file.part, identity: `${file.load ? file.kind : 'attachment'}:${file.attachment.id}`,
+        mimeType: file.mimeType ?? (file.extension === 'pdf' ? 'application/pdf' : file.extension === 'jpg' ? 'image/jpeg' : `image/${file.extension}`),
+        unavailableReason: file.skippedReason ?? (!file.extension ? 'ไม่รองรับชนิดไฟล์นี้' : file.attachment.status !== 'ACTIVE' ? file.attachment.status === 'PENDING_UPLOAD' ? 'ไฟล์ยังตรวจสอบไม่เสร็จ' : 'ไฟล์นี้เปิดไม่ได้' : undefined),
+        load: () => file.load ? file.load() : this.downloadUrl.readBytes(ctx, { attachmentId: file.attachment.id }) });
+      const packets: { file: BundleFile; leading?: BundleFile; ids: string[] }[] = [];
+      const eligible = packetVouchers.filter(voucher => voucher.lines.length && voucher.lines.every(line => names.has(line.expenseId)));
+      const addPacket = (ids: string[], number: string, leading?: BundleFile) => {
+        const fileName = publicFileName(`ชุดเอกสารรายการ/${bundleName(number)}`, 'pdf');
+        const file: BundleFile = { kind: 'recordPacks', expenseIds: ids, expenseNumber: ids.map(id => displayNames.get(id)!).join(', '), fileName, part: 0,
+          extension: 'pdf', mimeType: 'application/pdf', attachment: { id: `packet-${fileName}`, byteSize: 0, status: 'ACTIVE', originalFileName: fileName } };
+        packets.push({ file, leading, ids }); files.push(file);
+      };
+      for (const voucher of eligible) {
+        const leading = originals.find(file => file.kind === 'vouchers' && file.attachment.id === voucher.id && !file.skippedReason);
+        if (leading) addPacket(voucher.lines.map(line => line.expenseId), voucher.documentNumber ?? 'ยังไม่มีเลขที่', leading);
+      }
+      for (const row of page.rows) {
+        const covered = packets.some(packet => packet.ids.includes(row.id));
+        const voucherPayments = new Set(eligible.flatMap(voucher => voucher.lines.filter(line => line.expenseId === row.id).map(line => line.expensePaymentId)));
+        if (!covered || history.some(payment => payment.expenseId === row.id && !voucherPayments.has(payment.id))) addPacket([row.id], displayNames.get(row.id)!);
+      }
+      for (const packet of packets) packet.file.load = async () => {
+        const cover = packet.ids.flatMap(id => {
+          const row = page.rows.find(row => row.id === id)!;
+          const payments = history.filter(payment => payment.expenseId === id);
+          return [displayNames.get(id)!, `วันที่เอกสาร ${expenseDocumentDateStatus(row.aiVerificationSummaryJson) === 'unverified' ? 'ยังไม่ระบุ' : formatThaiExportDate(toIso(row.expenseDate).slice(0, 10))}`,
+            ...(expenseDocumentDateStatus(row.aiVerificationSummaryJson) === 'implausible' ? ['วันที่เอกสารควรตรวจอีกครั้ง'] : []),
+            `ผู้ขาย ${row.vendorNameSnapshot ?? ''} เลขที่เอกสาร ${row.vendorDocumentNumber ?? ''}`, `หมวด ${row.categoryName ?? ''} สกุลเงิน ${row.currency ?? ''}`,
+            `ก่อน VAT ${money(String(row.taxableAmount ?? '0'))} VAT ${money(String(row.vatAmount ?? '0'))} หัก ณ ที่จ่าย ${money(String(row.whtAmount ?? '0'))}`,
+            `ยอดรวม ${money(String(row.grandTotalAmount ?? '0'))} ยอดจ่ายสุทธิ ${money(String(row.netPayableAmount ?? '0'))} จ่ายแล้ว ${money(String(row.paidAmount ?? '0'))} ค้างจ่าย ${money(String(row.outstandingAmount ?? '0'))}`,
+            ...(packetNotes.has(id) ? [packetNotes.get(id)!] : []),
+            ...(payments.length ? payments.map(payment => `${payment.paidAtConfirmed === false ? 'ยังไม่ยืนยันวันที่จ่าย' : 'วันที่จ่าย'} ${formatThaiExportDate(toIso(payment.paidAt))} ${EXPENSE_PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']} ${money(String(payment.amount ?? '0'))} ${payment.bankAccountRef ?? ''}`) : ['ยังไม่ได้จ่าย'])];
+        });
+        const ordered = packet.ids.flatMap(id => ['receipts', 'paymentSlips', 'substituteReceipts', 'claimForms', 'supportingFiles', 'whtCertificates'].flatMap(kind => originals
+          .filter(file => file.kind === kind && file.expenseIds.includes(id) && file.version !== 'superseded' && !page.rows.find(row => row.id === id)?.attachments.some(attachment => attachment.id === file.attachment.id && attachment.isHistorical))));
+        const result = await buildExpenseRecordPdf({ cover, leading: packet.leading ? descriptor(packet.leading) : undefined, files: ordered.map(descriptor),
+          exportedAt, timezone: company?.timezone ?? 'Asia/Bangkok', relatedPackets: packets.filter(other => other !== packet && other.ids.some(id => packet.ids.includes(id))).map(other => ({ path: other.file.fileName, part: other.file.part })) });
+        for (const appendix of result.appendices) {
+          const original = originals.find(file => file.fileName === appendix.path)!;
+          if (appendix.status === 'unavailable') {
+            original.skippedReason = appendix.reason;
+            if (original.kind === 'claimForms') for (const id of original.expenseIds) claimProblems.set(id, { key: 'CLAIM_UNAVAILABLE', message: 'เปิดใบเบิกที่เซ็นแล้วไม่ได้' });
+          }
+          else if (appendix.status === 'referenced') original.referenceReason = appendix.reason;
+        }
+        return result.data;
+      };
+    }
+    for (const file of files.filter(file => file.kind === 'substituteReceipts')) {
+      file.version = page.rows.some(row => row.attachments.some(attachment => attachment.id === file.attachment.id && attachment.isHistorical)) ? 'superseded' : 'current';
+    }
     const parts: BundleFile[][] = [];
-    let bytes = 0;
-    for (const file of files) {
-      const current = parts.at(-1);
-      if (!current || current.length >= EVIDENCE_BUNDLE_MAX_FILES || bytes + file.attachment.byteSize > EVIDENCE_BUNDLE_MAX_BYTES) { parts.push([]); bytes = 0; }
-      file.part = parts.length; parts.at(-1)!.push(file); bytes += file.attachment.byteSize;
+    const assignParts = () => {
+      parts.length = 0;
+      let bytes = 0;
+      for (const file of files) {
+        const current = parts.at(-1);
+        if (!current || current.length >= EVIDENCE_BUNDLE_MAX_FILES || bytes + file.attachment.byteSize > EVIDENCE_BUNDLE_MAX_BYTES) { parts.push([]); bytes = 0; }
+        file.part = parts.length; parts.at(-1)!.push(file); bytes += file.attachment.byteSize;
+      }
+    };
+    assignParts();
+    // Sizes only grow during convergence, so reference part numbers cannot overflow an earlier budget.
+    let changed = bundle;
+    while (changed) {
+      const previousParts = files.map(file => file.part).join(',');
+      for (const file of files.filter(file => file.kind === 'recordPacks' && !file.skippedReason)) {
+        try { file.attachment.byteSize = Math.max(file.attachment.byteSize, (await file.load!()).length); }
+        catch { file.skippedReason = 'สร้างชุดเอกสารรายการไม่ได้ ลองดาวน์โหลดอีกครั้ง'; }
+      }
+      assignParts();
+      changed = previousParts !== files.map(file => file.part).join(',');
     }
     if (!parts.length && page.rows.length) parts.push([]); // An index also explains a month with missing papers.
     for (const row of page.rows) for (const file of files.filter(file => file.kind === 'substituteReceipts' && file.expenseIds.includes(row.id))) {
@@ -650,12 +812,12 @@ export class CreateAccountantPackageUseCase {
       while (!seen.has(terminal.id)) { seen.add(terminal.id); const next = certificates.find(cert => cert.correctionOfEvidenceId === terminal.id); if (!next) break; terminal = next; }
       if (terminal.status === 'ISSUED') file.replacedBy = files.find(candidate => candidate.attachment.id === terminal.artifactAttachmentId || candidate.attachment.id === terminal.wetSignedScanAttachmentId)?.fileName;
     }
-    const counts = { receipts: 0, substituteReceipts: 0, paymentSlips: 0, vouchers: 0, supportingFiles: 0, whtCertificates: 0 };
+    const counts = { receipts: 0, substituteReceipts: 0, paymentSlips: 0, vouchers: 0, supportingFiles: 0, whtCertificates: 0, claimForms: 0, recordPacks: 0 };
     for (const file of files) counts[file.kind]++;
     const missingReceiptCount = page.rows.filter(row => !files.some(file => file.expenseIds.includes(row.id)
       && (file.kind === 'substituteReceipts' || row.attachments.some(attachment => attachment.id === file.attachment.id
         && !attachment.isHistorical && (attachment.id === row.primaryAttachmentId || attachment.purpose === 'expense.receipt.primary'))) && file.attachment.status === 'ACTIVE')).length;
-    return { page, expenseIds, files, parts, counts, missingReceiptCount };
+    return { page, expenseIds, files, parts, counts, missingReceiptCount, claimProblems, packetNotes, exportedAt };
   }
 
   async planBundle(ctx: RequestContext, request: AccountantPackageRequest): Promise<AccountantEvidenceBundlePlan> {
@@ -669,21 +831,23 @@ export class CreateAccountantPackageUseCase {
     if (!Number.isInteger(part) || part < 1 || part > parts.length) throw new NotFoundException();
     const entries: Record<string, Buffer> = Object.create(null);
     const skipped: string[] = [], skippedFiles = new Map<string, string>();
+    let includedBytes = 0;
     for (const file of parts[part - 1]!) {
       let reason: string | undefined;
-      if (file.attachment.status !== 'ACTIVE') reason = file.attachment.status === 'PENDING_UPLOAD' ? 'ไฟล์ยังตรวจสอบไม่เสร็จ' : 'ไฟล์นี้เปิดไม่ได้';
+      if (file.skippedReason) reason = file.skippedReason;
+      else if (file.attachment.status !== 'ACTIVE') reason = file.attachment.status === 'PENDING_UPLOAD' ? 'ไฟล์ยังตรวจสอบไม่เสร็จ' : 'ไฟล์นี้เปิดไม่ได้';
       else if (!file.extension) reason = 'ไม่รองรับชนิดไฟล์นี้';
       else {
         try {
-          entries[file.fileName] = file.load ? await file.load() : await this.downloadUrl.readBytes(ctx, { attachmentId: file.attachment.id });
+          const data = file.load ? await file.load() : await this.downloadUrl.readBytes(ctx, { attachmentId: file.attachment.id });
+          if (parts[part - 1]!.length > 1 && includedBytes + data.length > EVIDENCE_BUNDLE_MAX_BYTES) reason = 'ขนาดไฟล์เกินขอบเขตของชุดนี้ ลองดาวน์โหลดอีกครั้ง';
+          else { entries[file.fileName] = data; includedBytes += data.length; }
         } catch (error) {
-          const failure = (error ?? {}) as { status?: number; code?: string; getStatus?: () => number; $metadata?: { httpStatusCode?: number } };
-          const status = failure.getStatus?.() ?? failure.status ?? failure.$metadata?.httpStatusCode;
-          reason = status === 404 || ['ENOENT', 'NoSuchKey', 'NoSuchVersion'].includes(failure.code ?? '') ? 'ไม่พบไฟล์'
-            : status === 403 ? 'ไม่มีสิทธิ์เปิดไฟล์' : 'อ่านไฟล์ไม่ได้ ลองดาวน์โหลดอีกครั้ง';
+          reason = recordFileReadFailure(error);
         }
       }
-      if (reason) { skippedFiles.set(file.fileName, reason); skipped.push(`${file.expenseNumber.replace(/[\r\n\t]/g, ' ')} · ${file.attachment.originalFileName.replace(/[\r\n\t]/g, ' ')} · ${reason}`); }
+      if (reason && file.kind === 'claimForms') for (const id of file.expenseIds) contents.claimProblems.set(id, { key: 'CLAIM_UNAVAILABLE', message: 'เปิดใบเบิกที่เซ็นแล้วไม่ได้' });
+      if (reason) { file.skippedReason = reason; skippedFiles.set(file.fileName, reason); skipped.push(`${file.expenseNumber.replace(/[\r\n\t]/g, ' ')} · ${file.attachment.originalFileName.replace(/[\r\n\t]/g, ' ')} · ${reason}`); }
     }
     const fileCount = Object.keys(entries).length;
     if (skipped.length) entries['ไฟล์ที่ไม่ได้รวม.txt'] = Buffer.from(skipped.join('\n'), 'utf8');

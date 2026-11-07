@@ -1548,13 +1548,13 @@ describe('accountant evidence bundle', () => {
     const queries: any = {}, calls: string[] = [];
     const db = { disbursementVoucherLine: { findMany: async () => ['PV-1', 'PV-2'].map(documentNumber => ({ expensePaymentId: 'pay', voucher: { documentNumber, status: 'PAID' } })) }, company: { findUnique: async () => ({ name: 'ร้าน', timezone: 'Asia/Bangkok', status: 'ACTIVE', archivedAt: null, planTerm: null }) },
       user: { findMany: async () => [] }, branch: { findMany: async () => [] },
-      expensePayment: { findMany: async (q: any) => { if (q.where.expense) queries.payments = q; return [{ id: 'pay', expenseId: 'e', paidAt: new Date('2026-10-01'), paidAtConfirmed: true, paymentMethod: 'CASH', amount: '100' }]; } },
+      expensePayment: { findMany: async (q: any) => { if (q.where.paidAt) queries.payments = q; return [{ id: 'pay', expenseId: 'e', paidAt: new Date('2026-10-01'), paidAtConfirmed: true, paymentMethod: 'CASH', amount: '100' }]; } },
       attachmentLink: { findMany: async () => [{ targetId: 'pay', attachment: file('payment-slip') }] },
-      disbursementVoucher: { findMany: async (q: any) => { queries.vouchers = q; return [
+      disbursementVoucher: { findMany: async (q: any) => { if (q.where.paidDate) queries.vouchers = q; return [
         { id: 'v', documentNumber: 'PV-1', slipAttachmentId: 'voucher-slip', lines: [{ expenseId: 'e' }] },
         { id: 'direct', documentNumber: 'PV-2', slipAttachmentId: null, lines: [{ expenseId: 'e' }] },
       ]; } },
-      whtCertificate: { findMany: async (q: any) => { queries.certificates = q; return [{ id: 'c', certificateNumber: 'WHT-1' }]; } },
+      whtCertificate: { findMany: async (q: any) => { if (q.where.paymentDate) queries.certificates = q; return [{ id: 'c', certificateNumber: 'WHT-1' }]; } },
       whtCertificateHandoff: { findMany: async () => [{ id: 'h', certificateId: 'c', sourcePaymentType: 'expense.record', sourcePaymentId: 'e' }] },
     };
     const repo = { listSharedEvidence: async (_company: string, filter: any) => ({ rows: filter.yearMonth ? [] : [row], total: filter.yearMonth ? 0 : 1, page: 1, pageSize: 500 }) };
@@ -1566,9 +1566,9 @@ describe('accountant evidence bundle', () => {
     const allowed = { ...reader, permissions: [...reader.permissions, 'expense.disbursement.read', 'wht.certificate.read'] };
     const request = { yearMonth: '2026-10', branchId: 'b1' };
     const plan = await useCase.planBundle(allowed, request);
-    assert.deepEqual(plan.counts, { receipts: 1, substituteReceipts: 0, paymentSlips: 2, vouchers: 2, supportingFiles: 1, whtCertificates: 1 });
+    assert.deepEqual(plan.counts, { receipts: 1, substituteReceipts: 0, paymentSlips: 2, vouchers: 2, supportingFiles: 1, whtCertificates: 1, claimForms: 0, recordPacks: 3 });
     assert.equal(plan.missingReceiptCount, 0);
-    assert.equal(plan.fileCount, 7);
+    assert.equal(plan.fileCount, 10);
     assert.equal(plan.counts.supportingFiles, 1);
     assert.equal(queries.vouchers.where.status, 'PAID');
     assert.equal(queries.vouchers.where.companyId, reader.companyId);
@@ -1605,6 +1605,21 @@ describe('accountant evidence bundle', () => {
     const restricted = unzip((await useCase.downloadBundle(reader, request, 1)).bytes);
     assert.ok(![...restricted.keys()].some(name => name.startsWith('หนังสือรับรอง 50 ทวิ/') || name.startsWith('ใบสำคัญจ่าย/') || name.startsWith('เอกสารประกอบการจ่าย/')));
     assert.deepEqual(calls, []);
+  });
+  it('pack v2 adds cover packets without changing originals or standalone CSV', async () => {
+    const { useCase } = fixture([{ id: 'e', expenseNumber: 'EXP-1', attachments: [file('receipt'), { ...file('unsupported'), mimeType: 'application/octet-stream' }] }]);
+    const standalone = await useCase.execute(reader, {});
+    const plan = await useCase.planBundle(reader, {});
+    assert.equal(plan.counts.recordPacks, 1);
+    assert.equal(plan.fileCount, 3);
+    const contents = await (useCase as any).bundleContents(reader, {});
+    assert.equal(contents.files.find((file: any) => !file.extension).skippedReason, 'ไม่รองรับชนิดไฟล์นี้');
+    const entries = unzip((await useCase.downloadBundle(reader, {}, 1)).bytes);
+    assert.deepEqual(entries.get('เอกสารค่าใช้จ่าย/EXP-1-1.jpg'), Buffer.from('receipt'));
+    assert.ok(entries.get('ชุดเอกสารรายการ/EXP-1.pdf')!.subarray(0, 4).equals(Buffer.from('%PDF')));
+    const xml = [...workbookParts(entries.get('สารบัญ.xlsx')!).values()].join('');
+    assert.match(xml, /ชุดเอกสารรายการ/);
+    assert.doesNotMatch(standalone.indexCsv, /ชุดเอกสารรายการ/);
   });
   it('keeps substitute papers in their folder and warns when supporting evidence is not a receipt', async () => {
     const { useCase } = fixture([
@@ -1656,12 +1671,12 @@ describe('accountant evidence bundle', () => {
       [[file('a'), file('b', 60_000_001), file('c')], 3],
     ] as [any[], number][]) {
       const { useCase } = fixture([{ id: 'e', expenseNumber: 'EXP-1', attachments: files }]);
-      assert.deepEqual(await useCase.planBundle(reader, { yearMonth: '2026-10' }), { fileCount: files.length, partCount: expectedParts, counts: { receipts: files.length, substituteReceipts: 0, paymentSlips: 0, vouchers: 0, supportingFiles: 0, whtCertificates: 0 }, missingReceiptCount: files.length ? 0 : 1 });
+      assert.deepEqual(await useCase.planBundle(reader, { yearMonth: '2026-10' }), { fileCount: files.length + 1, partCount: expectedParts, counts: { receipts: files.length, substituteReceipts: 0, paymentSlips: 0, vouchers: 0, supportingFiles: 0, whtCertificates: 0, claimForms: 0, recordPacks: 1 }, missingReceiptCount: files.length ? 0 : 1 });
     }
   });
   it('uses all query pages with the package filters and caller scope, without a 500-row cutoff', async () => {
     const { useCase, queries } = fixture(Array.from({ length: 501 }, (_, i) => ({ id: `e${i}`, expenseNumber: `EXP-${String(i).padStart(3, '0')}`, attachments: [file(`a${i}`)] })));
-    assert.deepEqual(await useCase.planBundle(reader, { yearMonth: '2026-10', dateField: 'uploadedAt', branchId: 'b1', expenseIds: ['selection'] }), { fileCount: 501, partCount: 9, counts: { receipts: 501, substituteReceipts: 0, paymentSlips: 0, vouchers: 0, supportingFiles: 0, whtCertificates: 0 }, missingReceiptCount: 0 });
+    assert.deepEqual(await useCase.planBundle(reader, { yearMonth: '2026-10', dateField: 'uploadedAt', branchId: 'b1', expenseIds: ['selection'] }), { fileCount: 1002, partCount: 17, counts: { receipts: 501, substituteReceipts: 0, paymentSlips: 0, vouchers: 0, supportingFiles: 0, whtCertificates: 0, claimForms: 0, recordPacks: 501 }, missingReceiptCount: 0 });
     assert.equal(queries.length, 2);
     for (const query of queries) {
       assert.equal(query.companyId, 'company-1'); assert.deepEqual(query.scopes, reader.scopes);
@@ -1677,13 +1692,14 @@ describe('accountant evidence bundle', () => {
     assert.equal(first.fileName, 'หลักฐาน-ร้าน-2026-10-ชุดที่-2.zip');
     assert.deepEqual([...unzip(first.bytes).keys()], [...unzip(reversed.bytes).keys()]);
     assert.deepEqual(unzip(first.bytes).get('เอกสารค่าใช้จ่าย/EXP-060-1.jpg'), unzip(reversed.bytes).get('เอกสารค่าใช้จ่าย/EXP-060-1.jpg')); // Workbook ZIP timestamps need not match.
-    assert.deepEqual([...unzip(first.bytes).keys()], ['เอกสารค่าใช้จ่าย/EXP-060-1.jpg', 'สารบัญ.xlsx']);
+    assert.deepEqual([...unzip(first.bytes).keys()], ['เอกสารค่าใช้จ่าย/EXP-060-1.jpg', ...Array.from({ length: 59 }, (_, i) => `ชุดเอกสารรายการ/EXP-${String(i).padStart(3, '0')}.pdf`), 'สารบัญ.xlsx']);
     const xml = [...workbookParts(unzip(first.bytes).get('สารบัญ.xlsx')!).values()].join('');
     assert.match(xml, /อยู่ในชุดที่ 1:/);
     const formulas = xml.match(/<f>.*?<\/f>/g) ?? [];
     const fileFormulas = formulas.filter(formula => !formula.includes('&quot;#'));
     assert.ok(fileFormulas.length > 0);
-    for (const formula of fileFormulas) { assert.ok(formula.includes('EXP-060')); assert.ok(!formula.includes('EXP-000')); }
+    for (const formula of fileFormulas.filter(formula => formula.includes('เอกสารค่าใช้จ่าย/'))) { assert.ok(formula.includes('EXP-060')); assert.ok(!formula.includes('EXP-000')); }
+    assert.ok(fileFormulas.some(formula => formula.includes('ชุดเอกสารรายการ/EXP-000.pdf')));
     for (const formula of formulas.filter(formula => formula.includes('&quot;#'))) assert.match(formula, /HYPERLINK\(&quot;#'/);
   });
   it('checks export/read permission and branch scope before planning or downloading', async () => {
@@ -1713,13 +1729,13 @@ describe('accountant evidence bundle', () => {
     });
     const result = await useCase.downloadBundle(reader, { yearMonth: '2026-10', dateField: 'uploadedAt', branchId: 'b1' }, 1);
     const entries = unzip(result.bytes);
-    assert.deepEqual([...entries.keys()], ['เอกสารค่าใช้จ่าย/EXP-1-1.jpg', 'เอกสารค่าใช้จ่าย/EXP-1-2.pdf', 'เอกสารค่าใช้จ่าย/EXP-2-1.jpg', 'เอกสารค่าใช้จ่าย/ยังไม่มีเลขที่-1.jpg', 'เอกสารค่าใช้จ่าย/รายจ่าย_1-1.jpg', 'สารบัญ.xlsx']);
-    assert.deepEqual(reads, ['one', 'two', 'three', 'four', 'five']);
+    assert.deepEqual([...entries.keys()], ['เอกสารค่าใช้จ่าย/EXP-1-1.jpg', 'เอกสารค่าใช้จ่าย/EXP-1-2.pdf', 'เอกสารค่าใช้จ่าย/EXP-2-1.jpg', 'เอกสารค่าใช้จ่าย/ยังไม่มีเลขที่-1.jpg', 'เอกสารค่าใช้จ่าย/รายจ่าย_1-1.jpg', 'ชุดเอกสารรายการ/EXP-1.pdf', 'ชุดเอกสารรายการ/EXP-2.pdf', 'ชุดเอกสารรายการ/ยังไม่มีเลขที่.pdf', 'ชุดเอกสารรายการ/รายจ่าย_1.pdf', 'สารบัญ.xlsx']);
+    assert.deepEqual(reads, ['one', 'two', 'three', 'four', 'five', 'one', 'two', 'three', 'four', 'five', 'one', 'two', 'three', 'four', 'five']);
     assert.equal(entries.get('เอกสารค่าใช้จ่าย/EXP-1-2.pdf')?.toString(), 'two');
     assert.equal(result.fileName, 'หลักฐาน-ร้าน-2026-10.zip');
     assert.equal(audits.length, 1); assert.equal(audits[0].actorUserId, 'user-1');
     assert.equal(audits[0].action, 'expense.accountant_bundle.download');
-    assert.deepEqual(audits[0].metadataJson, { workbook: 'accountant-v2', yearMonth: '2026-10', dateField: 'uploadedAt', branchId: 'b1', part: 1, fileCount: 5, skippedCount: 0 });
+    assert.deepEqual(audits[0].metadataJson, { workbook: 'accountant-v2', yearMonth: '2026-10', dateField: 'uploadedAt', branchId: 'b1', part: 1, fileCount: 9, skippedCount: 0 });
     assert.doesNotMatch([...entries.keys()].join(','), /https?:|objectKey|downloadUrl/);
     // With no month chosen the file is named in Thai like the page's own choice, not with an English word.
     assert.equal((await useCase.downloadBundle(reader, { dateField: 'uploadedAt', branchId: 'b1' }, 1)).fileName, 'หลักฐาน-ร้าน-ทุกเดือน.zip');
@@ -1733,15 +1749,15 @@ describe('accountant evidence bundle', () => {
       return Buffer.from('ok');
     });
     const entries = unzip((await useCase.downloadBundle(reader, {}, 1)).bytes);
-    assert.deepEqual([...entries.keys()], ['เอกสารค่าใช้จ่าย/EXP-1-4.jpg', 'ไฟล์ที่ไม่ได้รวม.txt', 'สารบัญ.xlsx']);
+    assert.deepEqual([...entries.keys()], ['เอกสารค่าใช้จ่าย/EXP-1-4.jpg', 'ชุดเอกสารรายการ/EXP-1.pdf', 'ไฟล์ที่ไม่ได้รวม.txt', 'สารบัญ.xlsx']);
     const manifest = entries.get('ไฟล์ที่ไม่ได้รวม.txt')!.toString();
     assert.match(manifest, /EXP-1.*denied.jpeg.*ไม่มีสิทธิ์เปิดไฟล์/);
     assert.match(manifest, /pending.jpeg.*ไฟล์ยังตรวจสอบไม่เสร็จ/);
     assert.match(manifest, /missing.jpeg.*ไม่พบไฟล์/);
     const xml = [...workbookParts(entries.get('สารบัญ.xlsx')!).values()].join(''); assert.match(xml, /ไม่ได้รวม: ไม่พบไฟล์/);
     for (const formula of xml.match(/<f>.*?<\/f>/g) ?? []) assert.ok(!formula.includes('EXP-1-3'));
-    assert.doesNotMatch(manifest, /private/); assert.deepEqual(reads, ['denied', 'missing', 'ok']);
-    assert.equal(audits[0].metadataJson.fileCount, 1); assert.equal(audits[0].metadataJson.skippedCount, 3);
+    assert.doesNotMatch(manifest, /private/); assert.deepEqual(reads, ['denied', 'missing', 'ok', 'ok', 'ok']);
+    assert.equal(audits[0].metadataJson.fileCount, 2); assert.equal(audits[0].metadataJson.skippedCount, 3);
   });
 });
 
@@ -2285,5 +2301,175 @@ describe('pack v2 workbookProjection integration', () => {
     assert.ok(sheets.get('สรุปรายเดือน')!.some(row => row[0] === 'e-WHT' && row[6] === '1'));
     assert.ok(!sheets.get('ต้องตามเอกสาร')!.some(row => row.join(' ').includes('50 ทวิ')));
     assert.ok(sheets.get('เกี่ยวกับไฟล์นี้')!.some(row => row[1] === 'ไม่มีแถวในแผ่นหัก ณ ที่จ่าย'));
+  });
+});
+
+it('pack v2 resolves local claim providers through the compiled export route', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { resolve } = await import('node:path');
+  const root = resolve(process.cwd(), '../..');
+  const build = spawnSync('bash', [resolve(root, 'scripts/local-proof/heavy.sh'), 'pnpm', '--filter', '@watchdog-bms/api', 'build'], { cwd: root, encoding: 'utf8' });
+  assert.equal(build.status, 0, build.stderr);
+  const script = `
+    require('reflect-metadata');
+    const assert = require('node:assert/strict');
+    const { NestFactory } = require('@nestjs/core');
+    const base = './dist/apps/api/src/';
+    const { AppModule } = require(base + 'app.module');
+    const { ExpenseController } = require(base + 'modules/expenses/presentation/http/expense.controller');
+    const { PreviewReimbursementClaimFormUseCase } = require(base + 'modules/reimbursements/application/use-cases/reimbursement-claim-form.use-case');
+    (async () => {
+      const app = await NestFactory.create(AppModule, { abortOnError: false, logger: false });
+      try {
+        const controller = app.get(ExpenseController);
+        const useCase = controller.accountantPackage;
+        assert.ok(useCase.claimForms instanceof PreviewReimbursementClaimFormUseCase);
+        useCase.prisma.client.company.findUnique = async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null });
+        useCase.repo.listSharedEvidence = async () => ({ rows: [], total: 0, page: 1, pageSize: 500 });
+        const context = { companyId: 'shop', userId: 'actor', requestId: 'test', roles: [], permissions: ['expense.read', 'expense.export'], scopes: {}, authProvider: 'watchdog' };
+        useCase.prisma.client.expensePayment.findMany = async () => [];
+        useCase.prisma.client.whtFilingLine.findMany = async () => [];
+        assert.equal((await controller.planAccountantBundle(context, {})).fileCount, 0);
+        useCase.prisma.client.company.findUnique = async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date('2020-01-01') } });
+        useCase.prisma.client.billingAccount.findMany = async () => [];
+        for (const name of ['billingInvoice', 'billingReceiptGrant', 'packageChangeRequest']) useCase.prisma.client[name].findFirst = async () => null;
+        useCase.prisma.client.salesAttribution.findUnique = async () => null;
+        await assert.rejects(() => controller.planAccountantBundle(context, {}), error => error.getResponse().code === 'FREE_EXPENSE_DRAFTS_ONLY');
+        await assert.rejects(() => controller.planAccountantBundle({ ...context, permissions: ['expense.read'] }, {}), /expense.export/);
+      } finally { await app.close(); }
+      console.log('COMPILED_EXPORT_ROUTE_OK');
+    })().then(() => process.exit(0), error => { console.error(error); process.exit(1); });
+  `;
+  const result = spawnSync(process.execPath, ['-e', script], { cwd: process.cwd(), encoding: 'utf8',
+    env: { ...process.env, APP_ENV: 'local', NODE_ENV: 'test', SERVICE_NAME: 'export-provider-test', S3_BUCKET: 'export-provider-test',
+      DATABASE_URL: 'postgresql://nobody:nobody@127.0.0.1:1/nodb' } });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /COMPILED_EXPORT_ROUTE_OK/);
+});
+
+describe('pack v2 packet sources', () => {
+  const reader = { ...ctx(['expense.export', 'expense.read', 'attachment.read', 'expense.disbursement.read', 'reimbursement.read']), scopes: { branchIds: ['b1'] } };
+  async function pdf(label: string) {
+    const { PDFDocument } = await import('pdf-lib');
+    const document = await PDFDocument.create(); document.addPage().drawText(label);
+    return Buffer.from(await document.save());
+  }
+  async function textPages(bytes: Buffer) {
+    const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const source = { data: new Uint8Array(bytes), isEvalSupported: false, useSystemFonts: true };
+    const task = getDocument(source);
+    try {
+      const document = await task.promise, pages: string[] = [];
+      for (let index = 1; index <= document.numPages; index++) pages.push((await (await document.getPage(index)).getTextContent()).items.map((item: any) => item.str ?? '').join(' '));
+      return pages;
+    } finally { await task.destroy(); }
+  }
+  function fixture(rows: any[], overrides: any = {}, vouchers: any = {}, claims?: any, readBytes?: any) {
+    const entries = rows.map(row => ({ status: 'CONFIRMED', branchId: 'b1', currency: 'THB', expenseDate: new Date('2026-10-01'), uploadedAt: new Date('2026-10-01'),
+      grandTotalAmount: '100', netPayableAmount: '100', paidAmount: '100', outstandingAmount: '0', attachments: [], ...row }));
+    const db = accountantDb({ company: { findUnique: async () => ({ name: 'ร้าน', timezone: 'Asia/Bangkok', status: 'ACTIVE', archivedAt: null, planTerm: null }) },
+      user: { findMany: async () => [] }, branch: { findMany: async () => [], count: async () => 1 },
+      expensePayment: { findMany: async () => [] }, disbursementVoucher: { findMany: async () => [] }, ...overrides });
+    const repo = { listSharedEvidence: async (_: string, query: any) => {
+      const selected = entries.filter(row => !query.expenseIds || query.expenseIds.includes(row.id));
+      return { rows: selected, total: selected.length, page: 1, pageSize: 500 };
+    } };
+    const useCase = new CreateAccountantPackageUseCase(repo as any, { readBytes: readBytes ?? (async () => pdf('RECEIPT')), execute: async () => ({ downloadUrl: '/file', expiresAt: new Date() }) } as any,
+      audit, { client: db } as any, vouchers, {} as any, undefined, claims);
+    return { useCase, db };
+  }
+  it('pack v2 assembles each paid voucher in original line order', async () => {
+    const attachment = (id: string) => ({ id, mimeType: 'application/pdf', status: 'ACTIVE', purpose: 'expense.receipt.primary', byteSize: 100, originalFileName: `${id}.pdf` });
+    const rows = ['A', 'B'].map(id => ({ id, expenseNumber: `EXP-${id}`, attachments: [attachment(id)] }));
+    const voucher = { id: 'v', documentNumber: 'PV-AB', slipAttachmentId: 'shared', lines: [{ expenseId: 'B', expensePaymentId: 'pB', position: 1 }, { expenseId: 'A', expensePaymentId: 'pA', position: 2 }] };
+    const { useCase } = fixture(rows, {
+      disbursementVoucher: { findMany: async (query: any) => { assert.deepEqual(query.select.lines.orderBy, { position: 'asc' }); return [voucher]; } },
+      expensePayment: { findMany: async () => ['A', 'B'].map(id => ({ id: `p${id}`, expenseId: id, paidAt: new Date('2026-10-01'), paidAtConfirmed: true, amount: '100' })) },
+    }, { documentPdf: async () => ({ data: await pdf('VOUCHER') }), supportingFiles: async () => [], slipBytes: async () => ({ data: await pdf('SHARED') }) }, undefined,
+    async (_: any, command: any) => pdf(`RECEIPT-${command.attachmentId}`));
+    const contents = await (useCase as any).bundleContents(reader, {});
+    const packets = contents.files.filter((file: any) => file.kind === 'recordPacks');
+    assert.equal(packets.length, 1); assert.deepEqual(packets[0].expenseIds, ['B', 'A']);
+    const text = await textPages(await packets[0].load());
+    assert.match(text[0]!, /VOUCHER/);
+    assert.ok(text.findIndex(page => page.includes('RECEIPT-B')) < text.findIndex(page => page.includes('RECEIPT-A')));
+    assert.equal(text.filter(page => page.includes('SHARED')).length, 1);
+    const partial = await (useCase as any).bundleContents(reader, { expenseIds: ['A'] });
+    assert.deepEqual(partial.files.filter((file: any) => file.kind === 'recordPacks').map((file: any) => file.fileName), ['ชุดเอกสารรายการ/EXP-A.pdf']);
+    assert.ok(!partial.files.some((file: any) => file.kind === 'vouchers' || file.expenseIds.includes('B')));
+    assert.match(partial.packetNotes.get('A'), /นอกชุดที่เลือก/);
+  });
+  it('pack v2 includes direct and cross-period payment proofs', async () => {
+    const payments = ['09', '10'].map(month => ({ id: `p${month}`, expenseId: 'A', paidAt: new Date(`2026-${month}-01`), paidAtConfirmed: month === '10', amount: '50', paymentMethod: 'CASH' }));
+    const { useCase } = fixture([{ id: 'A', expenseNumber: 'EXP-A' }], {
+      expensePayment: { findMany: async (query: any) => query.where.paidAt ? [payments[1]] : payments },
+      attachmentLink: { findMany: async (query: any) => query.where.targetId.in.map((id: string) => ({ targetId: id, attachment: { id, status: 'ACTIVE', mimeType: 'application/pdf', byteSize: 100, originalFileName: `${id}.pdf` } })) },
+    });
+    const contents = await (useCase as any).bundleContents(reader, { yearMonth: '2026-10' });
+    assert.equal(contents.files.filter((file: any) => file.kind === 'paymentSlips').length, 2);
+    const oldProof = contents.files.find((file: any) => file.paymentId === 'p09');
+    assert.ok(oldProof); assert.equal(oldProof.legacyFileName, undefined);
+    const index = await useCase.execute(reader, { yearMonth: '2026-10' });
+    assert.doesNotMatch(index.indexCsv, /p09/);
+    assert.equal(index.paymentRowCount, 1);
+  });
+  it('pack v2 records generated document refusal safely', async () => {
+    const { ForbiddenException, NotFoundException } = await import('@nestjs/common');
+    const { useCase } = fixture([{ id: 'A', expenseNumber: 'EXP-A' }], {
+      disbursementVoucher: { findMany: async () => [{ id: 'private-voucher', documentNumber: 'PRIVATE-NUMBER', lines: [{ expenseId: 'A' }] }] },
+    }, { documentPdf: async () => { throw new ForbiddenException('PRIVATE-NAME'); }, supportingFiles: async () => { throw new NotFoundException('PRIVATE-FILE'); } });
+    const contents = await (useCase as any).bundleContents(reader, {});
+    const refused = contents.files.filter((file: any) => file.skippedReason);
+    assert.equal(refused.length, 2);
+    assert.doesNotMatch(JSON.stringify(refused), /PRIVATE|private-voucher/);
+    const result = await useCase.downloadBundle(reader, {}, 1);
+    assert.doesNotMatch(result.bytes.toString(), /PRIVATE-NAME|PRIVATE-NUMBER|PRIVATE-FILE/);
+    assert.match(result.bytes.toString(), /ไม่มีสิทธิ์เปิดเอกสารประกอบรายการนี้/);
+  });
+  it('pack v2 enforces actual part bytes after a source changes', async () => {
+    const bytes = Buffer.alloc(31_000_000);
+    const { useCase } = fixture([{ id: 'A', expenseNumber: 'EXP-A', attachments: [1, 2].map(index => ({
+      id: `receipt-${index}`, status: 'ACTIVE', mimeType: 'image/jpeg', purpose: 'expense.receipt.primary', byteSize: 1, originalFileName: `${index}.jpg`,
+    })) }], {}, {}, undefined, async () => bytes);
+    const downloaded = await useCase.downloadBundle(reader, {}, 1);
+    assert.ok(downloaded.bytes.length < 60_000_000, 'actual part data must remain bounded after sizing');
+  });
+  it('pack v2 sizes all file kinds sequentially at part boundaries', async () => {
+    const image = await sharp({ create: { width: 600, height: 900, channels: 3, background: '#eef' } }).jpeg().toBuffer();
+    const rows = Array.from({ length: 20 }, (_, index) => ({ id: `e${index}`, expenseNumber: `EXP-${String(index).padStart(3, '0')}`,
+      attachments: [0, 1].map(number => ({ id: `${index}-${number}`, purpose: 'expense.receipt.primary', mimeType: 'image/jpeg', status: 'ACTIVE', byteSize: image.length, originalFileName: `${index}-${number}.jpg` })) }));
+    let active = 0, maximum = 0;
+    const { useCase } = fixture(rows, {}, {}, undefined, async () => {
+      active++; maximum = Math.max(maximum, active); await Promise.resolve(); active--; return image;
+    });
+    const start = performance.now();
+    const plan = await useCase.planBundle(reader, {});
+    const planned = performance.now();
+    assert.equal(plan.fileCount, 60); assert.equal(plan.partCount, 1); assert.equal(plan.counts.recordPacks, 20);
+    const downloaded = await useCase.downloadBundle(reader, {}, 1);
+    assert.ok(downloaded.bytes.length > image.length * 40);
+    assert.equal(maximum, 1);
+    console.log('PACK_V2_60_FILE_TIMING', JSON.stringify({ planMs: Math.round(planned - start), downloadMs: Math.round(performance.now() - planned), zipBytes: downloaded.bytes.length, maxRssKiB: process.resourceUsage().maxRSS }));
+  });
+  it('pack v2 deduplicates current signed claim assets', async () => {
+    const { PreviewReimbursementClaimFormUseCase } = await import('../../../reimbursements/application/use-cases/reimbursement-claim-form.use-case');
+    const row: any = { id: 'claim', branchId: 'b1', requesterUserId: reader.userId, status: 'PAID', requestNo: 'RB-1', financeReviewStatus: 'NOT_REQUIRED',
+      lines: [{ id: 'lA', linkedExpenseId: 'original-A' }, { id: 'lB', linkedExpenseId: 'original-B' }], claimSignatures: [] };
+    let signed = true;
+    const claims = new PreviewReimbursementClaimFormUseCase({ findRequestById: async () => row, listClaimProjections: async () => ['A', 'B'].map(id => ({ id, sourceReimbursementLineId: `l${id}`, status: 'CONFIRMED', branchId: 'b1' })), listSignedClaimFormCopies: async () => signed ? [{ attachmentId: 'paper', uploadedAt: new Date(), acknowledged: true }] : [] } as any, {} as any, audit, {} as any);
+    const { useCase } = fixture(['A', 'B'].map(id => ({ id, expenseNumber: `EXP-${id}`, sourceReimbursementRequestId: 'claim', sourceReimbursementLineId: `l${id}` })),
+      { attachmentObject: { findFirst: async () => ({ mimeType: 'application/pdf' }) } }, {}, claims, async () => pdf('SIGNED-CLAIM'));
+    const contents = await (useCase as any).bundleContents(reader, {});
+    assert.equal(contents.counts.claimForms, 1); assert.equal(contents.counts.recordPacks, 2);
+    for (const packet of contents.files.filter((file: any) => file.kind === 'recordPacks')) assert.ok((await textPages(await packet.load())).some(page => page.includes('SIGNED-CLAIM')));
+    const partial = await (useCase as any).bundleContents(reader, { expenseIds: ['A'] });
+    assert.equal(partial.counts.claimForms, 0); assert.match(partial.claimProblems.get('A').message, /นอกชุดที่เลือก/);
+    signed = false;
+    const unsigned = await (useCase as any).bundleContents(reader, {});
+    assert.equal(unsigned.claimProblems.get('A').key, 'CLAIM_UNSIGNED');
+    signed = true;
+    const denied = await (useCase as any).bundleContents({ ...reader, permissions: reader.permissions.filter(permission => permission !== 'reimbursement.read') }, {});
+    assert.equal(denied.counts.claimForms, 0);
+    assert.equal(denied.claimProblems.get('A').message, 'สิทธิ์นี้ตรวจใบเบิกต้นทางไม่ได้');
   });
 });

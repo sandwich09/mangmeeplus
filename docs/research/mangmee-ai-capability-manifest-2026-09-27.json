@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "91e25c14bc176fab685364c4627628d39c0d4956",
+  "sourceRevision": "6f1428578d4647593c2cd4223bb8b3e78fa4fbbe",
   "checkoutBranch": "land/expense-goal-20261104",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -10259,6 +10259,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-07T09:39:29.472Z",
+  "generatedAt": "2026-11-07T11:01:36.030Z",
   "manifestDigest": "1556959c78c481863ae94f88e167abe12e4a0c0b1345be31e2a9a617001586b8"
 }

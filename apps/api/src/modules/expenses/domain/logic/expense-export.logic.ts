@@ -265,8 +265,8 @@ export function yearMonthBucket(isoDate: string): string {
 }
 
 export type AccountantWorkbookFile = {
-  expenseNumber: string; kind: 'receipts' | 'substituteReceipts' | 'paymentSlips' | 'vouchers' | 'supportingFiles' | 'whtCertificates';
-  attachmentId?: string; expenseIds?: readonly string[]; path: string; part: number; version?: 'current' | 'superseded'; replacedBy?: string; skippedReason?: string;
+  expenseNumber: string; kind: 'receipts' | 'substituteReceipts' | 'paymentSlips' | 'vouchers' | 'supportingFiles' | 'whtCertificates' | 'claimForms' | 'recordPacks';
+  attachmentId?: string; expenseIds?: readonly string[]; path: string; part: number; version?: 'current' | 'superseded'; replacedBy?: string; skippedReason?: string; referenceReason?: string;
 };
 export type AccountantWorkbookRow = Partial<Record<typeof ACCOUNTANT_WORKBOOK_COLUMNS[number] | 'shop_branch', string | number | null>> & {
   dateStatus?: ReturnType<typeof expenseDocumentDateStatus>; lastPaidAtConfirmed?: boolean; primaryFile?: AccountantWorkbookFile;
@@ -297,9 +297,10 @@ export function primaryFileCell(file: AccountantWorkbookFile | undefined, curren
   if (!file) return 'ไม่มีไฟล์';
   if (file.skippedReason) return `ไม่ได้รวม: ${file.skippedReason}`;
   if (!file.path || /^(?:[a-z]+:|[/\\])|(?:^|[/\\])\.\.(?:[/\\]|$)/i.test(file.path)) return 'ไม่มีไฟล์';
-  if (file.part !== currentPart) return `อยู่ในชุดที่ ${file.part}: ${file.path}`;
+  const display = file.path + (file.referenceReason ? ` · ${file.referenceReason}` : '');
+  if (file.part !== currentPart) return `อยู่ในชุดที่ ${file.part}: ${display}`;
   const escaped = file.path.replace(/"/g, '""');
-  return { value: file.path, formula: `HYPERLINK("${escaped}","${escaped}")` };
+  return { value: display, formula: `HYPERLINK("${escaped}","${display.replace(/"/g, '""')}")` };
 }
 export function paidAtLabel(paidAt: string | Date | null | undefined, confirmed = true): string {
   if (!paidAt) return '';
@@ -327,6 +328,7 @@ export function buildAccountantWorkbook(input: {
   });
   const expenseColumns: string[] = ACCOUNTANT_WORKBOOK_COLUMNS.filter(column => column !== 'primary_file' || bundled);
   if (visible.shopBranch) expenseColumns.splice(2, 0, 'shop_branch');
+  if (bundled) expenseColumns.push('record_files');
   const expenseLabels = { ...ACCOUNTANT_WORKBOOK_COLUMN_LABELS, ...ACCOUNTANT_WORKBOOK_OPTIONAL_COLUMN_LABELS };
   const ordered = rows.slice().sort((a, b) => text(a.document_date).localeCompare(text(b.document_date)) || text(a.expense_number).localeCompare(text(b.expense_number)));
   const orderedPayments = payments.slice().sort((a, b) => text(a.paid_at).localeCompare(text(b.paid_at)));
@@ -363,7 +365,11 @@ export function buildAccountantWorkbook(input: {
     if (column === 'expense_status') return label(value, EXPENSE_STATUS_LABELS);
     if (column === 'input_vat_right') return row.inputVatRightLabel ?? label(value, INPUT_VAT_RIGHT_LABELS);
     if (column === 'tax_evidence_status') return label(value, TAX_EVIDENCE_STATUS_LABELS);
-    if (column === 'notes') return [...new Set([accountantNotes({ dateStatus: row.dateStatus }), text(value)].filter(Boolean))].join(' · ');
+    if (column === 'notes') {
+      const packets = files?.filter(file => file.kind === 'recordPacks' && file.expenseIds?.includes(row.sourceExpenseId ?? '')) ?? [];
+      return [...new Set([accountantNotes({ dateStatus: row.dateStatus }), text(value), bundled && packets.length > 1 ? `มีชุดเอกสารรายการ ${packets.length} ชุด ดูแผ่นไฟล์ทั้งหมด` : ''].filter(Boolean))].join(' · ');
+    }
+    if (column === 'record_files') return primaryFileCell(files?.filter(file => file.kind === 'recordPacks' && file.expenseIds?.includes(row.sourceExpenseId ?? '')).sort((a, b) => a.path.localeCompare(b.path))[0], part);
     if (column === 'primary_file') return primaryFileCell(row.primaryFile ?? files?.find(file => file.expenseNumber === row.expense_number && ['receipts', 'substituteReceipts'].includes(file.kind) && file.version !== 'superseded'), part);
     return text(value);
   })))];
@@ -398,7 +404,7 @@ export function buildAccountantWorkbook(input: {
   if (bundled && files?.length) {
     const multiple = new Set(files.map(file => file.part)).size > 1;
     const columns = ACCOUNTANT_FILES_SHEET_COLUMNS.filter(column => column !== 'part' || multiple);
-    const kinds = { receipts: 'เอกสารค่าใช้จ่าย', substituteReceipts: 'ใบรับรองแทนใบเสร็จ', paymentSlips: 'หลักฐานการจ่าย', vouchers: 'ใบสำคัญจ่าย', supportingFiles: 'เอกสารประกอบการจ่าย', whtCertificates: 'หนังสือรับรอง 50 ทวิ' };
+    const kinds = { receipts: 'เอกสารค่าใช้จ่าย', substituteReceipts: 'ใบรับรองแทนใบเสร็จ', paymentSlips: 'หลักฐานการจ่าย', vouchers: 'ใบสำคัญจ่าย', supportingFiles: 'เอกสารประกอบการจ่าย', whtCertificates: 'หนังสือรับรอง 50 ทวิ', claimForms: 'ใบเบิก', recordPacks: 'ชุดเอกสารรายการ' };
     sheets.push(sheet(ACCOUNTANT_WORKBOOK_SHEETS.files, columns, ACCOUNTANT_FILES_SHEET_COLUMN_LABELS, files.map(file => {
       const values: Record<string, WorkbookCell> = { expense_number: file.expenseNumber || 'ยังไม่มีเลขที่', kind: kinds[file.kind],
         version: file.kind !== 'substituteReceipts' ? '' : file.version === 'superseded' ? file.replacedBy ? 'ฉบับเดิม (มีฉบับใหม่แทนแล้ว)' : 'ยกเลิกแล้ว (ไม่มีฉบับใหม่)' : 'ฉบับที่ใช้อยู่',

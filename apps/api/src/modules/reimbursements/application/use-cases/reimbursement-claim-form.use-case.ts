@@ -13,6 +13,7 @@ import { hasPayoutSnapshot, openPayoutAccountNumber } from '../../domain/logic/p
 import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import {
   claimFormLayout,
+  documentSignedVia,
   renderReimbursementClaimFormSvg,
   renderReimbursementClaimFormPages,
   type ClaimFormPayout,
@@ -21,6 +22,9 @@ import {
 } from '../../domain/logic/claim-form.logic';
 import { assertCanReadRequest, claimPayoutRevealGroup } from './reimbursement-request.use-case';
 import { loadOwnedClaimSignature } from './reimbursement-claim-signature.use-case';
+import { PDFDocument } from 'pdf-lib';
+import sharp from 'sharp';
+import { renderSubstituteReceiptPdf, SUBSTITUTE_RECEIPT_PDF_LIMITS } from '../../../expenses/domain/logic/substitute-receipt-pdf.logic';
 
 /**
  * Preview of the printable ใบเบิกค่าใช้จ่าย. Rendered on demand for whoever asked, returned inline
@@ -36,6 +40,43 @@ export class PreviewReimbursementClaimFormUseCase {
     private readonly audit: AuditService,
     private readonly config: AppConfigService,
   ) {}
+
+  async executeSignedForExport(ctx: RequestContext, requestId: string, selectedExpenseIds: readonly string[],
+    options: { render?: boolean; sourceLineIds?: ReadonlyMap<string, string | null>; exportedAt?: Date } = {}) {
+    const { sourceLineIds } = options;
+    const req = await this.repo.findRequestById(ctx.companyId, requestId, true);
+    if (!req) throw new NotFoundException();
+    await assertCanReadRequest(ctx, req, this.repo);
+    const unavailable = (message: string) => ({ problem: { key: 'CLAIM_UNAVAILABLE' as const, message } });
+    const lines = req.lines ?? [];
+    const projections = await this.repo.listClaimProjections(ctx.companyId, req.id);
+    const selected = new Set(selectedExpenseIds);
+    const matched = projections.filter(projection => selected.has(projection.id) && projection.status !== 'VOIDED'
+      && (projection.branchId ?? null) === (req.branchId ?? null)
+      && lines.some(line => line.id === projection.sourceReimbursementLineId)
+      && (!sourceLineIds || sourceLineIds.get(projection.id) === projection.sourceReimbursementLineId));
+    if (matched.length !== selected.size) return unavailable('เปิดใบเบิกที่เซ็นแล้วไม่ได้');
+    if (!lines.length || lines.some(line => !matched.some(projection => projection.sourceReimbursementLineId === line.id))) {
+      return unavailable('ใบเบิกรวมรายการนอกชุดที่เลือก จึงไม่ได้รวมใบนี้');
+    }
+    if (req.status === 'DRAFT' || req.status === 'CANCELLED' || !req.requestNo) return unavailable('เปิดใบเบิกที่เซ็นแล้วไม่ได้');
+    const copies = (await this.repo.listSignedClaimFormCopies(ctx.companyId, req.id))
+      .filter(copy => copy.acknowledged && !copy.beforePayoutCorrection)
+      .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime() || a.attachmentId.localeCompare(b.attachmentId));
+    const signed = documentSignedVia(req, copies.length > 0);
+    if (copies.length) return { requestNo: req.requestNo, attachmentId: copies[0]!.attachmentId };
+    if (signed !== 'DIGITAL') return { problem: { key: 'CLAIM_UNSIGNED' as const, message: 'ใบเบิกยังเซ็นไม่ครบ' } };
+    if (options.render === false) return { requestNo: req.requestNo, mimeType: 'application/pdf' };
+    const snapshot = await this.withAccountNumber(ctx, req, await this.buildSnapshot(ctx.companyId, req, true));
+    const pdf = await PDFDocument.create();
+    for (const svg of renderReimbursementClaimFormPages(snapshot)) {
+      const source = await PDFDocument.load(await renderSubstituteReceiptPdf(svg, req.requestNo, { omitPageFooter: true }));
+      for (const page of await pdf.copyPages(source, source.getPageIndices())) pdf.addPage(page);
+    }
+    const instant = options.exportedAt ?? new Date();
+    pdf.setCreationDate(instant); pdf.setModificationDate(instant);
+    return { requestNo: req.requestNo, mimeType: 'application/pdf', data: Buffer.from(await pdf.save()) };
+  }
 
   async execute(ctx: RequestContext, requestId: string): Promise<ReimbursementClaimFormPreview> {
     const req = await this.repo.findRequestById(ctx.companyId, requestId, true);
@@ -88,7 +129,7 @@ export class PreviewReimbursementClaimFormUseCase {
     return { ...snapshot, payout: { ...payout, accountNumber: openPayoutAccountNumber(accountNumberEncrypted, this.config.credentialEncryptionKey) } };
   }
 
-  private async buildSnapshot(companyId: string, req: ReimbursementRequestRecord): Promise<ReimbursementClaimFormSnapshot> {
+  private async buildSnapshot(companyId: string, req: ReimbursementRequestRecord, verifySignatureImages = false): Promise<ReimbursementClaimFormSnapshot> {
     const steps = req.approvalSteps ?? [];
     const payments = req.payments ?? [];
     const lines = req.lines ?? [];
@@ -123,7 +164,7 @@ export class PreviewReimbursementClaimFormUseCase {
         payment?.paidByUserId,
         claimPayout?.verifiedByUserId,
       ].filter((id): id is string => !!id)),
-      this.loadSignatureImages(companyId, req.id, req.claimSignatures ?? []),
+      this.loadSignatureImages(companyId, req.id, req.claimSignatures ?? [], verifySignatureImages),
       // The slips of the payment the form prints, read the way the claim page reads them.
       payment ? this.repo.listPaymentSlips(companyId, [payment.id]) : undefined,
       // The account that payment was confirmed into, from the version the payment itself stored.
@@ -211,6 +252,7 @@ export class PreviewReimbursementClaimFormUseCase {
     companyId: string,
     requestId: string,
     signatures: ReimbursementClaimSignatureRecord[],
+    verifyRenderable = false,
   ): Promise<Partial<Record<ReimbursementClaimSignatureRole, string>>> {
     const loaded: [ReimbursementClaimSignatureRole, string][] = [];
     for (const signature of signatures) {
@@ -219,6 +261,7 @@ export class PreviewReimbursementClaimFormUseCase {
           this.repo, this.storage, companyId, signature.signatureAttachmentId,
           signature.signedByUserId, requestId, signature.role,
         );
+        if (verifyRenderable) await sharp(Buffer.from(image.dataUrl.split(',')[1]!, 'base64'), { limitInputPixels: SUBSTITUTE_RECEIPT_PDF_LIMITS.maxRasterPixels }).raw().toBuffer();
         loaded.push([signature.role, image.dataUrl]);
       } catch (error) {
         throw new UnprocessableEntityException({

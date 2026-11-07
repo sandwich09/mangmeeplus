@@ -1,3 +1,5 @@
+import { PrismaReimbursementRepository } from '../reimbursements/infrastructure/prisma-reimbursement.repository';
+import { PreviewReimbursementClaimFormUseCase } from '../reimbursements/application/use-cases/reimbursement-claim-form.use-case';
 import { GetExpenseEWhtSettingUseCase, UpdateExpenseEWhtSettingUseCase } from './application/use-cases/expense-e-wht-setting.use-case';
 import { ExpensePaymentSlipUploadUseCase } from './application/use-cases/expense-upload.use-case';
 import { Module } from '@nestjs/common';
@@ -143,6 +145,8 @@ import { ProcurementModule } from '../procurement/procurement.module';
   // read as an expense id.
   controllers: [ExpenseCaptureController, ExpenseCaptureReadInternalController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController, DisbursementVoucherController],
   providers: [
+    PrismaReimbursementRepository,
+    PreviewReimbursementClaimFormUseCase,
     ExpensePaymentSlipUploadUseCase,
     LinkLinePaymentEvidenceUseCase,
     ReadDisbursementVoucherSourcesUseCase,

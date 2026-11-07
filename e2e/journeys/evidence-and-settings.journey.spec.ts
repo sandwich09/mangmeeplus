@@ -63,6 +63,7 @@ function workbookSheets(buffer: Buffer, bundled = false, partCount = 1) {
       if (data[0]!.includes('สาขาของร้าน')) expected.splice(2, 0, 'สาขาของร้าน');
       if (bundled) expected.push('ไฟล์เอกสาร');
       expected.push('วิธีนำส่งภาษีหัก ณ ที่จ่าย');
+      if (bundled) expected.push('ชุดเอกสารรายการ');
     }
     if (name === 'การจ่าย' && bundled) expected.push('ไฟล์หลักฐานการจ่าย');
     expect(data[0]).toEqual(expected);
@@ -246,14 +247,22 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     const bundles = main.getByRole('button', { name: /^ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี( ชุดที่ \d+ จาก \d+)?$/ });
     await expect(bundles.first()).toBeEnabled(AFTER_PRESS);
     const count = await bundles.count();
+    const packetNames: string[] = [];
     for (let index = 0; index < count; index++) {
       const bundle = await pressForDownloadBuffer(owner, () => bundles.nth(index).click(), 120_000);
       expect(bundle.name).toMatch(/\.zip$/);
       const files = unzip(bundle.buffer);
       expect(files.has('สารบัญ.xlsx')).toBe(true);
       for (const name of files.keys()) expect(name).not.toMatch(/c[a-z0-9]{24}/i);
-      workbookSheets(files.get('สารบัญ.xlsx')!, true, count);
+      const bundledSheets = workbookSheets(files.get('สารบัญ.xlsx')!, true, count);
+      const selectedRow = bundledSheets.get('รายการค่าใช้จ่าย')!.find(row => row.includes(expense.expenseNumber));
+      expect(selectedRow?.at(-1)).toContain('ชุดเอกสารรายการ/');
+      for (const [name, bytes] of files) if (name.startsWith('ชุดเอกสารรายการ/')) {
+        expect(bytes.subarray(0, 4).toString()).toBe('%PDF');
+        packetNames.push(name);
+      }
     }
+    expect(packetNames).toContain(`ชุดเอกสารรายการ/${expense.expenseNumber}.pdf`);
     await chooseThemedOption(owner, main.getByRole('combobox', { name: 'รูปแบบไฟล์', exact: true }), 'ไฟล์แยกตามหมวด');
     const journal = await pressForDownloadBuffer(owner, () => excel.click());
     expect(journal.name).toMatch(/^สมุดรายวันซื้อ-.*\.xlsx$/);

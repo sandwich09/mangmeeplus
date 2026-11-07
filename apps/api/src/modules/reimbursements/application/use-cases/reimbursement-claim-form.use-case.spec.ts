@@ -54,11 +54,13 @@ const signatureRow = (role: string, userId: string, id = `sig-${role}`) => ({
 
 /** Smallest bytes that pass the PNG magic-byte check. */
 const PNG_BYTES = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from('signature')]);
+const VALID_PNG_BYTES = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEElEQVR4nGNgYGD4D8UQBgAd9AP9yOH2qAAAAABJRU5ErkJggg==', 'base64');
 
 function fakeRepo(row: any | null, slips: Record<string, { attachmentId: string; attachedAt: Date }[]> = {}) {
   const calls = { nameLookups: [] as string[][], signatureLookups: [] as any[], slipLookups: [] as string[][] };
   const repo = {
     findRequestById: async (_companyId: string, _id: string, _withRelations?: boolean) => row,
+    listClaimProjections: async () => (row?.lines ?? []).map((line: any, index: number) => ({ id: `e${index}`, sourceReimbursementLineId: line.id, status: 'CONFIRMED', branchId: row.branchId })),
     // No signed-copy reader on purpose: the printed form never depends on the scans attached back.
     listPaymentSlips: async (_companyId: string, paymentIds: string[]) => {
       calls.slipLookups.push(paymentIds);
@@ -839,6 +841,26 @@ describe('the receiving account on the printed claim form', () => {
     }
   });
 
+  it('signed export preserves audited account reveal and signature failure ordering', async () => {
+    const w = world({ claimSignatures: [signatureRow('REQUESTER', 'staff-1'), signatureRow('APPROVER', 'mgr-1')] });
+    w.claim.lines.forEach((line: any, index: number) => line.linkedExpenseId = `original-${index}`);
+    w.repo.listSignedClaimFormCopies = async () => [];
+    const trail = { logOrThrow: async (entry: any) => { w.events.push('audit'); w.audits.push(entry); } } as any;
+    const config = { get credentialEncryptionKey() { w.events.push('key'); return key; } } as any;
+    const exporter = new PreviewReimbursementClaimFormUseCase(w.repo, fakeStorage(VALID_PNG_BYTES), trail, config);
+    const result = await exporter.executeSignedForExport(requester, 'rb-1', ['e0', 'e1']);
+    assert.ok('data' in result && result.data);
+    assert.deepEqual(w.events, ['audit', 'key']);
+    assert.equal(w.audits[0].metadataJson.channel, 'CLAIM_FORM_PRINT');
+    await exporter.executeSignedForExport(auditor, 'rb-1', ['e0', 'e1']);
+    assert.equal(w.audits.length, 1);
+    w.events.length = 0;
+    await assert.rejects(() => new PreviewReimbursementClaimFormUseCase(w.repo, fakeStorage(Buffer.from('broken signature')), trail, config).executeSignedForExport(requester, 'rb-1', ['e0', 'e1']));
+    assert.deepEqual(w.events, []);
+    await assert.rejects(() => new PreviewReimbursementClaimFormUseCase(w.repo, fakeStorage(PNG_BYTES), trail, config).executeSignedForExport(requester, 'rb-1', ['e0', 'e1']));
+    assert.deepEqual(w.events, []);
+  });
+
   it('writes no row for a print that fails before it is rendered', async () => {
     // A stored signature that cannot be read fails the print (422) for everyone, the requester included.
     const { repo, audits, events } = world({ claimSignatures: [signatureRow('REQUESTER', 'staff-1')] });
@@ -849,4 +871,55 @@ describe('the receiving account on the printed claim form', () => {
     assert.equal(error.getStatus(), 422);
     assert.deepEqual([audits, events], [[], []]);
   });
+});
+
+describe('signed accountant claim export', () => {
+  it('signed export reuses claim completeness scope and account reveal rules', async () => {
+    const row = request(); row.lines.forEach((line: any, index: number) => line.linkedExpenseId = `original-${index}`);
+    const { repo } = fakeRepo(row);
+    repo.listSignedClaimFormCopies = async () => [];
+    const useCase = previewUseCase(repo, fakeStorage(VALID_PNG_BYTES));
+    assert.equal((await (useCase as any).executeSignedForExport(ctx(), row.id, ['e0', 'e1'])).problem.key, 'CLAIM_UNSIGNED');
+    await assert.rejects(() => (useCase as any).executeSignedForExport(ctx({ scopes: { branchIds: ['other'] } }), row.id, ['e0', 'e1']));
+    repo.listSignedClaimFormCopies = async () => [
+      { attachmentId: 'old', acknowledged: false, uploadedAt: new Date('2026-11-02') },
+      { attachmentId: 'current', acknowledged: true, uploadedAt: new Date('2026-11-01') },
+    ];
+    row.claimSignatures = [signatureRow('REQUESTER', 'staff-1')];
+    const paper = await (useCase as any).executeSignedForExport(ctx(), row.id, ['e0', 'e1']);
+    assert.equal(paper.attachmentId, 'current');
+    assert.equal((await (useCase as any).executeSignedForExport(ctx(), row.id, ['e0'])).problem.message, 'ใบเบิกรวมรายการนอกชุดที่เลือก จึงไม่ได้รวมใบนี้');
+    repo.listSignedClaimFormCopies = async () => [];
+    row.approvalPolicySnapshotJson = { schemaVersion: 1, policyId: 'p', policyVersion: '1', approvalRequiredFromAmount: '1000.00', requiresApproval: false, route: null, allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: false, duplicatePolicy: 'WARN', financeReviewRequired: false };
+    const digital = await (useCase as any).executeSignedForExport(ctx(), row.id, ['e0', 'e1']);
+    assert.equal(digital.mimeType, 'application/pdf');
+    assert.ok(digital.data.subarray(0, 4).equals(Buffer.from('%PDF')));
+  });
+});
+
+it('signed export respects paper declarations and every existing digital layout', async () => {
+  const row = request(); row.lines.forEach((line: any, index: number) => line.linkedExpenseId = `original-${index}`);
+  const { repo } = fakeRepo(row);
+  repo.listSignedClaimFormCopies = async () => [];
+  const useCase = previewUseCase(repo);
+  for (const [roles, finance, complete] of [
+    [['REQUESTER'], 'NOT_REQUIRED', false],
+    [['REQUESTER', 'APPROVER'], 'NOT_REQUIRED', true],
+    [['REQUESTER', 'APPROVER', 'PAYER'], 'APPROVED_FOR_PAYMENT', false],
+    [['REQUESTER', 'APPROVER', 'PAYER', 'FINANCE_REVIEW'], 'APPROVED_FOR_PAYMENT', true],
+    [['REQUESTER', 'APPROVER', 'PAYER'], 'NOT_REQUIRED', true],
+  ] as const) {
+    row.claimSignatures = roles.map(role => signatureRow(role, 'staff-1')); row.financeReviewStatus = finance;
+    const result = await useCase.executeSignedForExport(ctx(), row.id, ['e0', 'e1'], { render: false });
+    assert.equal(!result.problem, complete, roles.join(','));
+  }
+  repo.listSignedClaimFormCopies = async () => [
+    { attachmentId: 'b', acknowledged: true, uploadedAt: new Date('2026-11-01') },
+    { attachmentId: 'a', acknowledged: true, uploadedAt: new Date('2026-11-01') },
+    { attachmentId: 'superseded', acknowledged: true, beforePayoutCorrection: true, uploadedAt: new Date('2026-11-02') },
+  ];
+  const paper = await useCase.executeSignedForExport(ctx(), row.id, ['e0', 'e1']);
+  assert.ok('attachmentId' in paper);
+  assert.equal(paper.attachmentId, 'a');
+  assert.equal((await useCase.executeSignedForExport(ctx(), row.id, ['e0', 'e1'], { sourceLineIds: new Map([['e0', 'wrong'], ['e1', 'l-1']]) })).problem?.key, 'CLAIM_UNAVAILABLE');
 });

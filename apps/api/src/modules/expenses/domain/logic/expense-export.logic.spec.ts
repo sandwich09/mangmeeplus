@@ -643,7 +643,7 @@ describe('pack v2 sheets', () => {
   const context: any = { company: { registeredName: 'ร้านจดทะเบียน', taxId: '0105555555555' },
     branches: [{ id: 'b1', name: 'สำนักงานใหญ่', taxBranchCode: '00000', isVatEstablishment: true }],
     registrationFacts: [{ id: 'registered', status: 'REGISTERED', effectiveFrom: '2026-01-01', effectiveTo: null, supersededAt: null }] };
-  const build = (sources: any[], extra: Record<string, unknown> = {}) => buildAccountantWorkbook({ rows: sources.map(s => ({ expense_number: s.expenseNumber,
+  const build = (sources: any[], extra: Record<string, unknown> = {}) => buildAccountantWorkbook({ rows: sources.map(s => ({ sourceExpenseId: s.id, expense_number: s.expenseNumber,
     document_date: s.expenseDate, currency: s.currency, taxable_amount: s.taxableAmount, vat_amount: s.vatAmount, grand_total_amount: s.grandTotalAmount,
     wht_amount: s.whtAmount, net_payable_amount: s.netPayableAmount, paid_amount: s.paidAmount, outstanding_amount: s.outstandingAmount })),
     payments: [], withholding: [], visible: { certificates: true }, about: {}, sources, ...context, ...extra } as any);
@@ -700,6 +700,21 @@ describe('pack v2 sheets', () => {
     assert.ok(expenseRows.some(row => row.includes('สกุลเงินอื่น (ZZZ)')));
   });
 
+  it('pack v2 cover and packet links preserve one expense money row', () => {
+    const files = ['Z', 'A'].map((number, index) => ({ kind: 'recordPacks', expenseNumber: 'EXP-A', expenseIds: ['a'], path: `ชุดเอกสารรายการ/${number}.pdf`, part: index + 1 }));
+    const file = build([source()], { files, part: 2 });
+    const rows = packV2Sheet(file, 'รายการค่าใช้จ่าย');
+    assert.equal(rows.length, 2);
+    assert.equal(rows[1]![rows[0]!.indexOf('ยอดรวมตามเอกสาร')], '321.01');
+    assert.equal(rows[0]!.at(-1), 'ชุดเอกสารรายการ');
+    assert.match(exportedSheet(file), /HYPERLINK\(&quot;ชุดเอกสารรายการ\/A.pdf/);
+    assert.ok(rows.flat().some(value => value.includes('มีชุดเอกสารรายการ 2 ชุด')));
+    const standalone = packV2Sheet(build([source()], { files }), 'รายการค่าใช้จ่าย');
+    assert.ok(!standalone[0]!.includes('ชุดเอกสารรายการ'));
+    assert.ok(!standalone.flat().some(value => value.includes('มีชุดเอกสารรายการ 2 ชุด')));
+    assert.ok(packV2Sheet(build([source()], { files, part: 1 }), 'รายการค่าใช้จ่าย').flat().some(value => value === 'อยู่ในชุดที่ 2: ชุดเอกสารรายการ/A.pdf'));
+  });
+
   it('pack v2 preserves claim problem keys for the P2 reader', async () => {
     const logic: any = await import('./expense-export.logic');
     for (const key of ['CLAIM_UNSIGNED', 'CLAIM_UNAVAILABLE']) {
@@ -743,5 +758,69 @@ describe('pack v2 sheets', () => {
       const facts = status === 'UNKNOWN' ? [] : [{ ...context.registrationFacts[0], status }];
       assert.ok(packV2Sheet(build([source()], { registrationFacts: facts }), 'รายงานภาษีซื้อ').flat().includes(message));
     }
+  });
+});
+
+describe('pack v2 record PDF', () => {
+  it('pack v2 prints stored cover amounts without losing decimal precision', async () => {
+    const { recordMoney } = await import('./expense-record-pdf.logic');
+    assert.equal(recordMoney('99999999999999.9850'), '99,999,999,999,999.99');
+    assert.equal(recordMoney('21.0050'), '21.01');
+    assert.equal(recordMoney('-1.0050'), '-1.01');
+  });
+
+  it('pack v2 preserves protected originals and reports rejected appendices', async () => {
+    const { PDFDocument, PDFName, PDFHexString } = await import('pdf-lib');
+    const { createHash } = await import('node:crypto');
+    const plain = await PDFDocument.create(); plain.addPage();
+    const signed = await PDFDocument.create(); signed.addPage();
+    signed.context.register(signed.context.obj({ Type: 'Sig', ByteRange: [0, 10, 20, 30], Contents: PDFHexString.of('abcd') }));
+    signed.catalog.set(PDFName.of('Perms'), signed.context.obj({ DocMDP: signed.context.obj({ Type: 'Sig' }) }));
+    const embedded = await PDFDocument.create(); embedded.addPage(); await embedded.attach(Buffer.from('payload'), 'signed.xml');
+    const buffers = [Buffer.from(await plain.save()), Buffer.from(await signed.save()), Buffer.from(await embedded.save()), Buffer.from('%PDF-1.7 broken')];
+    // Detached CMS signature, generated and verified with OpenSSL over the fixture's actual ByteRange.
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const signedFixture = readFileSync(join(__dirname, 'expense-record-signed.fixture.pdf'));
+    buffers.push(signedFixture, signedFixture);
+    const hashes = buffers.map(bytes => createHash('sha256').update(bytes).digest('hex'));
+    const { buildExpenseRecordPdf } = await import('./expense-record-pdf.logic');
+    const result = await buildExpenseRecordPdf({ cover: ['EXP-1'], exportedAt: new Date('2026-11-07T00:00:00Z'), timezone: 'Asia/Bangkok',
+      files: buffers.map((bytes, index) => ({ path: `${index}.pdf`, part: 1, mimeType: index === 5 ? 'image/png' : 'application/pdf', load: async () => bytes })) });
+    assert.deepEqual(result.appendices.map(row => row.status), ['included', 'referenced', 'referenced', 'referenced', 'referenced', 'referenced']);
+    assert.match(result.appendices[1]!.reason!, /ลายเซ็น/);
+    assert.match(result.appendices[5]!.reason!, /ลายเซ็น/, 'a mislabeled PDF is still inspected structurally');
+    assert.equal((await PDFDocument.load(result.data)).getPageCount(), 2);
+    assert.deepEqual(buffers.map(bytes => createHash('sha256').update(bytes).digest('hex')), hashes);
+  });
+  it('pack v2 references encrypted unsupported and over-limit PDFs', async () => {
+    const { PDFDocument, PDFName, PDFHexString } = await import('pdf-lib');
+    const { buildExpenseRecordPdf } = await import('./expense-record-pdf.logic');
+    const encrypted = await PDFDocument.create(); encrypted.addPage();
+    encrypted.context.trailerInfo.Encrypt = encrypted.context.register(encrypted.context.obj({ Filter: 'Standard', V: 1, R: 2, O: PDFHexString.of('00'.repeat(32)), U: PDFHexString.of('00'.repeat(32)), P: -4 }));
+    const unsupported = await PDFDocument.create(); unsupported.addPage();
+    unsupported.context.register(unsupported.context.stream('unknown', { Filter: PDFName.of('UnknownDecoder') }));
+    const excessive = await PDFDocument.create(); for (let i = 0; i < 65; i++) excessive.addPage();
+    const files = [encrypted, unsupported, excessive];
+    const result = await buildExpenseRecordPdf({ cover: ['EXP-1'], exportedAt: new Date('2026-11-07'), timezone: 'Asia/Bangkok',
+      files: await Promise.all(files.map(async (document, index) => ({ path: `${index}.pdf`, part: 1, mimeType: 'application/pdf', load: async () => Buffer.from(await document.save()) }))) });
+    assert.ok(result.appendices.every(file => file.status === 'referenced'));
+    assert.equal((await PDFDocument.load(result.data)).getPageCount(), 1);
+  });
+  it('pack v2 bounds print images and dates every assembled page', async () => {
+    const sharp = (await import('sharp')).default;
+    const { PDFDocument, PDFName, PDFDict } = await import('pdf-lib');
+    const image = await sharp({ create: { width: 600, height: 2400, channels: 4, background: '#fff' } }).png().toBuffer();
+    const { buildExpenseRecordPdf } = await import('./expense-record-pdf.logic');
+    const result = await buildExpenseRecordPdf({ cover: ['EXP-1', 'ผู้ขาย'], exportedAt: new Date('2026-11-06T23:00:00Z'), timezone: 'Asia/Bangkok',
+      files: [{ path: 'receipt.png', part: 2, mimeType: 'image/png', load: async () => image },
+        { path: 'missing.pdf', part: 1, mimeType: 'application/pdf', load: async () => { throw new Error('secret storage key'); } }] });
+    assert.equal(result.appendices[1]!.status, 'unavailable');
+    assert.doesNotMatch(result.appendices[1]!.reason!, /secret/);
+    const pdf = await PDFDocument.load(result.data);
+    assert.ok(pdf.getPageCount() >= 4);
+    assert.equal(pdf.getSubject(), 'ส่งออกวันที่ 7 พ.ย. 2569');
+    const pageImages = pdf.getPages().map(page => page.node.Resources()!.lookup(PDFName.of('XObject'), PDFDict).entries().map(([, ref]) => ref.toString()));
+    assert.ok(pageImages[0]!.some(ref => pageImages.every(images => images.includes(ref))), 'every page shares the rendered export-date footer');
   });
 });
