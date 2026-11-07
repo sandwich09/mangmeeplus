@@ -115,7 +115,9 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   const text = mapThaiDigits(rawText.trim());
   const ordinalMatch = /(?:อัน|ใบ|รายการ|ร่าง)ที่\s*(\d+)/u.exec(text);
   const ordinal = /(?:อัน|ใบ|รายการ)แรก/u.test(text) ? 1 : ordinalMatch ? Number(ordinalMatch[1]) : undefined;
-  const requester = claim ? /(?:^|\s|ใบเบิก)ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ(?:ฉัน|คุณ)|\d|[?？]|$)/u.exec(text)?.[1]?.trim().replace(/(?:นะคะ|นะครับ|ค่ะ|ครับ|คะ)$/u, '').trim() : undefined;
+  const namedRequester = claim ? /(?:^|\s|ใบเบิก)ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ(?:ฉัน|คุณ)|\d|[?？]|$)/u.exec(text)?.[1]?.trim().replace(/(?:นะคะ|นะครับ|ค่ะ|ครับ|คะ)$/u, '').trim() : undefined;
+  const self = claim && /ของ(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ|\d|[?？]|นะคะ|นะครับ|ค่ะ|ครับ|คะ|$)/u.test(text);
+  const requester = self || namedRequester && /^(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)$/u.test(namedRequester) ? 'ฉัน' : namedRequester;
   const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?เลขที่\s*([^\s,]+)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
   const questionText = text.replace(/(?:อะไร|ใคร|ที่ไหน)ก็ได้/gu, '');
   const question = /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
@@ -123,6 +125,20 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   const rounds = [...text.matchAll(/รอบ\s*(\d+)/gu)].map(match => match[1]!);
   const explicit = ordinal !== undefined || documents.length > 0 || rounds.length > 0 || /สาขา\s*\S+/u.test(text) || !!requester;
   return { question, ordinal, requester, documents, rounds, explicit };
+}
+
+/** Explicit action language is also used before admission and when a person changes jobs. */
+export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/contracts').LineWorkflowId | undefined {
+  if (lineWorkflowPickerText(rawText).question) return;
+  const text = rawText.trim().replace(/^ขอทำอย่างเดียวก่อน[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ)\s*)+/u, '');
+  return ([
+    ['reimbursement_reject', /^ไม่อนุมัติใบเบิก/u], ['approvals', /^อนุมัติใบเบิก/u],
+    ['reimbursement_submit', /^ส่งใบเบิก.*อนุมัติ/u], ['reimbursement_cancel', /^(?:ยกเลิก|ถอน|ดึงกลับ)ใบเบิก/u],
+    ['expense_confirm', /^ยืนยัน(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_submit', /^ส่งตรวจ(?:บิล|รายจ่าย|ค่าใช้จ่าย)/u],
+    ['expense_delete', /^ลบ(?:ร่าง|บิล|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_void', /^ยกเลิก(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u],
+    ['reimbursement_pay', /^(?:บันทึกจ่ายคืน|จ่ายคืนใบเบิก|โอนคืนผู้เบิก)/u], ['expense_pay', /^(?:บันทึกจ่าย|จ่ายเงิน)/u],
+    ['payment_voucher', /^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u], ['substitute_receipt', /^ทำใบรับรองแทนใบเสร็จ/u],
+  ] as Array<[import('@watchdog-bms/contracts').LineWorkflowId, RegExp]>).find(([, pattern]) => pattern.test(text))?.[0];
 }
 
 /** Counts and lists remain advisor reads unless the person also asks to act. */
@@ -143,7 +159,8 @@ export async function parseManualClaimLine(
 ) {
   const verified = await verifyLineAiValueCandidatesV2(candidates, evidence);
   if (!verified || verified.completeness !== 'complete') return null;
-  const amounts = verified.amounts.filter(item => !item.currencyToken || /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(item.currencyToken));
+  const thb = verified.amounts.filter(item => item.currencyToken && /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(item.currencyToken));
+  const amounts = thb.length === 1 ? thb : verified.amounts.filter(item => !item.currencyToken || /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(item.currencyToken));
   const dates = [...verified.dates.map(item => ({ ...item, value: item.isoDate })),
     ...verified.periods.filter(item => item.kind === 'day' && item.fromDate === item.toDate).map(item => ({ ...item, value: item.fromDate }))];
   if (dates.length > 1) return null;
@@ -189,8 +206,9 @@ export async function parseManualClaimLine(
 /** Match only user locators against the already-permitted claim rows. */
 export function matchLineClaimTargets<T>(text: string, rows: T[], amounts: Array<{ value: string; span: string; currencyToken?: string }>, userId: string): T[] {
   const parsed = lineWorkflowPickerText(text, true), normalize = (s: string) => mapThaiDigits(s).toLowerCase().replace(/\s+/gu, '');
+  const withoutDocuments = parsed.documents.reduce((raw, document) => raw.replaceAll(document, ''), mapThaiDigits(text));
   const money = amounts.filter(a => a.currencyToken ? /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(a.currencyToken)
-    : !new RegExp(`(?:รอบ|สาขา|ใบที่|รายการที่|อันที่)\\s*${a.span}(?!\\d)`, 'u').test(text));
+    : withoutDocuments.includes(mapThaiDigits(a.span)) && !new RegExp(`(?:รอบ|สาขา|ใบที่|รายการที่|อันที่)\\s*${a.span}(?!\\d)`, 'u').test(text));
   const words = (r: any) => [r.title, r.reason, r.categoryLabelSnapshot, r.requesterDisplayNameSnapshot, r.note, r.internalMemo, ...(r.lines ?? []).map((l: any) => l.description)].filter(Boolean).join(' ');
   let rest = text;
   for (const a of money) rest = rest.replace(a.span, '');

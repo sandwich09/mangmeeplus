@@ -1310,3 +1310,25 @@ describe('A3c yearless Thai-order dates use the latest Bangkok occurrence', () =
     }
   });
 });
+
+it('R13 a number after วัน with a currency token stays money', async () => {
+  const { createLineAiInputEvidence } = await import('./line-ai-input-evidence.js');
+  for (const [text, amounts] of [['ค่าจอดรถ 2 วัน 40 บาท', ['40']], ['ค่าเช่าเต็นท์ 3 วัน 90 บ.', ['90']], ['ค่าที่พัก 1 วัน 1500 บาท', ['1500']]] as const) {
+    const evidence = (await createLineAiInputEvidence({ turnKey: 'r13m', parts: [{ partId: 'p', eventIdHash: 'b'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const candidates = (await normalizer.extractValueCandidatesV2(evidence, '2026-11-07'))!;
+    assert.ok(amounts.every(value => candidates.amounts.some(a => a.value === value)), text);
+    assert.deepEqual(candidates.dates, [], text);
+  }
+});
+
+it('R13 spoken days in this month are verified dates rather than amounts', async () => {
+  const { createLineAiInputEvidence } = await import('./line-ai-input-evidence.js');
+  for (const date of ['วัน 5 เดือนนี้', 'วันที่ 5', '5 พ.ย.', '5/11']) {
+    const text = `สร้างใบเบิกค่ารถ 260 บ. ${date}`;
+    const evidence = (await createLineAiInputEvidence({ turnKey: 'r13', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const candidates = (await normalizer.extractValueCandidatesV2(evidence, '2026-11-07'))!;
+    assert.deepEqual(candidates.amounts.map(a => a.value), ['260']);
+    assert.deepEqual(candidates.dates.map(d => d.isoDate), ['2026-11-05']);
+    assert.ok(await normalizer.verifyLineAiValueCandidatesV2(candidates, evidence));
+  }
+});

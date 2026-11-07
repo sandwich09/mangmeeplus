@@ -512,9 +512,12 @@ export class LineExpenseActionService {
     if (!pickerAnswer) await this.claimPickers.discard(ctx.companyId, `expense-action-claim-picker:${chat}`);
     let result = await this.workflowTargets.pick(ctx, chat, workflow, {}, 1);
     let searchedDocument: string | undefined;
-    if (pickerAnswer && !result.exhaustive && parsed.documents.length === 1) {
-      searchedDocument = parsed.documents[0]!;
-      result = await this.workflowTargets.pick(ctx, chat, workflow, { search: searchedDocument }, 1);
+    if (pickerAnswer && !result.exhaustive) {
+      searchedDocument = parsed.documents.length === 1 ? parsed.documents[0] : undefined;
+      const claimSearch = this.isClaim(action) && amounts.length === 1 && (parsed.requester || parsed.rounds.length)
+        ? [amounts[0]!.value, parsed.requester && parsed.requester !== 'ฉัน' ? parsed.requester : '', ...parsed.rounds.map(round => `รอบ ${round}`)].filter(Boolean).join(' ') : '';
+      const search = searchedDocument ?? (claimSearch || undefined);
+      if (search) result = await this.workflowTargets.pick(ctx, chat, workflow, { search }, 1);
     }
     if ((rounds.length || pickerAnswer) && !this.isClaim(action) && action !== 'WHT_CERTIFICATE_ISSUE') {
       for (const target of result.targets as LineWorkflowRecordTarget[]) {

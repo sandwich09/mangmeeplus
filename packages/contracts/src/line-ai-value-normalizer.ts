@@ -655,6 +655,20 @@ export function extractValueCandidates(
     }
   }
 
+  // A spoken day in this month is a date, including an explicit "เดือนนี้" suffix.
+  // A number followed by a currency token is money ("2 วัน 40 บาท"), and only 1–31 is a day.
+  for (const match of mapped.matchAll(/วัน(?:ที่)?\s*(\d{1,2})(?!\d)(?!\s*(?:บาท|บ\.?(?=\s|$)|฿|thb|baht))(?:\s*เดือนนี้)?/giu)) {
+    if (Number(match[1]) < 1 || Number(match[1]) > 31) continue;
+    const start = match.index, end = start + match[0].length;
+    if (overlaps(dateRanges, start, end)) continue;
+    recordDateRange(start, end);
+    if (todayIso && !/^\s*เดือน(?!นี้)/u.test(mapped.slice(end))) {
+      const yearCe = Number(todayIso.slice(0, 4));
+      pushDate(start, end, Number(match[1]), Number(todayIso.slice(5, 7)),
+        { yearCe, yearBe: yearCe + BE_CE_OFFSET, assumptions: [] }, []);
+    }
+  }
+
   // 6) Digit amounts (Thai digits already mapped). Tokens inside date spans are excluded so
   //    a year like 2537 can never legitimize an amount of 2537.
   for (const match of mapped.matchAll(/\d[\d,]*(?:\.\d+)?/g)) {

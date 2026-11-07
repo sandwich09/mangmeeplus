@@ -1255,7 +1255,10 @@ export function buildClaimWorkflowPicker(result: LineWorkflowTargets, workflow: 
     const amount = formatClaimMoney(claim.amount, claim.currency, language).replace(' บาท', '');
     const caption = claim.requestNo || [claim.requesterDisplayNameSnapshot, claim.reason || claim.categoryLabelSnapshot || lineUiLabel('ใบเบิก', language)].filter(Boolean).join(' ');
     const limit = LINE_FLEX_ACTION_LABEL_MAX - amount.length - 3;
-    const label = claim.requestNo ? scrubRecordIdentifier(claim.requestNo, limit) ?? lineUiLabel('ใบเบิก', language) : scrubRecordText(caption, limit);
+    const round = /รอบ\s*\d+/u.exec(claim.reason ?? '')?.[0];
+    const suffix = round ? ` ${round}` : '';
+    const shortCaption = round ? `${scrubRecordText(caption.replace(round, '').trim(), Math.max(1, limit - suffix.length))}${suffix}` : caption;
+    const label = claim.requestNo ? scrubRecordIdentifier(claim.requestNo, limit) ?? lineUiLabel('ใบเบิก', language) : scrubRecordText(shortCaption, limit);
     return { type: 'postback', label: `${label} · ${amount}`,
       data: lineWorkflowOpenData(secret, company, user, CLAIM_WORKFLOW_ACTIONS[workflow], claim.id, payment) };
   });

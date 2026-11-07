@@ -1725,3 +1725,11 @@ it('CARDS-R4 empty and incomplete workflow pickers retain a persistent web butto
     if (incomplete) assert.match(JSON.stringify(card), /เลขที่|ยอด|ผู้เบิก/);
   }
 });
+
+it('R13 shortened claim picker labels retain their round and amount', () => {
+  for (const language of ['th', 'en'] as const) {
+    const card = buildClaimWorkflowPicker({ targets: [{ id: 'claim', requestNo: null, requesterDisplayNameSnapshot: 'สมชัย', reason: 'ค่าออฟฟิศและอุปกรณ์สำนักงานสำหรับทุกสาขา รอบ 3', amount: '1906', currency: 'THB' } as any], total: 1, exhaustive: true }, 'approvals', 'secret', 'company', 'user', 'https://app.example.com', {}, language);
+    const label = readLineSystemCard(card as any).actions.find((a: any) => a.type === 'postback')!.label;
+    assert.ok(Array.from(label).length <= 40, label); assert.match(label, /รอบ 3/); assert.match(label, /1,906.00/);
+  }
+});

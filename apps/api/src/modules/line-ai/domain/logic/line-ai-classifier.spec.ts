@@ -211,3 +211,32 @@ it('R12 expense free-text and model hints cannot turn questions into draft field
   assert.equal(result.state.header.vendorName, undefined); assert.equal(result.state.header.businessPurpose, undefined);
   assert.deepEqual(result.acceptedFields, []);
 });
+
+it('R13 date parts never compete with the explicitly denominated claim amount', async () => {
+  const { createLineAiInputEvidence, extractValueCandidatesV2 } = await import('@watchdog-bms/contracts');
+  const { parseManualClaimLine } = await import('./line-ai-classifier.logic');
+  for (const date of ['วัน 5 เดือนนี้', 'วันที่ 5', '5 พ.ย.', '5/11']) {
+    const text = `สร้างใบเบิกค่ารถ 260 บ. ${date}`;
+    const evidence = (await createLineAiInputEvidence({ turnKey: 'r13', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const parsed = await parseManualClaimLine(evidence, (await extractValueCandidatesV2(evidence, '2026-11-07'))!);
+    assert.equal(Number(parsed?.values.amount?.value), 260, date);
+    assert.equal(parsed?.values.incurredDate?.value, '2026-11-05', date);
+    assert.equal(parsed?.amountChoices.length, 0);
+  }
+});
+
+it('R13 self-reference is never treated as another requester name', () => {
+  for (const self of ['ฉัน', 'ผม', 'ผมเอง', 'เรา', 'ตัวเอง', 'หนู', 'เค้า'])
+    for (const text of [`ค่าออฟฟิศ รอบ 3 ของ${self}`, `ค่าออฟฟิศรอบ3ของ${self}`])
+      assert.equal(lineWorkflowPickerText(text, true).requester, 'ฉัน');
+});
+
+it('R13 a claim number is a locator rather than a claim amount', async () => {
+  const { createLineAiInputEvidence, extractValueCandidatesV2 } = await import('@watchdog-bms/contracts');
+  const { matchLineClaimTargets } = await import('./line-ai-classifier.logic');
+  const text = 'ใบเบิกเลขที่ RB-0002';
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'r13-number', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+  const candidates = (await extractValueCandidatesV2(evidence, '2026-11-07'))!;
+  const row = { id: 'claim', requestNo: 'RB-0002', amount: '1877', currency: 'THB' };
+  assert.deepEqual(matchLineClaimTargets(text, [row], candidates.amounts, 'user'), [row]);
+});
