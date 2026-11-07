@@ -20183,3 +20183,14 @@ it('R17 a read-only named bill shows its record and web exit without invented mu
   assert.match(reply, /ทดสอบ-0003/); assert.match(reply, /\/expenses\/workflow-expense-c-2/); assert.doesNotMatch(reply, /wf_open|ต้องการทำอะไร/);
   assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
 });
+
+it('R17 controller: a claim opener followed by "then submit" starts the claim, not the first-task chooser', async () => {
+  for (const [messageText, expected] of [['ช่วยเบิกค่ารถไปโกดัง 125 บ. กับ 165 บ. วันนี้ แล้วส่งอนุมัติด้วย', 'reimbursement_claim'], ['ขอเบิกค่าแท็กซี่ 80 บาท จากนั้นส่งให้หัวหน้า', 'reimbursement_claim'], ['ดูรายการเดือนนี้แล้วเบิกค่ารถ', undefined]] as const) {
+    const h = await b4WorkflowHarness(), started: string[] = [];
+    h.event.messageText = messageText; h.setDecision({ label: 'multi' });
+    h.flow.startClassifiedWorkflow = async (_event: any, _ctx: any, _features: any, workflow: string) => { started.push(workflow); };
+    assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open), expected !== undefined, messageText);
+    assert.deepEqual(started, expected ? [expected] : [], messageText);
+    assert.equal(h.calls.length, 1); assert.equal(h.intakeRequests.length, 0);
+  }
+});

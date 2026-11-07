@@ -14,11 +14,23 @@ it('R17 reviewed knowledge uses approved summaries within 350 visible characters
   assert.ok(result.webLinks.every(link => link.label === 'อ่านต่อในคู่มือ'));
 });
 
+it('R17 controller: who-can after a workflow refusal finds the action from the refusal reply', async () => {
+  const { resolveExpenseReadReferences } = await import('./read-tool-input');
+  const req: any = { ...makeReq('ต้องให้ผู้มีสิทธิ์คนไหนช่วยจ้า'),
+    conversationContext: { recentTurns: [{ userMessagePreview: 'ยกเลิกรายจ่าย ทดสอบ-0012 จ้า', assistantReplyPreview: 'คุณยังไม่มีสิทธิ์ยกเลิกค่าใช้จ่าย ให้ผู้มีสิทธิ์ยกเลิกค่าใช้จ่ายทำให้ค่ะ', at: new Date().toISOString() }] },
+    semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ใครทำได้', requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+  const routed = resolveExpenseReadReferences(req).semanticSubrequests![0]!;
+  assert.equal(routed.toolHint, 'company.get_roles'); assert.equal(typeof routed.requestedFilters.permissionKey, 'string');
+  const plain = resolveExpenseReadReferences({ ...req, conversationContext: { recentTurns: [{ userMessagePreview: 'สวัสดี', assistantReplyPreview: 'สวัสดีค่ะ', at: new Date().toISOString() }] } }).semanticSubrequests![0]!;
+  assert.equal(plain.toolHint, undefined);
+});
+
 it('R17 who-can-do-this reads the permission catalogue without composed facts', async () => {
+  for (const question of ['ต้องให้ใครทำให้', 'ต้องให้ผู้มีสิทธิ์คนไหนช่วยจ้า', 'ให้คนไหนทำคะ']) {
   const { runSemanticTurnV2 } = await import('./semantic-turn-v2');
-  const req: any = { ...makeReq('ต้องให้ใครทำให้'), userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', 'access.role.read'] },
+  const req: any = { ...makeReq(question), userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', 'access.role.read'] },
     conversationContext: { recentTurns: [{ refused: true, userMessagePreview: 'อนุมัติใบเบิก', userMessagePreviewComplete: true, at: new Date().toISOString() }] },
-    semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ต้องให้ใครทำให้', requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+    semanticSubrequests: [{ index: 0, kind: 'read', goal: question, requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
   const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
     provider: { generateText: async () => assert.fail('catalogue facts need no model') },
     invoke: async (meta, _ctx, input) => {
@@ -26,7 +38,8 @@ it('R17 who-can-do-this reads the permission catalogue without composed facts', 
       return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(), data: { roles: [{ name: 'ผู้จัดการ', menus: ['อนุมัติใบเบิก'] }] },
         sourceRefs: [{ module: 'employee-access', entityType: 'role_permissions', label: 'หน้าที่', permissionChecked: true }] };
     } });
-  assert.equal(result.replyText, 'ผู้จัดการ: อนุมัติใบเบิก');
+  assert.equal(result.replyText, 'ผู้จัดการ: อนุมัติใบเบิก', question);
+  }
 });
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
 import { scopePolicyOverride, featureLimitReplyText, permissionAlternative } from '../domain/logic/line-ai-scope-policy.logic';
@@ -3451,4 +3464,11 @@ it('R17 named claim and age filters are grounded in the customer words', async (
   const expense = LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.list_recent')!;
   assert.deepEqual(canonicalizeReadToolEnums(expense, { olderThanMonths: 2 }, 'ค้างจ่ายเกินสองเดือน'), { olderThanMonths: 2 });
   assert.equal(canonicalizeReadToolEnums(expense, { olderThanMonths: 3 }, 'ค้างจ่ายเกินสองเดือน'), undefined);
+});
+
+it('R17 controller: model questions drop internal status codes', async () => {
+  const { withoutInternalCodes } = await import('./semantic-turn-v2');
+  assert.equal(withoutInternalCodes('ต้องการเปลี่ยนสถานะเป็น ส่งตรวจ (MARK_READY) หรือไม่คะ'), 'ต้องการเปลี่ยนสถานะเป็น ส่งตรวจ หรือไม่คะ');
+  assert.equal(withoutInternalCodes('ใช้ VAT 7% กับบิล ทดสอบ-0003 ไหมคะ'), 'ใช้ VAT 7% กับบิล ทดสอบ-0003 ไหมคะ');
+  assert.equal(withoutInternalCodes('Set it to READY_FOR_CONFIRMATION?'), 'Set it to?');
 });

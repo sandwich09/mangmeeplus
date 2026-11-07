@@ -4178,7 +4178,8 @@ export class ProcessLineWebhookUseCase {
     }
     if (result.status === 'CLASSIFIED' && result.label === 'multi' && /(?:แล้ว|จากนั้น).+/u.test(event.messageText)) {
       const first = event.messageText.trim().split(/แล้ว|จากนั้น/u)[0]!;
-      const workflow = lineWorkflowCommand(first);
+      // "เบิกค่า… แล้วส่งอนุมัติ" is one claim: the submit follows the draft, so no first-task chooser.
+      const workflow = lineWorkflowCommand(first) ?? (/^(?:(?:ขอ|ช่วย)\s*)*เบิก/u.test(first.trim()) ? 'reimbursement_claim' : undefined);
       if (workflow) { await this.startClassifiedWorkflow(event, ctx, features, workflow, { ...result, label: workflow }, evidence); return true; }
     }
     if (result.status !== 'CLASSIFIED' || !LINE_WORKFLOW_IDS.includes(result.label as LineWorkflowId)

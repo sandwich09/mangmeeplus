@@ -407,3 +407,16 @@ it('R17 everyday claim and expense verbs choose their own job without noun or ne
   ] as const) assert.equal(lineWorkflowCommand(text), workflow, text);
   for (const text of ['อย่าเอาร่างบิล ทดสอบ-0003 ออก', 'ไม่ต้องขอการ์ดลบ ทดสอบ-0003', 'ไม่ต้องผ่านใบเบิก รอบ 2', 'ไม่ต้องให้ผ่านใบเบิก รอบ 2', 'ใบเบิกที่ไม่ผ่าน', 'ใบเบิกที่บันทึกจ่ายแล้ว', 'ใบเบิกรอบ 2 สถานะถึงไหนแล้ว']) assert.equal(lineWorkflowCommand(text), undefined, text);
 });
+
+it('R17 controller: recheck wording — ขอส่ง voucher submit, bill numbers run into Thai words, อยากให้คนตรวจ', async () => {
+  const { lineVoucherWorkflowAction, lineWorkflowCommand } = await import('./line-ai-classifier.logic');
+  assert.equal(lineVoucherWorkflowAction('ขอส่งใบเตรียมจ่ายที่เป็นร่างยอด 1000 อนุมัติค่ะ'), 'VOUCHER_SUBMIT');
+  assert.equal(lineVoucherWorkflowAction('ช่วยส่งใบเตรียมจ่ายไปอนุมัติ'), 'VOUCHER_SUBMIT');
+  assert.equal(lineVoucherWorkflowAction('อนุมัติใบเตรียมจ่ายที่รออนุมัติ'), 'VOUCHER_APPROVE');
+  assert.deepEqual(lineWorkflowPickerText('ใบเตรียมจ่ายร่างที่มีบิลทดสอบ-0012 ส่งอนุมัติจ้ะ').documents, ['ทดสอบ-0012']);
+  assert.deepEqual(lineWorkflowPickerText('บิลทดสอบ-0003').documents, ['ทดสอบ-0003']);
+  assert.deepEqual(lineWorkflowPickerText('ใบเบิก RB-2026-0004').documents, ['RB-2026-0004']);
+  assert.deepEqual(lineWorkflowPickerText('บิล-0012').documents, ['บิล-0012'], 'a number that is only a prefix stays whole');
+  assert.equal(lineWorkflowCommand('อยากให้คนตรวจบิลของ หจก. ออฟฟิศ ซัพพลาย จ้ะ'), 'expense_submit');
+  assert.equal(lineWorkflowCommand('ขอให้คนตรวจบิล ทดสอบ-0003'), 'expense_submit');
+});

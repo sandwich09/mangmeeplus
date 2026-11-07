@@ -103,6 +103,7 @@ const ANSWER_PROMPT = `Answer each semanticSubrequest exactly once. For reimburs
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
 /** The reasonCode shape parseLineAiSemanticCoverage accepts (packages/contracts line-ai.ts). */
 const REASON_CODE = /^[A-Z][A-Z0-9_]{0,63}$/u;
+export const withoutInternalCodes = (text: string) => text.replace(/\s*\(\s*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\s*\)|\s*\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/gu, '').replace(/\s{2,}/gu, ' ').trim();
 function json(value: string): Record<string, unknown> | undefined { try { const result: unknown = JSON.parse(extractJson(value)); return object(result) ? result : undefined; } catch { return undefined; } }
 function canonical(value: unknown): string { return JSON.stringify(value, (_, item) => object(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : 1)) : item); }
 function values(value: unknown, into = new Set<string>()): Set<string> {
@@ -807,7 +808,8 @@ export async function runSemanticTurnV2(input: {
     else {
       // Advisor S3 eval runs 3 and 7 (R-06): the planner wrote "หนูมั่งมี" and "หนูช่วยดู…" into a question the user reads verbatim.
       const bare = !turnSaysNu && !results.some(entry => saysNu(entry.result.data));
-      for (const q of rawQuestions) questions.set(Number(q.index), fixMangmeeSelfReference(String(q.text), bare));
+      // A model question never shows internal codes such as "(MARK_READY)" to the customer.
+      for (const q of rawQuestions) questions.set(Number(q.index), fixMangmeeSelfReference(withoutInternalCodes(String(q.text)), bare));
       // NAT04 (2026-09-30): "บิลร้านเครื่องเขียนที่ส่งไว้สองใบอะ" was asked "which bill?" before the API had listed any
       // bill, so the user had nothing to pick from. A claim's question still goes out, but only beside the claimable
       // bills the read-only options call prints.

@@ -127,7 +127,9 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   const namedRequester = claim ? stripLineFieldParticles(/(?:^|\s|ใบเบิก)ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ(?:ฉัน|คุณ)|\d|[?？]|$)/u.exec(text)?.[1] ?? '') || undefined : undefined;
   const self = claim && /ของ(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ|\d|[?？]|นะคะ|นะครับ|ค่ะ|ครับ|คะ|$)/u.test(text);
   const requester = self || namedRequester && /^(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)$/u.test(namedRequester) ? 'ฉัน' : namedRequester;
-  const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?(?:เลขที่|เลขท้าย|ลงท้าย|เลข)\s*([A-Za-zก-๙]+[-/]\d[\d/-]*|[A-Za-z0-9][A-Za-z0-9/-]*)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
+  const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?(?:เลขที่|เลขท้าย|ลงท้าย|เลข)\s*([A-Za-zก-๙]+[-/]\d[\d/-]*|[A-Za-z0-9][A-Za-z0-9/-]*)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0])
+    // Thai runs words together: "…ที่มีบิลทดสอบ-0012" names ทดสอบ-0012.
+    .map(document => document.replace(/^(?:ใบเตรียมจ่าย|ใบเบิก|ใบ|บิล|ร่าง|ที่มี|ที่|ของ|รายจ่าย|ค่าใช้จ่าย|เอกสาร)+(?=[A-Za-zก-๙]+[-/]\d)/u, ''));
   const questionText = text.replace(/(?:อะไร|ใคร|ที่ไหน)ก็ได้|เดี๋ยวบอก(?:ว่า)?ใบไหน|เดี๋ยวบอกใบที่จะทำ|บอกทีหลัง/gu, '');
   const questionTail = text.replace(/[.!?,…ๆ]+$/u, '').trim();
   // "A หรือ B" ending in a question particle asks; amount alternatives and "…ก็ได้" are statements.
@@ -167,7 +169,7 @@ export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/cont
   return ([
     ['reimbursement_reject', /ไม่อนุมัติใบเบิก|ใบเบิก.*(?<!ที่|ถูก|โดน)ไม่อนุมัติ(?!แล้ว)/u], ['approvals', /(?<!ไม่)อนุมัติใบเบิก|ใบเบิก.*(?<!ไม่|รอ|ที่|ผ่าน|ได้รับ|ถูก)อนุมัติ(?!แล้ว)/u],
     ['reimbursement_submit', /ส่งใบเบิก.*อนุมัติ/u], ['reimbursement_cancel', /(?:ยกเลิก|ถอน|ดึงกลับ)ใบเบิก|ใบเบิก.*(?<!ที่|ถูก|โดน)(?:ยกเลิก|ถอน|ดึงกลับ)(?!แล้ว|ไป)/u],
-    ['expense_confirm', /ยืนยัน(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_submit', /^(?:ส่งตรวจ|ให้คนตรวจ|ส่งให้ตรวจ)|ส่ง(?:ตรวจ(?:บิล|รายจ่าย|ค่าใช้จ่าย)|(?:บิล|รายจ่าย|ค่าใช้จ่าย).*ให้ตรวจ)/u],
+    ['expense_confirm', /ยืนยัน(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_submit', /^(?:(?:อยาก|ขอ|ช่วย)\s*)*(?:ส่งตรวจ|ให้คนตรวจ|ส่งให้ตรวจ)|ส่ง(?:ตรวจ(?:บิล|รายจ่าย|ค่าใช้จ่าย)|(?:บิล|รายจ่าย|ค่าใช้จ่าย).*ให้ตรวจ)/u],
     ['expense_delete', /ลบ(?:ทิ้ง|ร่าง|บิล|รายจ่าย|ค่าใช้จ่าย)|เอาร่าง.*ออก|การ์ดลบ/u], ['expense_void', /^ยกเลิก(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u],
     ['reimbursement_pay', /^(?:บันทึกจ่ายคืน|จ่ายคืนใบเบิก|โอนคืน(?:ผู้เบิก|ใบเบิก))|ใบเบิก.*(?<!ที่|ถูก|ได้รับเงิน)(?:จ่ายคืน|โอนคืน)(?!แล้ว)/u], ['expense_pay', /^(?:บันทึกจ่าย|จ่ายเงิน)/u],
     ['payment_voucher', /^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u], ['substitute_receipt', /^(?:ทำ|สร้าง|เตรียม)?ใบรับรองแทนใบเสร็จ/u],
@@ -283,6 +285,6 @@ export function lineVoucherWorkflowAction(text: string): 'VOUCHER_SUBMIT' | 'VOU
   // Verbs start a word: "ใบเตรียมจ่ายที่อนุมัติแล้ว" or "…ที่จ่ายแล้ว" describes a voucher, it asks for no step.
   const verb = ` ${text.replace(/ใบเตรียมจ่าย/gu, ' ')}`;
   return /\s(?:บันทึก)?จ่าย|\bpay\b/iu.test(verb) ? 'VOUCHER_PAY'
-    : /\sส่ง\S*(?:\s.*)?อนุมัติ|\bsubmit\b/iu.test(verb) ? 'VOUCHER_SUBMIT'
+    : /\s(?:ขอ|ช่วย)*ส่ง\S*(?:\s.*)?อนุมัติ|\bsubmit\b/iu.test(verb) ? 'VOUCHER_SUBMIT'
       : /\s(?:ขอ)?อนุมัติ|\bapprove\b/iu.test(verb) ? 'VOUCHER_APPROVE' : undefined;
 }

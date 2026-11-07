@@ -14,9 +14,11 @@ export function isExpenseReadReference(id: unknown, context?: LineAiConversation
 export function resolveExpenseReadReferences(req: LineAiTurnRequest): LineAiTurnRequest {
   if (!req.semanticSubrequests?.length) return req;
   const previous = req.conversationContext?.recentTurns.at(-1);
-  if (req.semanticSubrequests.length === 1 && previous?.refused
-    && /^(?:แล้ว)?(?:ต้อง)?(?:ให้)?ใคร(?:ทำ|ช่วย)(?:ให้|ได้|เรื่องนี้)*[?？]*(?:คะ|ค่ะ|ครับ)?$/u.test(req.messageText.replace(/\s+/gu, ''))) {
-    const action = LINE_CHAT_ACTIONS.find(action => [action.command, action.title].some(label => label && previous.userMessagePreview?.includes(label)));
+  // The refusal reply names the action ("คุณยังไม่มีสิทธิ์ยกเลิกค่าใช้จ่าย"); the user's words may not.
+  const refusedReply = previous?.assistantReplyPreview?.includes('ยังไม่มีสิทธิ์') ? previous.assistantReplyPreview : undefined;
+  if (req.semanticSubrequests.length === 1 && (previous?.refused || refusedReply)
+    && /^(?:แล้ว)?(?:ต้อง)?(?:ให้)?(?:ใคร|(?:ผู้มีสิทธิ์|คน)(?:คน)?ไหน)(?:เป็นคน)?(?:ทำ|ช่วย)(?:ให้|ได้|เรื่องนี้)*[?？]*(?:คะ|ค่ะ|ครับ|จ้า|จ้ะ|จ๊ะ|นะ)*$/u.test(req.messageText.replace(/\s+/gu, ''))) {
+    const action = LINE_CHAT_ACTIONS.find(action => [action.command, action.title].some(label => label && [refusedReply, previous!.userMessagePreview].some(text => text?.includes(label))));
     if (action) return { ...req, semanticSubrequests: [{ ...req.semanticSubrequests[0]!, kind: 'read', toolHint: 'company.get_roles',
       requestedFilters: { permissionKey: action.permission } }] };
   }
