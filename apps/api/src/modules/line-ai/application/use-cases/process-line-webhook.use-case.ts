@@ -1,3 +1,7 @@
+import { LINE_VOUCHER_WORKFLOW_STATUS } from '../line-voucher-action.service';
+import { DISBURSEMENT_VOUCHER_STATUS_LABELS } from '@watchdog-bms/contracts';
+import { lineDocumentNumberMatches, lineVoucherWorkflowAction } from '../../domain/logic/line-ai-classifier.logic';
+import { isLineWorkflowPutOff } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_STATUS_LABELS } from '@watchdog-bms/contracts';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { DEMO_READ_LIMIT_TEXT, isVirtualDemoTarget } from '@watchdog-bms/contracts';
@@ -3060,6 +3064,7 @@ export class ProcessLineWebhookUseCase {
     canManagePlan: boolean,
   ): Promise<boolean> {
     if (!isAiBudgetPermanentRefusal(refusal.budgetErrorCode)) return false;
+    this.workflowTaskOutcomes.set(event, { status: 'REFUSED' });
     await this.deliverRequiredMessages(event, [buildAiBudgetExceededMessage(await this.isTrialTier(companyId), refusal, canManagePlan, replyLanguage(event), this.config.webBaseUrl, ProcessLineWebhookUseCase.isDemoChat(event))]);
     await this.updateEventLog(
       event.webhookEventId,
@@ -3850,6 +3855,7 @@ export class ProcessLineWebhookUseCase {
             startUtf16: 0, endUtf16: part.rawText.length, rawSha256: part.rawSha256 })) }],
       };
       const response = await this.aiGateway.requestLineTurn(request);
+      if (response.refused) this.workflowTaskOutcomes.set(event, { status: 'REFUSED' });
       if (response.refused || response.semanticCoverage?.[0]?.status !== 'handled') { await unavailable(); return; }
       const ids = await this.readEvidence.forTurn(request, response);
       if (!ids) { await unavailable(); return; }
@@ -3905,7 +3911,7 @@ export class ProcessLineWebhookUseCase {
     if (!waiting.length) return false;
     if (waiting.length !== 1) { await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event)); return true; }
     if (!await this.waitingSourcesCurrent(event, ctx, waiting)) return true;
-    if ((waiting[0]!.entry.substituteTargetQuestionCount || (waiting[0]!.candidateExpenseIds?.length ?? 0) > 1)
+    if (isLineWorkflowPutOff(event.messageText) || (waiting[0]!.entry.substituteTargetQuestionCount || (waiting[0]!.candidateExpenseIds?.length ?? 0) > 1)
       && /^(?:ไว้ทำทีหลัง|ยังไม่ทำ|ไม่ทำแล้ว|ยกเลิก)(?:ค่ะ|คะ|ครับ|นะ|\s)*$/u.test(event.messageText.trim())) {
       await this.consumeClarifications(ctx.companyId, event.pushTargetId ?? event.lineUserId, ctx.userId, waiting, waiting.map(item => item.id), 'business_answer');
       this.workflowTaskOutcomes.set(event, { kind: 'substitute_receipt', status: 'DECLINED' });
@@ -3923,6 +3929,40 @@ export class ProcessLineWebhookUseCase {
     return true;
   }
 
+  private async handleWorkflowPutOff(event: LineTextEvent, ctx: RequestContext): Promise<boolean> {
+    if (!isLineWorkflowPutOff(event.messageText)) return false;
+    if (await this.continueSubstituteWorkflow(event, ctx)) return true;
+    const bound = this.boundConversations.get(event);
+    if (!bound) return false;
+    const claim = await this.reimbursementDrafts?.active?.({ ctx, owner: bound.owner, ownerEpoch: bound.epoch });
+    const question = await this.expenseActions?.collectionQuestion?.(ctx, chatKeyHashOf(event));
+    const drafts = await this.expenseDraftConversation?.routeContexts?.(ctx, chatKeyHashOf(event), replyLanguage(event)) ?? [];
+    const openDrafts = drafts.filter(draft => draft.status === 'OPEN');
+    const picker = await this.latestWorkflowPicker(event);
+    const choices = await this.prisma.client.lineTurnOutcome?.findMany?.({ where: { companyId: ctx.companyId,
+      authorizationJson: { path: ['workflowChoice', 'owner', 'chatKeyHash'], equals: chatKeyHashOf(event) }, deliveredAt: { gte: new Date(Date.now() - 900_000) } }, orderBy: { deliveredAt: 'desc' }, take: 1 });
+    const choice = (choices?.[0]?.authorizationJson as any)?.workflowChoice;
+    const storedChoice = choice?.owner?.userId === ctx.userId
+      ? await this.workflowChoices().load(ctx.companyId, `wf-choice:${chatKeyHashOf(event)}:${choice.token}`) : null;
+    const activeChoice = storedChoice?.ownerEpoch === bound.epoch ? storedChoice : null;
+    if (!activeChoice && !claim && !question && !picker && !openDrafts.length) return false;
+    if (openDrafts.length) await this.expenseDraftConversation!.execute(ctx, { messageText: 'พัก', chatKeyHash: chatKeyHashOf(event), webhookEventId: event.webhookEventId, language: replyLanguage(event) });
+    if (picker) await this.closeWorkflowPicker(picker);
+    if (activeChoice) await this.workflowChoices().claimCurrent(ctx.companyId, activeChoice.chatKeyHash, activeChoice.previewId);
+    const projection = await this.contextV2.projection(bound.owner);
+    const task = projection && [...projection.tasks].reverse().find(task => ['active', 'waiting_user'].includes(task.state));
+    if (task && projection?.lifecycleEpoch === bound.epoch) await this.contextV2.save(bound.owner, projection.stateVersion, bound.epoch, { version: 2,
+      tasks: projection.tasks.map(item => item !== task ? item : { ...item, revision: item.revision + 1, state: 'paused' as const }) });
+    const action = question && 'action' in question ? question.action : undefined;
+    const workflow = picker?.workflow ?? (claim ? 'reimbursement_claim' : action?.startsWith('VOUCHER_') ? 'payment_voucher'
+      : Object.entries({ ...EXPENSE_WORKFLOW_ACTIONS, ...CLAIM_WORKFLOW_ACTIONS }).find(([, value]) => value === action)?.[0]);
+    this.workflowTaskOutcomes.set(event, { status: 'DECLINED', ...(workflow ? { kind: workflow as LineWorkflowId } : {}) });
+    if (action && question && 'sourceId' in question && question.sourceId) this.taskActionSources.set(event, { action, id: question.sourceId });
+    await this.deliverReply(event, replyLanguage(event) === 'en' ? 'Paused for now. Continue when ready.' : 'พักไว้ก่อนค่ะ พร้อมแล้วกลับมาทำต่อได้', lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
+    await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
+    return true;
+  }
+
   private mayStartWorkflow(workflow: LineWorkflowId, ctx: RequestContext, features: Set<string> | null): boolean {
     return mayOfferWorkflow(workflow, ctx.permissions, features, { freeExpenseDrafts: ctx.freeExpenseDrafts })
       || !ctx.freeExpenseDrafts && (features === null || features.has('expenses'))
@@ -3931,7 +3971,9 @@ export class ProcessLineWebhookUseCase {
 
   private async refuseWorkflowStart(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null, workflow: LineWorkflowId): Promise<void> {
     this.workflowTaskOutcomes.set(event, { status: 'REFUSED', kind: workflow });
-    const language = replyLanguage(event), action = lineChatAction(workflow)!;
+    const language = replyLanguage(event), base = lineChatAction(workflow)!;
+    const step = workflow === 'payment_voucher' && lineVoucherWorkflowAction(event.messageText);
+    const action = step ? { ...base, title: step === 'VOUCHER_SUBMIT' ? 'ส่งใบเตรียมจ่ายอนุมัติ' : step === 'VOUCHER_APPROVE' ? 'อนุมัติใบเตรียมจ่าย' : 'จ่ายใบเตรียมจ่าย', responsible: step === 'VOUCHER_SUBMIT' ? base.responsible : step === 'VOUCHER_APPROVE' ? 'ผู้มีสิทธิ์อนุมัติใบเตรียมจ่าย' : 'ผู้มีสิทธิ์จ่ายใบเตรียมจ่าย' } : base;
     const refusal = language === 'en' ? `You cannot ${lineUiLabel(action.title, language).toLowerCase()}; ask ${lineUiLabel(action.responsible, language).toLowerCase()} to do it.`
       : `คุณยังไม่มีสิทธิ์${action.title} ให้${action.responsible}ทำให้ค่ะ`;
     await this.deliverReply(event, features !== null && !features.has('expenses') ? EXPENSE_FEATURE_DISABLED_REPLY[language] : refusal,
@@ -4106,6 +4148,9 @@ export class ProcessLineWebhookUseCase {
       || !Number.isFinite(result.confidence) || !Number.isFinite(result.secondConfidence)
       || result.secondConfidence < 0 || result.secondConfidence > result.confidence || result.confidence > 1) return false;
     const decision = result.secondLabel === result.label ? { ...result, secondLabel: 'none' as const, secondConfidence: 0 } : result;
+    if (!LINE_WORKFLOW_IDS.includes(decision.secondLabel as LineWorkflowId) && parsed.explicit && !parsed.question
+      && this.mayStartWorkflow(decision.label as LineWorkflowId, ctx, features)
+      && await this.startNamedWorkflowTarget(event, ctx, features, decision.label as LineWorkflowId)) return true;
     if (decision.confidence >= WORKFLOW_CLASSIFY_CONFIDENCE_THRESHOLD
       && decision.confidence - decision.secondConfidence + Number.EPSILON >= WORKFLOW_CLASSIFY_MARGIN_THRESHOLD) {
       if (switching && decision.label === newWorkflow) this.workflowSwitches.add(event);
@@ -4237,10 +4282,10 @@ export class ProcessLineWebhookUseCase {
       const locators = mapThaiDigits(raw).matchAll(/(?:อัน|ใบ|รายการ|ร่าง)ที่\s*\d+|สาขา\s*\d+|(?:ใบเลขที่|เลขที่|เลขเอกสาร)\s*\S+|[A-Za-zก-๙]+-\d[\d-]*/gu);
       return ![...locators].some(match => source.startUtf16 >= match.index && source.endUtf16 <= match.index + match[0].length);
     }) ?? [];
-    const workflow = Object.entries({ ...EXPENSE_WORKFLOW_ACTIONS, ...CLAIM_WORKFLOW_ACTIONS }).find(([, action]) => action === act)?.[0] as LineWorkflowId | undefined;
+    const workflow = picker.workflow ?? Object.entries({ ...EXPENSE_WORKFLOW_ACTIONS, ...CLAIM_WORKFLOW_ACTIONS }).find(([, action]) => action === act)?.[0] as LineWorkflowId | undefined;
     let current: Array<Record<string, any>> = [];
-    if (workflow && (act.startsWith('REIMBURSEMENT_') || act === 'WHT_CERTIFICATE_ISSUE')) {
-      try { current = (await this.workflowTargets.pick(ctx, chatKeyHashOf(event), workflow, {}, 1)).targets; }
+    if (workflow && (act.startsWith('REIMBURSEMENT_') || act.startsWith('VOUCHER_') && act !== 'VOUCHER_CREATE' || act === 'WHT_CERTIFICATE_ISSUE')) {
+      try { current = (await this.workflowTargets.pick(ctx, chatKeyHashOf(event), workflow, { ...(['VOUCHER_SUBMIT', 'VOUCHER_APPROVE', 'VOUCHER_PAY'].includes(act) ? { voucherAction: act as 'VOUCHER_SUBMIT' | 'VOUCHER_APPROVE' | 'VOUCHER_PAY', search: text } : {}) }, 1)).targets; }
       catch (error) { if (!(error instanceof ForbiddenException)) throw error; }
     }
     const records = await Promise.all(picker.rows.map(async row => {
@@ -4252,7 +4297,7 @@ export class ProcessLineWebhookUseCase {
     const branches = branchIds.length ? await this.prisma.client.branch.findMany({ where: { companyId: ctx.companyId, id: { in: branchIds } }, select: { id: true, name: true } }) : [];
     const normalized = (value: string) => mapThaiDigits(value).toLocaleLowerCase().replace(/\s+/gu, '');
     const documents = (record: Record<string, any> | null | undefined): string[] =>
-      [record?.expenseNumber, record?.vendorDocumentNumber, record?.requestNo, record?.documentNumber].filter((value): value is string => typeof value === 'string' && !!value);
+      [record?.expenseNumber, record?.vendorDocumentNumber, record?.requestNo, record?.documentNumber, ...(record?.documentNumbers ?? [])].filter((value): value is string => typeof value === 'string' && !!value);
     const words = (row: typeof records[number]): string[] => [row.record?.vendorNameSnapshot, row.record?.title, row.record?.label, row.record?.reason, row.record?.categoryLabelSnapshot, row.record?.requesterDisplayNameSnapshot,
       ...(row.record?.lines ?? []).map((line: any) => line.description), row.label.split(' · ')[0]]
       .filter((value): value is string => typeof value === 'string' && !!value);
@@ -4376,6 +4421,45 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, result.preview ? 'expense_action_prepared' : 'clarification_required', undefined, ctx.companyId);
       return;
     }
+    const voucherAction = event.workflowStart === 'payment_voucher' ? lineVoucherWorkflowAction(event.messageText) : undefined;
+    if (voucherAction) {
+      try {
+        const rows = await this.workflowTargets.pick(ctx, chatKeyHashOf(event), 'payment_voucher', { voucherAction, includeIneligible: true, search: event.messageText }, 1);
+        const parsed = lineWorkflowPickerText(event.messageText), evidence = await this.textEvidenceV2(event);
+        const amounts = evidence && await extractValueCandidatesV2(evidence, todayCivilDate('Asia/Bangkok'));
+        const money = amounts?.amounts.filter(amount => amount.currencyToken
+          ? /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(amount.currencyToken)
+          : !parsed.documents.some(document => document.includes(amount.span))) ?? [];
+        const named = parsed.documents.length > 0 || money.length === 1;
+        const matches = rows.targets.filter(row => parsed.documents.every(document => row.documentNumbers?.some(number => lineDocumentNumberMatches(number, document)))
+          && (money.length !== 1 || new Prisma.Decimal(row.amount).eq(money[0]!.value)));
+        const expected = LINE_VOUCHER_WORKFLOW_STATUS[voucherAction];
+        if (named && rows.exhaustive && matches.length === 1 && matches[0]!.status !== expected) {
+          const status = matches[0]!.status as keyof typeof DISBURSEMENT_VOUCHER_STATUS_LABELS;
+          const statusLabel = DISBURSEMENT_VOUCHER_STATUS_LABELS[status];
+          const text = replyLanguage(event) === 'en'
+            ? `This voucher is ${lineUiLabel(status, 'en').toLowerCase()}. Open it to continue.`
+            : `ใบเตรียมจ่ายนี้${status === 'DRAFT' ? 'ยังเป็นร่าง' : statusLabel} เปิดใบในเว็บเพื่อทำต่อค่ะ`;
+          this.workflowTaskOutcomes.set(event, { status: 'REFUSED', kind: 'payment_voucher' });
+          await this.deliverRequiredMessages(event, [buildWorkflowExitMessage(text, `/companies/${ctx.companyId}/expenses/disbursement-vouchers/${matches[0]!.id}`, ctx.companyId, this.config.webBaseUrl, replyLanguage(event))]);
+          await this.updateEventLog(event.webhookEventId, 'forbidden', undefined, ctx.companyId); return;
+        }
+        const targets = matches.filter(row => row.status === expected);
+        const card = buildExpenseWorkflowPicker({ targets, total: targets.length, exhaustive: rows.exhaustive }, 'payment_voucher', this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl, {}, voucherAction);
+        const selected = rows.exhaustive && targets.length === 1 ? this.workflowPickerRows([card])?.rows[0] : undefined;
+        if (selected) {
+          event.workflowControl = selected.control;
+          try { await this.handleWorkflowControl(event, ctx, features); } finally { delete event.workflowControl; }
+        } else {
+          await this.deliverRequiredMessages(event, [card]);
+          await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+        }
+      } catch (error) {
+        if (!(error instanceof ForbiddenException)) throw error;
+        await this.refuseWorkflowStart(event, ctx, features, 'payment_voucher');
+      }
+      return;
+    }
     const expenseWorkflow = event.workflowStart && (Object.hasOwn(EXPENSE_WORKFLOW_ACTIONS, event.workflowStart) || event.workflowStart === 'substitute_receipt')
       ? event.workflowStart as ExpenseWorkflowId : undefined;
     const workflow = event.workflowStart as ClaimWorkflowId;
@@ -4438,7 +4522,7 @@ export class ProcessLineWebhookUseCase {
       await this.deliverReply(event, copy.forbidden, lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
       await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, ctx.companyId); return;
     }
-    if (['approvals', 'reimbursement_reject'].includes(workflow)) {
+    if (['approvals', 'reimbursement_reject', 'reimbursement_pay'].includes(workflow)) {
       const parsed = lineWorkflowPickerText(event.messageText, true), evidence = await this.textEvidenceV2(event);
       if (parsed.explicit && !parsed.question && parsed.ordinal === undefined && evidence) {
         const search = parsed.documents[0] ?? (parsed.rounds.length ? parsed.rounds.map(round => `รอบ ${round}`).join(' ') : parsed.requester === 'ฉัน' ? undefined : parsed.requester);
@@ -4449,7 +4533,7 @@ export class ProcessLineWebhookUseCase {
           const claim = matches[0]!, label = REIMBURSEMENT_STATUS_LABELS[claim.status];
           if (label) {
             this.workflowTaskOutcomes.set(event, { kind: workflow, status: 'REFUSED' });
-            const text = replyLanguage(event) === 'en' ? `This claim is not awaiting your approval and its current status is ${lineUiLabel(label, 'en').toLowerCase()}.`
+            const text = workflow === 'reimbursement_pay' ? (replyLanguage(event) === 'en' ? `This claim is ${lineUiLabel(label, 'en').toLowerCase()} and is not ready for reimbursement.` : `ใบเบิกนี้ยังจ่ายคืนไม่ได้ ตอนนี้${claim.status === 'DRAFT' ? 'เป็นร่าง' : label}ค่ะ`) : replyLanguage(event) === 'en' ? `This claim is not awaiting your approval and its current status is ${lineUiLabel(label, 'en').toLowerCase()}.`
               : `ใบเบิกนี้ไม่ได้รอคุณอนุมัติ ตอนนี้${claim.status === 'DRAFT' ? 'เป็นร่าง' : label}ค่ะ`;
             await this.deliverRequiredMessages(event, [buildWorkflowExitMessage(text, `/companies/${ctx.companyId}/reimbursements/${claim.id}`, ctx.companyId, this.config.webBaseUrl, replyLanguage(event), 'เปิดใบเบิก')]);
             await this.updateEventLog(event.webhookEventId, 'forbidden', undefined, ctx.companyId);
@@ -5343,6 +5427,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       acceptedRequest: { request, ownerEpoch: bound.epoch, conversationId: bound.id, accessFingerprint: this.deliveryAccess.get(event)!.fingerprint } });
     let response: LineAiTurnResponse;
     try { response = await this.aiGateway.requestLineTurn(request);
+      if (response.refused) this.workflowTaskOutcomes.set(event, { status: 'REFUSED' });
       const bodyRefusal = knownAiBudgetResponse(response);
       if (bodyRefusal) throw new HttpException(bodyRefusal, 429);
     }
@@ -7050,6 +7135,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     denialCode: string,
     original?: { userId: string; companyId: string },
   ): Promise<void> {
+    this.workflowTaskOutcomes.set(event, { status: 'REFUSED' });
     this.deliveryDenialCode.set(event, denialCode);
     await this.audit.log({ companyId: original?.companyId, actorUserId: original?.userId,
       action: 'ai.line.delivery.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId,
@@ -7701,6 +7787,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     }
     if (!resolvedAccess.freeExpenseDrafts) {
     this.collectionContexts.set(event, { requestId, authSubject: identity.userId, userId: identity.userId, companyId, membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line' });
+    if (await this.handleWorkflowPutOff(event, this.collectionContexts.get(event)!)) return;
     if (event.fixedReadControl) {
       await this.handleFixedRead(event, requestId, identity.userId, companyId, resolvedAccess, entitledFeatureKeys);
       return;
@@ -7935,21 +8022,25 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     }
 
     if (resolvedAccess.freeExpenseDrafts) {
+      const freeWorkflow = event.workflowStart ?? (event.reimbursementChoiceControl ? 'reimbursement_claim' : undefined) ?? lineWorkflowCommand(event.messageText)
+        ?? (/^(?:ช่วย|ขอ)?(?:สร้าง|ทำ|เปิด)ใบเบิก|^ขอเบิก/u.test(event.messageText.trim()) ? 'reimbursement_claim' : undefined);
       const showsMenu = menuCommand === 'main' || isCapabilityQuestion(event.messageText);
       const mayRead = ['expense.read', 'expense.read_own', 'expense.read_related'].some(key => resolvedAccess.permissions.includes(key));
       const summaryRequested = mayRead && isFreeExpenseMonthSummaryRequest(event.messageText);
       const month = todayCivilDate('Asia/Bangkok').slice(0, 7);
       const fromDate = `${month}-01`;
       const toDate = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
-      if (!showsMenu && !summaryRequested && requestedWorkflows.length === 1) this.workflowTaskOutcomes.set(event, { status: 'REFUSED', kind: requestedWorkflows[0]!.id });
+      if (!showsMenu && !summaryRequested && (freeWorkflow || requestedWorkflows.length === 1)) this.workflowTaskOutcomes.set(event, { status: 'REFUSED', kind: freeWorkflow ?? requestedWorkflows[0]!.id });
       const text = summaryRequested
         ? await this.freeExpenseMonthSummary({ requestId, authSubject: identity.userId, userId: identity.userId, companyId,
           membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
           scopes: resolvedAccess.scopes, authProvider: 'line', freeExpenseDrafts: true }, fromDate, toDate)
         : showsMenu
           ? freeExpenseMenuReply(this.config.webBaseUrl, companyId, resolvedAccess.permissions)
-          : isExplicitFinalFinancialRequest(event.messageText)
+          : (freeWorkflow && ['approvals', 'expense_confirm', 'expense_pay', 'reimbursement_pay'].includes(freeWorkflow) || isExplicitFinalFinancialRequest(event.messageText))
             ? 'สิทธิ์ใช้ฟรียังยืนยัน อนุมัติ หรือจ่ายไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูทางเลือกค่ะ'
+            : freeWorkflow
+              ? 'สิทธิ์ใช้ฟรียังไม่รวมงานนี้ พิมพ์ ‘เมนูหลัก’ เพื่อดูทางเลือกค่ะ'
             : isExplicitSourceEditRequest(event.messageText)
               ? mayRead && resolvedAccess.permissions.includes('expense.update')
                 ? FREE_EXPENSE_TEXT_EDIT_REPLY
@@ -8032,7 +8123,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       permissions: resolvedAccess.permissions, entitlementDeniedPermissions: resolvedAccess.entitlementDeniedPermissions, scopes: resolvedAccess.scopes, authProvider: 'line',
     };
     const claimLocator = lineWorkflowPickerText(event.messageText, true);
-    if (!/^(?:เหตุผล|วัตถุประสงค์|เพื่อ|แก้|เปลี่ยน|บันทึก(?:รายจ่าย|ค่าใช้จ่าย|ค่า)|สร้าง(?:รายจ่าย|ค่าใช้จ่าย)|จ่ายค่า)/u.test(event.messageText.trim()) && !lineWorkflowCommand(event.messageText) && !claimLocator.question && claimLocator.rounds.length && /ใบเบิก|ค่า/u.test(event.messageText)) {
+    if (!/^(?:เหตุผล|วัตถุประสงค์|เพื่อ|แก้|เปลี่ยน|edit|บันทึก(?:รายจ่าย|ค่าใช้จ่าย|ค่า)|สร้าง(?:รายจ่าย|ค่าใช้จ่าย)|จ่ายค่า)/iu.test(event.messageText.trim()) && !lineWorkflowCommand(event.messageText) && !claimLocator.question && claimLocator.rounds.length && /ใบเบิก|ค่า/u.test(event.messageText)) {
       const owner = this.boundConversations.get(event);
       const collecting = owner && await this.reimbursementDrafts?.active?.({ ctx: expenseDraftCtx, owner: owner.owner, ownerEpoch: owner.epoch });
       if (collecting?.status !== 'COLLECTING') {
@@ -8041,15 +8132,27 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
         return;
       }
     }
-    const explicitWorkflow = lineWorkflowCommand(event.messageText);
-    if (explicitWorkflow && !this.mayStartWorkflow(explicitWorkflow, expenseDraftCtx, entitledFeatureKeys)) {
+    const previousTurn = conversationContext?.recentTurns.at(-1);
+    const correction = /^หมายถึง(?:เลข|บิล|ใบเลข)/u.test(event.messageText) && lineWorkflowPickerText(event.messageText).documents.length
+      && previousTurn?.userMessagePreviewComplete ? previousTurn : undefined;
+    const explicitWorkflow = lineWorkflowCommand(event.messageText) ?? (correction ? lineWorkflowCommand(correction.userMessagePreview!) : undefined);
+    const voucherStep = explicitWorkflow === 'payment_voucher' && lineVoucherWorkflowAction(event.messageText);
+    const assignedOnly = explicitWorkflow && ['approvals', 'reimbursement_reject'].includes(explicitWorkflow)
+      && !expenseDraftCtx.permissions.includes(explicitWorkflow === 'approvals' ? 'reimbursement.approve' : 'reimbursement.reject');
+    const bulkOthers = explicitWorkflow === 'expense_delete' && /ของทุกคน|ของคนอื่น/u.test(event.messageText)
+      && !expenseDraftCtx.permissions.includes('expense.read') && !expenseDraftCtx.permissions.includes('expense.read_related');
+    const assigned = !assignedOnly || expenseDraftCtx.permissions.includes('reimbursement.read_related') && this.workflowTargets
+      && this.mayStartWorkflow(explicitWorkflow!, expenseDraftCtx, entitledFeatureKeys)
+      && (await this.workflowTargets.pick(expenseDraftCtx, chatKeyHashOf(event), explicitWorkflow!, {}, 1)
+        .catch(error => { if (error instanceof ForbiddenException) return { targets: [] }; throw error; })).targets.length > 0;
+    if (explicitWorkflow && !voucherStep && (!assigned || bulkOthers || !this.mayStartWorkflow(explicitWorkflow, expenseDraftCtx, entitledFeatureKeys))) {
       await this.refuseWorkflowStart(event, expenseDraftCtx, entitledFeatureKeys, explicitWorkflow);
       return;
     }
     if (boundSemanticV2 && this.workflowTargets && typeof this.aiGateway.requestLineWorkflowClassify === 'function'
-      && explicitWorkflow && !isLineWorkflowCountRead(event.messageText)
-      && (/เดี๋ยวบอก|บอกทีหลัง|^หมายถึง/u.test(event.messageText)
-        || /หน่อย|มีหลายใบ/u.test(event.messageText) && !lineWorkflowPickerText(event.messageText, true).explicit)) {
+      && explicitWorkflow && !isLineWorkflowCountRead(event.messageText)) {
+      const owner = this.boundConversations.get(event);
+      if (owner && (await this.reimbursementDrafts?.active?.({ ctx: expenseDraftCtx, owner: owner.owner, ownerEpoch: owner.epoch }))?.status === 'COLLECTING') this.workflowSwitches.add(event);
       this.classifiedWorkflowStarts.set(event, explicitWorkflow);
       const previous = event.workflowStart;
       event.workflowStart = explicitWorkflow;

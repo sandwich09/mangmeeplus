@@ -2,14 +2,13 @@
  * Labels/presses read from ExpenseInputVatRight, ExpensesPages, CompanyProfilePage and the evidence page.
  * No API writes: the API assertions only verify the facts produced by the screens. */
 import { readFile } from 'node:fs/promises';
-import { inflateRawSync } from 'node:zlib';
 import type { Page } from '@playwright/test';
 import type { ExpenseDetail } from '@watchdog-bms/contracts';
 import { test, expect } from '../harness/fixtures';
 import { ensureBrowserLegalAcceptance } from '../harness/auth';
 import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
 import { QA_ACCOUNTS } from '../harness/roles';
-import { AFTER_PRESS, FIRST_SIGHT, idFromUrl, picture, pressForDownload, pressMenu, thaiDate, thaiMonth } from './journey-kit';
+import { AFTER_PRESS, FIRST_SIGHT, idFromUrl, picture, pressForDownload, pressMenu, thaiDate, thaiMonth, xlsxSheetXml } from './journey-kit';
 
 const SHOP = 'seed-local-input-vat-shop';
 const BRANCH = 'สำนักงานใหญ่ (สำนักงานใหญ่)';
@@ -97,15 +96,7 @@ async function assertPhoneConditions(page: Page) {
   }).toPass({ timeout: 5_000 });
 }
 function sheetRows(file: Buffer): string[][] {
-  let xml = '';
-  for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
-    const size = file.readUInt32LE(offset + 18), names = file.readUInt16LE(offset + 26), extra = file.readUInt16LE(offset + 28);
-    const start = offset + 30 + names + extra;
-    if (file.subarray(offset + 30, offset + 30 + names).toString() === 'xl/worksheets/sheet1.xml') {
-      const bytes = file.subarray(start, start + size); xml = (file.readUInt16LE(offset + 8) === 8 ? inflateRawSync(bytes) : bytes).toString(); break;
-    }
-    offset = start + size;
-  }
+  const xml = xlsxSheetXml(file, 'รายการค่าใช้จ่าย');
   expect(xml).toContain('<sheetData>');
   const decode = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
   return [...xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)].map(row => [...row[1]!.matchAll(/<c\b[^>]*>([\s\S]*?)<\/c>/g)].map(cell => decode(cell[1]!.match(/<t\b[^>]*>([\s\S]*?)<\/t>|<v>([^<]*)<\/v>/)?.slice(1).find(v => v !== undefined) ?? '')));
@@ -282,7 +273,7 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     const dialog = owner.getByRole('dialog', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true });
     // One line: the file count, then only the kinds of paper the bundle holds (a kind with none is left out).
     await expect(dialog.getByRole('status').filter({ hasText: /^\d+ ไฟล์ · / })).toHaveText(
-      /^\d+ ไฟล์ · เอกสารค่าใช้จ่าย [1-9]\d*(?: · (?:ใบรับรองแทนใบเสร็จ|หลักฐานการจ่าย|ใบสำคัญจ่าย|50 ทวิ) [1-9]\d*)*$/, AFTER_PRESS);
+      /^\d+ ไฟล์ · เอกสารค่าใช้จ่าย [1-9]\d*(?: · (?:ใบรับรองแทนใบเสร็จ|หลักฐานการจ่าย|ใบสำคัญจ่าย|เอกสารประกอบการจ่าย|50 ทวิ|ใบเบิก|ชุดเอกสารรายการ) [1-9]\d*)*$/, AFTER_PRESS);
     const download = await pressForDownload(owner, () => dialog.getByRole('button', { name: 'ดาวน์โหลดไฟล์ทั้งหมด', exact: true }).click());
     const zip = await readFile((await download.download.path())!);
     const files = new Map<string, Buffer>();

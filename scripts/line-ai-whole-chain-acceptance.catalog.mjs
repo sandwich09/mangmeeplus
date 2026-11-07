@@ -637,12 +637,12 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
     fixture: 'repository',
     assertions: {
       outcome: 'typed_claim_submit_starts_the_permission_scoped_submit_picker',
-      tool: 'one_workflow_classifier_call_zero_tier_two_calls',
+      tool: 'zero_text_model_calls_for_lexical_workflow_start',
       mutation: 'zero_final_mutation_before_signed_confirmation',
       delivery: 'same_claim_submit_picker_as_the_workflow_button',
     },
     evidence: [
-      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'B4 whole-chain typed claim submit reaches the scoped picker with one classifier call and zero Tier 2'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'B4 whole-chain typed claim submit reaches the scoped picker with zero text model calls'],
     ],
   },
   {

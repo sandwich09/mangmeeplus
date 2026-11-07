@@ -1289,7 +1289,7 @@ export const LINE_EXPENSE_PICKER_COPY = {
     wht_certificate: 'ไม่มีใบเตรียมจ่ายที่ออก 50 ทวิได้ค่ะ', substitute_receipt: 'ไม่มีรายการที่ทำใบรับรองแทนใบเสร็จได้ค่ะ' },
 };
 export function buildExpenseWorkflowPicker(result: LineWorkflowRecordTargets, workflow: ExpenseWorkflowId,
-  secret: string, company: string, user: string, webBaseUrl = '', payment: { pm?: string; pd?: string; pa?: string } = {}): LineReplyMessage {
+  secret: string, company: string, user: string, webBaseUrl = '', payment: { pm?: string; pd?: string; pa?: string } = {}, voucherAction?: 'VOUCHER_SUBMIT' | 'VOUCHER_APPROVE' | 'VOUCHER_PAY'): LineReplyMessage {
   const sellerName = scrubRecordText(result.sellerSearch, 60);
   const sellerText = result.sellerSearch === undefined ? undefined : result.total > 1
     ? ['ชื่อนี้ตรงกับผู้ขายหลายราย เลือกในเว็บหรือพิมพ์ชื่อให้ชัดขึ้นค่ะ',
@@ -1297,12 +1297,12 @@ export function buildExpenseWorkflowPicker(result: LineWorkflowRecordTargets, wo
     : sellerName ? `ไม่พบผู้ขายชื่อ ${sellerName} ในรายชื่อคู่ค้าค่ะ` : 'ไม่พบผู้ขายชื่อนี้ในรายชื่อคู่ค้าค่ะ';
   const text = !result.exhaustive ? [result.total > 300 ? `${LINE_CLAIM_PICKER_COPY.incomplete} พิมพ์เลขที่เอกสารหรือยอดเพื่อค้นให้แคบลงค่ะ` : 'ยังค้นรายการไม่ครบค่ะ กดค้นในเว็บ',
     ...(sellerText && result.total > 1 ? [sellerText] : [])].join('\n')
-    : sellerText ?? (result.targets.length ? result.latestOnly ? 'เลือกจากรายการล่าสุดได้เลยค่ะ' : LINE_EXPENSE_PICKER_COPY.choose[workflow]
+    : voucherAction ? `เลือกใบเตรียมจ่ายที่จะ${voucherAction === 'VOUCHER_SUBMIT' ? 'ส่งอนุมัติ' : voucherAction === 'VOUCHER_APPROVE' ? 'อนุมัติ' : 'บันทึกจ่าย'}ค่ะ` : sellerText ?? (result.targets.length ? result.latestOnly ? 'เลือกจากรายการล่าสุดได้เลยค่ะ' : LINE_EXPENSE_PICKER_COPY.choose[workflow]
       : workflow === 'wht_certificate' && result.latestPaidWithoutWithholding ? 'ใบเตรียมจ่ายที่จ่ายล่าสุดไม่ได้หักภาษี ณ ที่จ่าย จึงไม่มี 50 ทวิให้ออกค่ะ' : LINE_EXPENSE_PICKER_COPY.empty[workflow]);
   const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map((target, index) => ({
     label: `${scrubRecordText(target.label, 60) || `รายการ ${index + 1}`} · ${formatClaimMoney(target.amount, target.currency, 'th')}`,
     ...(workflow === 'substitute_receipt' ? { type: 'message' as const, text: String(index + 1) }
-      : { type: 'postback' as const, data: lineWorkflowOpenData(secret, company, user, EXPENSE_WORKFLOW_ACTIONS[workflow], target.id, payment) }),
+      : { type: 'postback' as const, data: lineWorkflowOpenData(secret, company, user, voucherAction ?? EXPENSE_WORKFLOW_ACTIONS[workflow], target.id, payment) }),
   }));
   const exit: LineSystemCardAction = webBaseUrl ? { type: 'uri', label: !result.exhaustive ? 'ค้นในเว็บ' : result.sellerSearch !== undefined ? 'เปิดในเว็บ' : result.total > 4 ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ',
     uri: `${webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(company)}/expenses${workflow === 'wht_certificate' ? '/disbursement-vouchers?status=PAID' : workflow === 'substitute_receipt' ? '/substitute-receipts/new' : ''}` }
@@ -1310,7 +1310,7 @@ export function buildExpenseWorkflowPicker(result: LineWorkflowRecordTargets, wo
   if (!actions.length) return buildWorkflowExitMessage(text, exit.type === 'uri' ? exit.uri : '', company, webBaseUrl, 'th', exit.label);
   if (!result.exhaustive || result.total > 4) actions.push(exit);
   const canonicalText = [text, ...actions.map(action => action.label)].join('\n');
-  const contents = drawLineSystemCard({ mascot: 'general', header: { lines: ['รายจ่าย', 'เลือกรายการ'] }, notes: [text],
+  const contents = drawLineSystemCard({ mascot: 'general', header: { lines: [voucherAction ? 'ใบเตรียมจ่าย' : 'รายจ่าย', 'เลือกรายการ'] }, notes: [text],
     buttons: actions.map(action => ({ action, icon: 'file' as const })) }, webBaseUrl);
   return contents ? asCompleteLineCard({ type: 'flex', altText: text, canonicalText, contents })
     : { type: 'text', text: canonicalText, quickReply: { items: [{ type: 'action', action: exit }] } };

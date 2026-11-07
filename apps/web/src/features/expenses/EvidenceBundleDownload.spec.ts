@@ -93,7 +93,8 @@ test('accounting evidence uses the primary bundle action and keeps split archive
     const downloads: number[] = [];
     const view = certificateHarness(() => h(EvidenceBundleActions, { accountant: true, plan: { fileCount: 121, partCount: parts }, busy: false, allMonths: false, onDownload: (part: number) => downloads.push(part) }));
     const html = view.render();
-    assert.match(html, /ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี/);
+    if (parts === 1) assert.match(html, /ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี/);
+    else { assert.match(html, /ดาวน์โหลดชุดที่ 1 จาก 2/); assert.match(html, /ดาวน์โหลดชุดที่ 2 จาก 2/); }
     assert.doesNotMatch(html, /ดาวน์โหลดไฟล์ทั้งหมด/);
     const buttons = view.nodes.filter(node => node.tag === 'button');
     assert.equal(buttons.length, parts);

@@ -16,6 +16,7 @@ import { deliveryHash } from '../domain/logic/line-delivery-plan.logic';
 
 export const VOUCHER_ACTIONS = ['VOUCHER_CREATE', 'VOUCHER_SUBMIT', 'VOUCHER_APPROVE', 'VOUCHER_RETURN', 'VOUCHER_PAY', 'VOUCHER_CANCEL', 'WHT_CERTIFICATE_ISSUE'] as const;
 export type VoucherAction = typeof VOUCHER_ACTIONS[number];
+export const LINE_VOUCHER_WORKFLOW_STATUS = { VOUCHER_SUBMIT: 'DRAFT', VOUCHER_APPROVE: 'PENDING_APPROVAL', VOUCHER_PAY: 'APPROVED' } as const;
 export type VoucherActionPayload = { action: VoucherAction; id: string; expenseIds?: string[]; requestedBillCount?: number; draft?: CreateDisbursementVoucherDraftInput;
   sources?: { id: string; revision: string }[]; version?: number; reason?: string; payment?: PayDisbursementVoucherInput; handoffs?: { id: string; revision: string }[]; payeeAddress?: string };
 const PERMISSIONS: Record<VoucherAction, string[]> = {
@@ -75,8 +76,8 @@ export class LineVoucherActionService {
   }
   async nextAction(ctx: RequestContext, id: string): Promise<VoucherAction | undefined> {
     const voucher = await this.vouchers.get(ctx, id, true);
-    const action = voucher.header.status === 'DRAFT' ? 'VOUCHER_SUBMIT'
-      : voucher.header.status === 'PENDING_APPROVAL' ? 'VOUCHER_APPROVE' : voucher.header.status === 'APPROVED' ? 'VOUCHER_PAY' : undefined;
+    const action = (Object.keys(LINE_VOUCHER_WORKFLOW_STATUS) as Array<keyof typeof LINE_VOUCHER_WORKFLOW_STATUS>)
+      .find(action => LINE_VOUCHER_WORKFLOW_STATUS[action] === voucher.header.status);
     if (action) { try { await this.authorize(ctx, action); return action; } catch (error) { if (!(error instanceof ForbiddenException)) throw error; } }
     return undefined;
   }

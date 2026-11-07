@@ -6,7 +6,7 @@
  * These helpers are the presses that every journey repeats.
  */
 import { randomBytes } from 'node:crypto';
-import { crc32, deflateSync } from 'node:zlib';
+import { crc32, deflateSync, inflateRawSync } from 'node:zlib';
 import type { Download, Locator, Page } from '@playwright/test';
 import { expect, test } from '../harness/fixtures';
 import { expectFitsScreen as checkScreenFit } from '../harness/screen-fit';
@@ -37,6 +37,23 @@ export async function fillShopIdentity(page: Page, companyId = MAIN_SHOP) {
 }
 
 /** Today as the screens print it, e.g. `13 ต.ค. 2569` (Buddhist year, Bangkok time). */
+/** The XML of one sheet of an .xlsx, found by its name. Pack v2 puts 'ต้องตามเอกสาร' first, so sheet1.xml is not the expense list. */
+export function xlsxSheetXml(file: Buffer, sheetName: string): string {
+  const parts = new Map<string, string>();
+  for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+    const size = file.readUInt32LE(offset + 18), length = file.readUInt16LE(offset + 26);
+    const start = offset + 30 + length + file.readUInt16LE(offset + 28), bytes = file.subarray(start, start + size);
+    parts.set(file.subarray(offset + 30, offset + 30 + length).toString(), (file.readUInt16LE(offset + 8) === 8 ? inflateRawSync(bytes) : bytes).toString());
+    offset = start + size;
+  }
+  const sheet = [...parts.get('xl/workbook.xml')!.matchAll(/<sheet\b([^>]+)>/g)].map(match => match[1]!).find(attributes => attributes.includes(`name="${sheetName}"`));
+  expect(sheet, `sheet ${sheetName}`).toBeTruthy();
+  const id = sheet!.match(/r:id="([^"]+)"/)![1]!;
+  const relation = [...parts.get('xl/_rels/workbook.xml.rels')!.matchAll(/<Relationship\b([^>]+)>/g)].map(match => match[1]!).find(attributes => attributes.includes(`Id="${id}"`))!;
+  const target = relation.match(/Target="([^"]+)"/)![1]!;
+  return parts.get(target.startsWith('/') ? target.slice(1) : `xl/${target}`)!;
+}
+
 export function thaiDate(date = new Date()) {
   return new Intl.DateTimeFormat('th-TH-u-ca-buddhist', {
     timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric',

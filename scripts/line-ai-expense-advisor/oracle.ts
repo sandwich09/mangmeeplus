@@ -222,7 +222,7 @@ export function checkWorkflowGold(task: WorkflowTask, evidence: GoldTurn[], gold
     const replacement = legacyLine && turn.unintendedEffects.some(item => item.kind === 'ReimbursementLine.delete' && item.recordId === legacyLine.id)
       ? (turn.businessSnapshot.business.ReimbursementLine ?? []).find(line => turn.unintendedEffects.some(item => item.kind === 'ReimbursementLine.create' && item.recordId === line.id)
         && ['companyId', 'reimbursementRequestId', 'lineNo', 'incurredDate', 'description', 'purpose', 'categoryKey', 'categoryLabelSnapshot', 'amount', 'attachmentId', 'linkedExpenseId', 'sourceExpenseSnapshotJson', 'attachmentSnapshotJson']
-          .every(key => isDeepStrictEqual(goldValue(line, key) ?? null, goldValue(legacyLine, key) ?? null))) : undefined;
+          .every(key => isDeepStrictEqual(goldValue(line, key === 'incurredDate' ? 'date' : key) ?? null, goldValue(legacyLine, key === 'incurredDate' ? 'date' : key) ?? null))) : undefined;
     const fallbackReplacement = replacement && (effect.kind === 'ReimbursementLine.delete' && effect.recordId === legacyLine!.id
       || effect.kind === 'ReimbursementLine.create' && effect.recordId === replacement.id);
     const allowed = turn.turnIndex === task.confirmTurn && (fallbackReplacement || (explicit ? effect.kind.endsWith('.delete') && task.goldTerminal.effect === 'EXPENSE_DELETED'

@@ -338,3 +338,48 @@ Round 14 fixes the v5 causes:
 The harness also stops counting a same-actor substitute pause, which writes metadata only, as a business write.
 
 Blind set v6 is ready: 219 conversations, 644 turns, overlap 0 with every earlier set, and 0 unknown press labels. It is the next gate, run once.
+
+## Round 14, blind set v6 and round 15, measured 2026-11-07
+**Blind set v6.** The run was on main `db49c5036` (round 14) and cost 242.54 THB. It covered 219 conversations, 644 turns and 215 tasks. MA3/MA6 is **not met**.
+
+| Measure | Result |
+|---|---|
+| W3 workflow | 82/147 (55.8%) |
+| Advisor tasks | 51/68 (57/68 without six scoring artifacts) |
+| W1 | 113/137 |
+| W2 | 73/147 |
+| W7 median | 1 |
+| W9 invalid | 0 |
+| W14 timeouts | 0 |
+
+- **No real wrong write.** The two wrongApplied effects were a scoring artifact. The rewritten legacy claim line `rbl_` is date-only, while the seed line carries a time on the same day. The oracle now compares `incurredDate` by Bangkok day.
+- **One press away from a wrong write.** On cancel, reject and void, a put-off sentence was stored as the reason, and the preview showed it.
+- **Causes, by failed workflow tasks:**
+
+  | Cause | Tasks |
+  |---|---|
+  | A typed "no receipt" sentence on the open receipt question was read as a substitute-receipt request. The author repeated one sentence in 16 conversations. | 16 |
+  | Voucher submit, approve and pay could not be started by text. | 12 |
+  | A claim named by Thai number words, "ที่ N", "แรก", requester first, or amount. | 11 |
+  | A named record followed by trailing words got a one-option choice card; also suffix numbers and plain openers with filler. | 11 |
+  | A put-off was stored as a value or not recorded as `DECLINED`. | 9 |
+  | A permission refusal was missing for staff approving, or an accountant rejecting or paying. A foreign-card press was not recorded as `REFUSED`. | 5 |
+  | A correction after a model read ended in the generic retry sentence. | 1 |
+
+- **Harness artifacts.** Five advisor tasks pressed a message-type quick reply ("เมนูหลัก"), which the replay could not press. The replay now sends that quick reply's text, as LINE does.
+- **Round 15** (develop, this commit) covers every cause above. It adds:
+  - one shared put-off detector, `isLineWorkflowPutOff`;
+  - typed option answers on the receipt question;
+  - spoken rounds and ordinals in the claim matcher;
+  - direct starts for named records;
+  - voucher steps by text;
+  - permission refusals before routing;
+  - `REFUSED` recording for foreign presses, model refusals and credit refusals;
+  - true free-shop wording per request.
+- **Controller fixes before landing.**
+  - **Voucher wording.** The word "ใบเตรียมจ่าย" itself contains "จ่าย", so voucher steps now need a verb that starts a word. A read such as "ดูใบเตรียมจ่ายเดือนนี้" stays a read.
+  - **Negation.** A negated verb ("อย่าลบ…", "ไม่ต้องยกเลิก…") starts nothing.
+  - **Combined no-receipt answers.** "ไม่มีใบเสร็จ ร้านไม่ออกให้" keeps the proposal path, so the words land in the missing-receipt reason, not the claim reason.
+  - **Put-offs.** Common lead-ins ("เอาไว้ก่อน", "พัก…ไว้") count.
+  - **Voucher matching.** Voucher lines also match by the seller's bill number.
+- **Next gate.** Blind set v7 has 202 conversations and 581 turns. No sentence repeats in more than two conversations, and presses are used only on postback buttons.

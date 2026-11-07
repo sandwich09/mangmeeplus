@@ -93,6 +93,8 @@ const EN_LABELS: Record<string, string> = {
   'ส่งตรวจ': 'Send for review', 'ลบร่าง': 'Delete draft', 'ยกเลิกรายการ': 'Void expense', 'ส่งใบเบิก': 'Submit claim',
   'ยกเลิกใบเบิก': 'Cancel claim', 'อนุมัติ': 'Approve', 'ไม่อนุมัติ': 'Reject', 'บันทึกจ่ายคืน': 'Record reimbursement',
   'บันทึกจ่าย': 'Record payment', 'สร้างใบเตรียมจ่าย': 'Prepare voucher', 'ส่งอนุมัติ': 'Submit for approval',
+  'ส่งใบเตรียมจ่ายอนุมัติ': 'Submit voucher for approval', 'จ่ายใบเตรียมจ่าย': 'Pay voucher',
+  'ผู้มีสิทธิ์อนุมัติใบเตรียมจ่าย': 'An authorized voucher approver', 'ผู้มีสิทธิ์จ่ายใบเตรียมจ่าย': 'An authorized voucher payer',
   'อนุมัติใบเตรียมจ่าย': 'Approve voucher', 'ส่งกลับแก้ไข': 'Return for correction', 'ยกเลิกใบเตรียมจ่าย': 'Cancel voucher',
   'ออก 50 ทวิ': 'Issue 50 bis', 'ดู / ดาวน์โหลด 50 ทวิ': 'View tax certificate', 'ให้น้องทำให้': 'Prepare this for me',
   'ข้อความของคุณ': 'Your message', 'เอกสารที่ส่งมา': 'Your document', 'ขอข้อมูลเพิ่ม': 'More information needed',

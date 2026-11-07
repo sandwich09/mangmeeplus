@@ -351,3 +351,8 @@ test('missing and ambiguous delivered press targets are scored failures without 
   assert.deepEqual(resolveRuntimePostback([action('one')], 'ยืนยัน'), { data: 'one' });
   assert.throws(() => runtimePressReceipts([], 1, { pressOrigin: { turn: 0 } }), /REPLAY_PRESS_ORIGIN_MISSING/);
 });
+
+test('R15 a gold press on a message quick reply sends its text', async () => {
+  const { resolveRuntimePostback } = await import('./line-ai-reliability-runtime');
+  assert.deepEqual(resolveRuntimePostback([{ type: 'text', text: 'เลือก', quickReply: { items: [{ type: 'action', action: { type: 'message', label: 'ไม่มีใบเสร็จ', text: 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้' } }] } }], 'ไม่มีใบเสร็จ'), { text: 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้' });
+});

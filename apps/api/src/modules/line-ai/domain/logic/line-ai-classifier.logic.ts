@@ -3,7 +3,7 @@ import Decimal from 'decimal.js';
  * Pure domain logic for LINE AI message classification.
  * No NestJS, Prisma, HTTP, LINE SDK, AI provider, or storage imports.
  */
-import { stripLineFieldParticles, verifyLineAiValueCandidatesV2, mapThaiDigits, type LineAiIntent, type LineAiAgent, LINE_CHAT_ACTIONS } from '@watchdog-bms/contracts';
+import { extractValueCandidates, isLineWorkflowPutOff, stripLineFieldParticles, verifyLineAiValueCandidatesV2, mapThaiDigits, type LineAiIntent, type LineAiAgent, LINE_CHAT_ACTIONS } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 import { staffMenuCommand } from './line-staff-menu.logic';
 // Thai and English mutation keywords that LINE must block
@@ -101,7 +101,7 @@ export function chooseAgent(intent: LineAiIntent, normalizedText: string): LineA
 /** Pending fields own plain answers; questions and new commands keep their normal route. */
 export function isPendingFieldAnswer(text: string, field: 'claim' | 'reason' | 'payee'): boolean {
   const value = stripLineFieldParticles(text);
-  return !!value && value.length <= 2000 && !lineWorkflowPickerText(text).question && !/[?？\n]/u.test(value)
+  return !!value && !isLineWorkflowPutOff(text) && !(lineWorkflowCommand(text) && lineWorkflowPickerText(text, true).explicit) && value.length <= 2000 && !lineWorkflowPickerText(text).question && !/[?？\n]/u.test(value)
     && (field === 'claim'
       ? !/^(?:ขอ|ช่วย|สร้าง|เบิก|บันทึก|ดู|ยกเลิก|ไม่ทำ|เปลี่ยน|แก้|ทำข้อ|ทำรายการ|ให้ทำ|ติดต่อเจ้าหน้าที่)/u.test(value)
       : !staffMenuCommand(value) && !parseLineCompanyCommand(value)
@@ -120,35 +120,46 @@ export function lineDocumentNumberMatches(recordNumber: string, typed: string): 
 
 /** Shared cues for the delivered-card matcher and the permitted-list matcher. */
 export function lineWorkflowPickerText(rawText: string, claim = false) {
-  const text = mapThaiDigits(rawText.trim());
-  const ordinalMatch = /(?:(?:อัน|ใบ|รายการ|ร่าง)ที่|ข้อ)\s*(\d+)/u.exec(text);
-  const ordinal = /(?:อัน|ใบ|รายการ)แรก/u.test(text) ? 1 : ordinalMatch ? Number(ordinalMatch[1]) : undefined;
+  const text = mapThaiDigits(rawText.trim()).replace(/ใบเบก/gu, 'ใบเบิก');
+  const ordinalMatch = /(?:(?:อัน|ใบ|รายการ|ร่าง)ที่|ข้อ)\s*(\d+|[ก-๙]+)/u.exec(text);
+  const ordinalNumber = ordinalMatch && extractValueCandidates(ordinalMatch[1]!).amounts[0]?.value;
+  const ordinal = /(?:อัน|ใบ|รายการ)แรก/u.test(text) ? 1 : ordinalNumber ? Number(ordinalNumber) : undefined;
   const namedRequester = claim ? stripLineFieldParticles(/(?:^|\s|ใบเบิก)ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ(?:ฉัน|คุณ)|\d|[?？]|$)/u.exec(text)?.[1] ?? '') || undefined : undefined;
   const self = claim && /ของ(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ|\d|[?？]|นะคะ|นะครับ|ค่ะ|ครับ|คะ|$)/u.test(text);
   const requester = self || namedRequester && /^(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)$/u.test(namedRequester) ? 'ฉัน' : namedRequester;
-  const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?เลขที่\s*([A-Za-zก-๙]+[-/]\d[\d/-]*|[A-Za-z0-9][A-Za-z0-9/-]*)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
+  const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?(?:เลขที่|เลขท้าย|ลงท้าย|เลข)\s*([A-Za-zก-๙]+[-/]\d[\d/-]*|[A-Za-z0-9][A-Za-z0-9/-]*)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
   const questionText = text.replace(/(?:อะไร|ใคร|ที่ไหน)ก็ได้/gu, '');
   const questionTail = text.replace(/[.!?,…ๆ]+$/u, '').trim();
   // "A หรือ B" ending in a question particle asks; amount alternatives and "…ก็ได้" are statements.
   const alternativeQuestion = /หรือ/u.test(text) && /(?:คะ|จ๊ะ|ครับ|คับ|ฮะ|งับ)[าะ]*$/u.test(questionTail)
     && stripLineFieldParticles(questionTail) !== questionTail && !/\d[\d,.]*\s*(?:บาท|บ\.?)?\s*หรือ\s*\d/u.test(text)
     && !/ก็ได้/u.test(text) && !/^(?:เงินสด|โอน|บัตร|เช็ค)/u.test(text);
-  const question = alternativeQuestion || /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
+  const question = alternativeQuestion || /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|ตรงไหน|ช่องไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
     .test((ordinal !== undefined || documents.length || /^(?:(?:ช่วย|ขอ)\s*)?(?:อนุมัติ|ส่ง|ยกเลิก|ลบ|บันทึก|ทำ|สร้าง|จ่าย|เลือก|เอา|ใช้)/u.test(text)) ? questionText.replace(/(?:หน่อย)?ได้(?:ไหม|มั้ย|ปะ)/gu, '') : questionText);
-  const rounds = [...text.matchAll(/รอบ\s*(\d+)/gu)].map(match => match[1]!);
+  const rounds = [...text.matchAll(/รอบ\s*(?:ที่\s*)?(\d+|แรก|[ก-๙]+)/gu)].flatMap(match => {
+    const number = match[1] === 'แรก' ? '1' : extractValueCandidates(match[1]!).amounts[0]?.value;
+    return number ? [number] : [];
+  });
   const explicit = ordinal !== undefined || documents.length > 0 || rounds.length > 0 || /สาขา\s*\S+/u.test(text) || !!requester;
   return { question, ordinal, requester, documents, rounds, explicit };
 }
 
 /** Explicit action language is also used before admission and when a person changes jobs. */
 export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/contracts').LineWorkflowId | undefined {
-  if (lineWorkflowPickerText(rawText).question) return;
-  const text = rawText.trim().replace(/^(?:หมายถึง|ขอทำอย่างเดียวก่อน)[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ)\s*)+/u, '');
+  if (lineWorkflowPickerText(rawText).question || /^(?:(?:ขอ|ช่วย|รบกวน)\s*)*(?:วิธี|อธิบาย|สอน)|^explain\b/iu.test(rawText.trim())) return;
+  const text = rawText.replace(/อนุมัด/gu, 'อนุมัติ').replace(/ปฎิเสธ|ปฏิเสธ/gu, 'ไม่อนุมัติ').replace(/ใบเบก/gu, 'ใบเบิก')
+    .replace(/\bapprove\s*(?:claim|ใบเบิก)/giu, 'อนุมัติใบเบิก').replace(/\bcancel\s*(?:claim|ใบเบิก)/giu, 'ยกเลิกใบเบิก')
+    .replace(/\breject\s*(?:claim|ใบเบิก)/giu, 'ไม่อนุมัติใบเบิก').replace(/\bsubmit\s*(?:claim|ใบเบิก)/giu, 'ส่งใบเบิกอนุมัติ')
+    .replace(/\bpay\s*(?:claim|ใบเบิก)/giu, 'จ่ายคืนใบเบิก').replace(/\s+(?=ใบเบิก)/gu, '').trim().replace(/^(?:หมายถึง|ขอทำอย่างเดียวก่อน)[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ)\s*)+/u, '');
+  // "อย่าลบร่าง", "ไม่ต้องยกเลิกใบเบิก": a negated verb never starts that job.
+  if (/(?:อย่า|ไม่ต้อง|ห้าม)\s*(?:ลบ|ยกเลิก|ยืนยัน|อนุมัติ|ส่ง|จ่าย|บันทึก|สร้าง|ทำ)/u.test(text)) return;
+  if (/ส่ง(?:ใบเบิก.*อนุมัติ|อนุมัติใบเบิก)/u.test(text)) return 'reimbursement_submit';
+  if (/ใบเตรียมจ่าย/u.test(text) && (/^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u.test(text) || lineVoucherWorkflowAction(text))) return 'payment_voucher';
   return ([
-    ['reimbursement_reject', /^ไม่อนุมัติใบเบิก/u], ['approvals', /^อนุมัติใบเบิก/u],
-    ['reimbursement_submit', /^ส่งใบเบิก.*อนุมัติ/u], ['reimbursement_cancel', /^(?:ยกเลิก|ถอน|ดึงกลับ)ใบเบิก/u],
-    ['expense_confirm', /^ยืนยัน(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_submit', /^ส่งตรวจ(?:บิล|รายจ่าย|ค่าใช้จ่าย)/u],
-    ['expense_delete', /^ลบ(?:ร่าง|บิล|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_void', /^ยกเลิก(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u],
+    ['reimbursement_reject', /ไม่อนุมัติใบเบิก/u], ['approvals', /(?<!ไม่)อนุมัติใบเบิก/u],
+    ['reimbursement_submit', /ส่งใบเบิก.*อนุมัติ/u], ['reimbursement_cancel', /(?:ยกเลิก|ถอน|ดึงกลับ)ใบเบิก/u],
+    ['expense_confirm', /ยืนยัน(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_submit', /ส่ง(?:ตรวจ(?:บิล|รายจ่าย|ค่าใช้จ่าย)|(?:บิล|รายจ่าย|ค่าใช้จ่าย).*ให้ตรวจ)/u],
+    ['expense_delete', /ลบ(?:ร่าง|บิล|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_void', /^ยกเลิก(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u],
     ['reimbursement_pay', /^(?:บันทึกจ่ายคืน|จ่ายคืนใบเบิก|โอนคืนผู้เบิก)/u], ['expense_pay', /^(?:บันทึกจ่าย|จ่ายเงิน)/u],
     ['payment_voucher', /^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u], ['substitute_receipt', /^ทำใบรับรองแทนใบเสร็จ/u],
   ] as Array<[import('@watchdog-bms/contracts').LineWorkflowId, RegExp]>).find(([, pattern]) => pattern.test(text))?.[0];
@@ -227,13 +238,26 @@ export function matchLineClaimTargets<T>(text: string, rows: T[], amounts: Array
   rest = rest.replace(/รอบ\s*\d+|ของ\S+|(?:อัน|ใบ|รายการ)ที่\s*\d+|บาท|บ\.?(?=\s|$)|ยอด|จำนวนเงิน|ค่ะ|ครับ|คะ|ใบเบิก|ร่าง/gu, '').trim();
   const terms = rest.split(/\s+/u).filter(s => s.length >= 3);
   if (!parsed.explicit && !money.length && (!terms.length || /แก้|เปลี่ยน/u.test(text))) return [];
+  const ordinalRows = parsed.requester && /(?:ใบ|อัน|รายการ)แรก/u.test(text)
+    ? rows.filter(candidate => parsed.requester === 'ฉัน' ? (candidate as any).requesterUserId === userId
+      : normalize((candidate as any).requesterDisplayNameSnapshot ?? '').includes(normalize(parsed.requester!))) : rows;
   return rows.filter((row, index) => {
     const r = row as any, corpus = words(r);
-    return (parsed.ordinal === undefined || parsed.ordinal === index + 1)
+    const ordinalIndex = ordinalRows === rows ? index : ordinalRows.indexOf(row);
+    return (parsed.ordinal === undefined || parsed.ordinal === ordinalIndex + 1)
       && (!parsed.requester || (parsed.requester === 'ฉัน' ? r.requesterUserId === userId : normalize(r.requesterDisplayNameSnapshot ?? '').includes(normalize(parsed.requester))))
       && parsed.rounds.every(round => [...mapThaiDigits(corpus).matchAll(/รอบ\s*(\d+)/gu)].some(m => m[1] === round))
       && parsed.documents.every(d => lineDocumentNumberMatches(r.requestNo ?? '', d))
       && money.length <= 1 && (!money.length || (!r.currency || r.currency === 'THB') && new Decimal(r.amount ?? 0).eq(money[0]!.value))
       && (parsed.explicit || money.length === 1 || terms.every(term => normalize(corpus).includes(normalize(term))));
   });
+}
+
+export function lineVoucherWorkflowAction(text: string): 'VOUCHER_SUBMIT' | 'VOUCHER_APPROVE' | 'VOUCHER_PAY' | undefined {
+  if (!/ใบเตรียมจ่าย/u.test(text)) return;
+  // Verbs start a word: "ใบเตรียมจ่ายที่อนุมัติแล้ว" or "…ที่จ่ายแล้ว" describes a voucher, it asks for no step.
+  const verb = ` ${text.replace(/ใบเตรียมจ่าย/gu, ' ')}`;
+  return /\s(?:บันทึก)?จ่าย|\bpay\b/iu.test(verb) ? 'VOUCHER_PAY'
+    : /\sส่ง\S*(?:\s.*)?อนุมัติ|\bsubmit\b/iu.test(verb) ? 'VOUCHER_SUBMIT'
+      : /\s(?:ขอ)?อนุมัติ|\bapprove\b/iu.test(verb) ? 'VOUCHER_APPROVE' : undefined;
 }

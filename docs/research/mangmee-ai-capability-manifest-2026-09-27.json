@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "59e940cffc9fe1cbcc3d7244e5c9e09c10627c40",
+  "sourceRevision": "736d7b249318ab76da5d2592af32de748b334d3e",
   "checkoutBranch": "land/expense-goal-20261104",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "fba2234a91925c78b53310a8fbbc5ae808d5f2d9d93d268f5961bb14ea935319"
+      "sha256": "8ed043361ae94428fe072e8b34f07a930027b29a0acb3054d1e61b28b6ead88f"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-message-buffer.service.ts",
@@ -73,7 +73,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-voucher-action.service.ts",
-      "sha256": "aea29f233688da47f2c30d46f3dba56b5caff1fdcf96c3023c45db070e99a243"
+      "sha256": "b2d09f65caf6169ed7112e9a41c4bf946be19a084f106011ad6267af6f834635"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "b9e83f7d0cffc4a52801f4adca27b250d2cb25145bf26b75bfa1b0c8cca0c6f8"
+      "sha256": "6835452a1b62cb51f14720fe57179571e25bd621b236494f9ecc2de0f6fec4cc"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -249,7 +249,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "db963d023344af0a811a525fcf691a9c032bc040bd3169b05db2bbde00328216"
+      "sha256": "701573f40d5d7e6e926a3fe09b11a2efce2cb5130d83cc53464755214712632c"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -10259,6 +10259,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-07T13:37:01.363Z",
-  "manifestDigest": "bcc966198266cdb9d2e5934a1f1aa15ab4a46b98b5e80330e48e2ac46574345e"
+  "generatedAt": "2026-11-07T14:45:12.358Z",
+  "manifestDigest": "2228d780c11c4a0ac99a1635bc6c40bc39a25a8d01c62755d7294157ab9bf66a"
 }

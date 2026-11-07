@@ -471,6 +471,12 @@ it('R14 a gold claim legacy fallback replacement allows only an identical line i
   const before: any = { turnIndex: 0, businessSnapshot: { business: { ReimbursementRequest: [{ id: 'claim', companyId: 'c', status: 'DRAFT' }], ReimbursementLine: [{ ...values, id: 'rbl_claim' }] } }, unintendedEffects: [] };
   const after: any = { turnIndex: 1, businessSnapshot: { business: { ReimbursementRequest: [{ id: 'claim', companyId: 'c', status: 'DRAFT' }], ReimbursementLine: [{ ...values, id: 'real-line' }] } }, unintendedEffects: [{ kind: 'ReimbursementLine.delete', recordId: 'rbl_claim' }, { kind: 'ReimbursementLine.create', recordId: 'real-line' }] };
   assert.equal(checkWorkflowGold(task, [before, after]).wrongApplied, 0);
+  const legacyTime = structuredClone(before); legacyTime.businessSnapshot.business.ReimbursementLine[0].incurredDate = '2026-11-05T08:30:00.000Z';
+  assert.equal(checkWorkflowGold(task, [legacyTime, after]).wrongApplied, 0);
+  legacyTime.businessSnapshot.business.ReimbursementLine[0].incurredDate = '2026-11-04T18:30:00.000Z';
+  assert.equal(checkWorkflowGold(task, [legacyTime, after]).wrongApplied, 0);
+  legacyTime.businessSnapshot.business.ReimbursementLine[0].incurredDate = '2026-11-05T18:30:00.000Z';
+  assert.equal(checkWorkflowGold(task, [legacyTime, after]).wrongApplied, 2);
   const changed = structuredClone(after); changed.businessSnapshot.business.ReimbursementLine[0].amount = '99';
   assert.equal(checkWorkflowGold(task, [before, changed]).wrongApplied, 2);
   const dateChanged = structuredClone(after); dateChanged.businessSnapshot.business.ReimbursementLine[0].incurredDate = '2026-11-06';

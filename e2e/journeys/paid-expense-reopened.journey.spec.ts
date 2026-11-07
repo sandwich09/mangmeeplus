@@ -1,10 +1,9 @@
-import { inflateRawSync } from 'node:zlib';
 /** A paid expense keeps its payment while its document and supporting evidence are corrected. */
 import type { Locator, Page } from '@playwright/test';
 import { QA_ACCOUNTS } from '../harness/roles';
 import { test, expect } from '../harness/fixtures';
 import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
-import { AFTER_PRESS, FIRST_SIGHT, fillShopIdentity, inOrder, picture, recordExpenseByHand, thaiDate, pressForDownload, pressForDownloadBuffer, pressMenu } from './journey-kit';
+import { AFTER_PRESS, FIRST_SIGHT, fillShopIdentity, inOrder, picture, recordExpenseByHand, thaiDate, pressForDownload, pressForDownloadBuffer, pressMenu, xlsxSheetXml } from './journey-kit';
 
 type ExpenseDetail = {
   status: string; paymentStatus: string; paidAmount: string; primaryAttachmentId: string | null;
@@ -229,16 +228,7 @@ for (const width of [390, 1280, 1556]) test(`@journey an owner reopens a paid co
     await expect(main.getByRole('link').filter({ hasText: seller }).filter({ visible: true })).toBeVisible(AFTER_PRESS);
     const file = await pressForDownloadBuffer(page, () => main.getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true }).click());
     expect(file.name).toMatch(/\.xlsx$/);
-    const sheet = new Map<string, Buffer>();
-    for (let offset = 0; file.buffer.readUInt32LE(offset) === 0x04034b50;) {
-      const size = file.buffer.readUInt32LE(offset + 18), length = file.buffer.readUInt16LE(offset + 26);
-      const name = file.buffer.subarray(offset + 30, offset + 30 + length).toString();
-      const start = offset + 30 + length + file.buffer.readUInt16LE(offset + 28);
-      const bytes = file.buffer.subarray(start, start + size);
-      sheet.set(name, file.buffer.readUInt16LE(offset + 8) === 8 ? inflateRawSync(bytes) : bytes);
-      offset = start + size;
-    }
-    const rows = [...sheet.get('xl/worksheets/sheet1.xml')!.toString().matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)].map(row =>
+    const rows = [...xlsxSheetXml(file.buffer, 'รายการค่าใช้จ่าย').matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)].map(row =>
       [...row[1]!.matchAll(/<c\b[^>]*>([\s\S]*?)<\/c>/g)].map(cell => cell[1]!.match(/<t\b[^>]*>([\s\S]*?)<\/t>|<v>([^<]*)<\/v>/)?.slice(1).find(value => value !== undefined) ?? ''));
     const [headers, ...data] = rows;
     for (const statutory of ['สิทธิภาษีซื้อ', 'มูลค่าก่อน VAT', 'หัก ณ ที่จ่าย (ทั้งเอกสาร)']) expect(headers).toContain(statutory);

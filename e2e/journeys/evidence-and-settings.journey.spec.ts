@@ -257,7 +257,7 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     await expect(owner.getByText(/ดาวน์โหลด Excel แล้ว/).first()).toBeVisible(AFTER_PRESS);
     await expect(main.getByText(/^สร้างเมื่อ /)).toBeVisible();
     await expect(main.getByRole('button', { name: 'ดาวน์โหลดไฟล์ทั้งหมด', exact: true })).toHaveCount(0);
-    const bundles = main.getByRole('button', { name: /^ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี( ชุดที่ \d+ จาก \d+)?$/ });
+    const bundles = main.getByRole('button', { name: /^ดาวน์โหลด(ชุดเอกสารให้สำนักงานบัญชี|ชุดที่ \d+ จาก \d+)$/ });
     await expect(bundles.first()).toBeEnabled(AFTER_PRESS);
     const count = await bundles.count();
     const packetNames: string[] = [];
@@ -567,6 +567,11 @@ const accountantAccessNote = 'ผู้ทำบัญชีที่เชิ�
 const apiRequire = createRequire(resolve('apps/api/package.json'));
 
 /** Only the disposable local proof database is used. Downloads still pass through real HTTP guards. */
+/** The fixture's branches stay in the shared shop; left active they break the one-active-branch withholding journey. */
+async function disableFixtureBranches(db: any, branches: Array<{ id: string }>) {
+  await db.branch.updateMany({ where: { id: { in: branches.map(branch => branch.id) } }, data: { status: 'DISABLED' } });
+}
+
 async function packFixture(api: APIRequestContext, request: APIRequestContext, companyId: string, count: number, withVoucher = false) {
   const connectionString = process.env['DATABASE_URL'];
   if (!connectionString) throw new Error('DATABASE_URL is required for the pack v2 proof fixture');
@@ -616,6 +621,8 @@ async function packFixture(api: APIRequestContext, request: APIRequestContext, c
     const claim = await db.reimbursementRequest.create({ data: { companyId, branchId: branches[0]!.id, requestNo: unique('RB-PACK'), requesterUserId: owner.id,
       requesterDisplayNameSnapshot: owner.displayName, reason: 'ทดสอบชุดเอกสาร', categoryKey: 'OTHER', amount: '200', incurredDate: date,
       status: 'APPROVED', paymentStatus: 'PAID', paymentTotalAmount: '200', outstandingAmount: '0', approvedAt: date, createdByUserId: owner.id } });
+    // The insert trigger writes fallback line 1 from the header; replace it as the repository does.
+    await db.reimbursementLine.deleteMany({ where: { reimbursementRequestId: claim.id } });
     for (let index = 0; index < 2; index++) {
       const line = await db.reimbursementLine.create({ data: { companyId, reimbursementRequestId: claim.id, lineNo: index + 1, incurredDate: date,
         description: 'รายจ่ายจากใบเบิก', categoryKey: 'OTHER', amount: '100', linkedExpenseId: records[index]!.id } });
@@ -629,8 +636,10 @@ async function packFixture(api: APIRequestContext, request: APIRequestContext, c
     let voucher: { id: string; documentNumber: string | null } | undefined;
     if (withVoucher) voucher = await db.disbursementVoucher.create({ data: { companyId, branchId: branches[0]!.id, documentNumber: unique('PV-PACK'),
       status: 'PAID', origin: 'DIRECT_PAYMENT', payeeName: 'ผู้รับเงินทดสอบ', payeeBasis: 'PREPARER_CONFIRMED', totalAmount: '200',
-      preparedByUserId: owner.id, paidByUserId: owner.id, paidDate: date, paidSnapshotJson: {}, pdfAttachmentId: claimAttachmentId,
-      lines: { create: records.slice(0, 2).map((row, position) => ({ companyId, expenseId: row.id, position, amount: '100', expensePaymentId: row.paymentId, coversPaymentId: row.paymentId })) } } });
+      preparedByUserId: owner.id, paidByUserId: owner.id, paidDate: date, paidSnapshotJson: {}, pdfAttachmentId: claimAttachmentId } });
+    // Lines carry companyId through a composite relation, so they are created after the voucher, not nested.
+    if (voucher) await db.disbursementVoucherLine.createMany({ data: records.slice(0, 2).map((row, position) => ({ companyId, voucherId: voucher!.id, expenseId: row.id, position,
+      amount: '100', expensePaymentId: row.paymentId, coversPaymentId: row.paymentId })) });
     test.info().annotations.push({ type: 'pack-v2-fixture', description: JSON.stringify({ companyId, branchIds: branches.map(branch => branch.id), expenseIds: records.map(row => row.id), claimId: claim.id, voucherId: voucher?.id }) });
     return { db, branches, records, claim, voucher, signed };
   } catch (error) { await db.$disconnect(); throw error; }
@@ -667,12 +676,17 @@ test('@journey invited accountant downloads pack v2 within assigned scope', asyn
     const { PDFDocument } = apiRequire('pdf-lib');
     expect((await PDFDocument.load(files.get(`ชุดเอกสารรายการ/${records[2]!.expenseNumber}.pdf`)!)).getPageCount()).toBeGreaterThan(1);
     const visibleText = [...files.keys(), ...workbookSheets(files.get('สารบัญ.xlsx')!, true, plan.partCount).values()].flat(3).join(' ');
-    for (const hidden of [records[1]!.expenseNumber, records[3]!.expenseNumber, claim.requestNo, voucher!.documentNumber]) expect(visibleText).not.toContain(hidden);
+    for (const hidden of [records[1]!.expenseNumber, records[3]!.expenseNumber, claim.requestNo]) expect(visibleText).not.toContain(hidden);
+    // The co-voucher also pays an unselected expense, so its file stays out. Its number may still show on the selected
+    // expense's own payment row: the accountant holds expense.disbursement.read.
+    expect([...files.keys()].some(name => name.includes(voucher!.documentNumber!))).toBe(false);
     const denied = await accountant.post(`companies/${companyId}/expenses/accountant-package/bundle-plan`, { data: { branchId: branches[1]!.id } });
     expect(denied.status()).toBe(403);
     await page.goto(`/companies/${companyId}/expenses?month=${records[0]!.expenseDate.toISOString().slice(0, 7)}`, FIRST_SIGHT);
     await page.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
     await expect(page.getByRole('dialog').getByText(accountantAccessNote, { exact: true })).toBeVisible(AFTER_PRESS);
+    // The list reloads once the accountant's assigned branch applies; an export started before that is dropped as stale.
+    await expect(page.getByRole('dialog')).toContainText(branches[0]!.name, AFTER_PRESS);
     const download = await pressForDownloadBuffer(page, () => page.getByRole('dialog').getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true }).click());
     expect(workbookSheets(download.buffer).get('รายการค่าใช้จ่าย')!.flat()).not.toContain(records[3]!.expenseNumber);
   } finally {
@@ -681,6 +695,7 @@ test('@journey invited accountant downloads pack v2 within assigned scope', asyn
       if (membership.branchScopes.length) await db.membershipBranchScope.createMany({ data: membership.branchScopes.map((scope: any) => ({ membershipId: membership.id, branchId: scope.branchId })) });
       await db.companyMembership.update({ where: { id: membership.id }, data: { branchScopeMode: membership.branchScopeMode, defaultBranchId: membership.defaultBranchId } });
     }
+    await disableFixtureBranches(db, branches);
     await db.$disconnect();
   }
 });
@@ -707,7 +722,7 @@ test('@journey pack v2 export states and accountant hint at 390 1280 1556', asyn
       await test.info().attach(`pack-v2-${width}-${state}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
     };
     await capture('loading'); release();
-    const parts = card.getByRole('button', { name: /^ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี/ });
+    const parts = card.getByRole('button', { name: /^ดาวน์โหลด(ชุดเอกสารให้สำนักงานบัญชี|ชุดที่ \d+ จาก \d+)$/ });
     await expect(parts).toHaveCount(2, AFTER_PRESS);
     await expect(parts.first()).toHaveClass(/mangmee-btn-primary/);
     await expect(parts.nth(1)).toHaveClass(/mangmee-btn-secondary/);
@@ -765,9 +780,11 @@ test('@journey pack v2 workbook and extracted packet links reconcile', async ({ 
     const sum = (values: string[]) => values.reduce((total, value) => total + Math.round(Number(value.replace(/,/g, '')) * 100), 0);
     const expenseRows = sheets.get('รายการค่าใช้จ่าย')!;
     const summary = sheets.get('สรุปรายเดือน')!.find(row => row[0] === 'รายจ่ายที่เลือก')!;
-    expect(sum([summary[5]!])).toBe(sum(expenseRows.map(row => row[14]!)));
-    expect(sum([summary[8]!])).toBe(sum(expenseRows.map(row => row[19]!)));
-    expect(sum([summary[9]!])).toBe(sum(expenseRows.map(row => row[20]!)));
+    // A shop with two branches adds the 'สาขาของร้าน' column at index 2, which moves every amount one column right.
+    const shift = expenseRows[0]!.length - (headers['รายการค่าใช้จ่าย'].length + 1);
+    expect(sum([summary[5]!])).toBe(sum(expenseRows.map(row => row[14 + shift]!)));
+    expect(sum([summary[8]!])).toBe(sum(expenseRows.map(row => row[19 + shift]!)));
+    expect(sum([summary[9]!])).toBe(sum(expenseRows.map(row => row[20 + shift]!)));
     const plan = await json<{ partCount: number; counts: { claimForms: number; recordPacks: number } }>(await api.post(`companies/${companyId}/expenses/accountant-package/bundle-plan`, { data: selection }));
     expect(plan.partCount).toBeGreaterThan(1); expect(plan.counts).toMatchObject({ claimForms: 1, recordPacks: 31 });
     const extracted = new Map<string, Buffer>(), locations = new Map<string, number>();
@@ -803,5 +820,5 @@ test('@journey pack v2 workbook and extracted packet links reconcile', async ({ 
     const partialSheets = workbookSheets(partial.get('สารบัญ.xlsx')!, true);
     expect(partialSheets.get('ต้องตามเอกสาร')!.flat()).toContain('ใบเบิกรวมรายการนอกชุดที่เลือก จึงไม่ได้รวมใบนี้');
     expect([...partial.keys()].join(' ')).not.toContain(records[1]!.expenseNumber);
-  } finally { await db.$disconnect(); }
+  } finally { await disableFixtureBranches(db, fixture.branches); await db.$disconnect(); }
 });

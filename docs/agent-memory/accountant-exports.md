@@ -220,3 +220,23 @@ Next: Controller reviews scope, protected-PDF classification, signed-claim selec
   - the proof-stack journeys (`--grep 'pack v2|invited accountant|free shops'`);
   - browser checks at 390, 1280 and 1556 px;
   - the real-HTTP 300-expense proof.
+
+## Pack v2 round 3 proof (P5 controller checks), 2026-11-07
+- **Real PostgreSQL.** `prisma-expense.repository.payment.spec.ts` passes 214 of 214. Its 3 pack v2 tests had never run against a database, and their test code was wrong in two ways:
+  - a nested claim line passed `companyId`;
+  - the workbook zip was read as plain text.
+- **Proof-stack journeys.** All 111 run on a reset proof database. The only failures left are the 3 "office category mapping" journeys. They are pre-existing: they have been stale since `4b0030885` moved the office codes into the edit dialog.
+- **One real screen defect, fixed.** In a split month, the accountant part buttons wrapped to two lines at 390 px, so the grouped buttons had different heights (44 vs 60 px).
+  - Split parts are now named "ดาวน์โหลดชุดที่ N จาก M".
+  - A single part keeps "ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี".
+  - The guide wording for this is queued for the pack review.
+- **Test fixes, not product fixes:**
+  - the pack fixture replaces the trigger's fallback claim line;
+  - voucher lines are created after the voucher;
+  - the 'สาขาของร้าน' column shift is handled;
+  - the accountant's voucher number on its own payment row is allowed, because the role holds `expense.disbursement.read`;
+  - fixture branches are disabled after each test, because they broke the one-active-branch withholding journey;
+  - two older journeys read the expense sheet by name (`xlsxSheetXml`), because sheet1 has been 'ต้องตามเอกสาร' since round 1;
+  - the count-line pattern accepts ใบเบิก and ชุดเอกสารรายการ.
+- **Follow-up, not fixed.** The expense-page Excel export drops a stale result silently when the list reloads mid-export: no download and no notice.
+- **Still open.** The real-HTTP 300-expense measurement.

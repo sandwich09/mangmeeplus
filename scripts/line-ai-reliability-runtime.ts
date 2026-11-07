@@ -168,15 +168,16 @@ export function instrumentRuntimeMethod(target: any, method: string, instrument:
   target[method] = wrapper;
 }
 
-export function resolveRuntimePostback(messages: unknown, label: string): { data?: string; failure?: 'press_target_not_delivered' | 'press_target_ambiguous' } {
+export function resolveRuntimePostback(messages: unknown, label: string): { data?: string; text?: string; failure?: 'press_target_not_delivered' | 'press_target_ambiguous' } {
   const choices = new Set<string>();
   const visit = (value: any, depth = 0): void => {
     if (!value || typeof value !== 'object' || depth > 30) return;
-    if (value.type === 'postback' && value.label === label && typeof value.data === 'string') choices.add(value.data);
+    if (value.type === 'postback' && value.label === label && typeof value.data === 'string') choices.add(JSON.stringify({ data: value.data }));
+    else if (value.type === 'action' && value.action?.type === 'message' && value.action.label === label && typeof value.action.text === 'string') choices.add(JSON.stringify({ text: value.action.text }));
     else for (const child of Object.values(value)) visit(child, depth + 1);
   };
   visit(messages);
-  return choices.size === 1 ? { data: [...choices][0]! } : { failure: choices.size ? 'press_target_ambiguous' : 'press_target_not_delivered' };
+  return choices.size === 1 ? JSON.parse([...choices][0]!) : { failure: choices.size ? 'press_target_ambiguous' : 'press_target_not_delivered' };
 }
 
 export function selectRuntimePostback(messages: unknown, label: string): string {
@@ -740,14 +741,14 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
           modelCalls: 0, costSatang: 0, modelWorkCompletedAtMs: null, delivery, falseRefusalOrHandoff: false, validationFailures: replayFailure ? [replayFailure.reason] : [], criticalErrors: [], versions: manifest.versions };
       }
       const assetIds = action?.type === 'camera' ? [action.assetId] : turn.attachmentIds;
-      const messageText = action?.type === 'message' ? action.text : turn.user;
-      const inputs = action?.type === 'postback' ? [{ type: 'postback', label: action.label }]
+      const messageText = selection?.text ?? (action?.type === 'message' ? action.text : turn.user);
+      const inputs = action?.type === 'postback' && !selection?.text ? [{ type: 'postback', label: action.label }]
         : [...assetIds.map(id => runtimeAttachmentMessage(runtimeAssetMessageId(attemptId, turnIndex, id), snapshot!.assets[id], repoRoot)), ...(messageText ? [{ type: 'text', text: messageText, id: `${prefix}-text` }] : [])];
       const before = await readEffects(), usageIds = new Set<string>((await client.aiUsageEvent.findMany({ select: { id: true } })).map((item: any) => item.id));
       const at = Date.now();
       active = { acceptedAt: at, eventIds: inputs.map((_, index) => `${prefix}-${index}`), before, usageIds,
         tools: [], results: [], responses: [], deliveryCoverage: null, missing: [], requests: [], completedAt: null, errors: [], critical: [], receipts: [], toolResults: [], gatewayResponses: [], reviewBefore: await readReviewState(),
-        inputKind: action?.type ?? (assetIds.length ? 'camera' : 'message'), action, pressFrom: actorKey, previewEntries: [], lineUserId: actorContext.lineUserId };
+        inputKind: selection?.text ? 'message' : action?.type ?? (assetIds.length ? 'camera' : 'message'), action, pressFrom: actorKey, previewEntries: [], lineUserId: actorContext.lineUserId };
       turnStates.push(active);
       const body = { destination: row.fixture.messagingChannelId, events: inputs.map((message, index) => ({
         ...(postbackData ? { type: 'postback', postback: { data: postbackData } } : { type: 'message', message }),

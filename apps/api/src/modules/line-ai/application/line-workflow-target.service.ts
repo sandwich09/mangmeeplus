@@ -1,10 +1,11 @@
+import { lineDocumentNumberMatches, lineWorkflowPickerText } from '../domain/logic/line-ai-classifier.logic';
 import { ListExpensesUseCase } from '../../expenses/application/use-cases/expense-draft.use-case';
 import { expenseListReadScope } from '../../expenses/application/expense-list-read-scope';
 import { validateStatusTransition } from '../../expenses/domain/logic/expense-status.logic';
 import { ListCounterpartiesUseCase } from '../../accounting-documents/application/use-cases/counterparty.use-case';
 import { DisbursementVoucherUseCase } from '../../expenses/application/use-cases/disbursement-voucher.use-case';
 import { ListSubstituteReceiptCandidatesUseCase } from '../../expenses/application/use-cases/substitute-receipt.use-case';
-import { LineVoucherActionService } from './line-voucher-action.service';
+import { LINE_VOUCHER_WORKFLOW_STATUS, LineVoucherActionService } from './line-voucher-action.service';
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { isExpenseDeletableState, type LineWorkflowId, type ReimbursementRequestSummary, type RequestContext, type ExpenseStatus, type ExpensePaymentStatus } from '@watchdog-bms/contracts';
 import { ListReimbursementsUseCase } from '../../reimbursements/application/use-cases/reimbursement-request.use-case';
@@ -14,10 +15,10 @@ import { LineExpenseActionService, type ExpenseAction } from './line-expense-act
 import { CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ExpenseWorkflowId, type ClaimWorkflowId } from '../domain/logic/line-reimbursement-approval-control.logic';
 
 export type LineWorkflowRecordTarget = { id: string; label: string; amount: string; currency: string;
-  documentNumbers?: string[]; roundText?: string; revision?: string; branchId?: string };
+  status?: string; documentNumbers?: string[]; roundText?: string; revision?: string; branchId?: string };
 export type LineWorkflowRecordTargets = { targets: LineWorkflowRecordTarget[]; total: number; exhaustive: boolean;
   latestPaidWithoutWithholding?: boolean; latestOnly?: boolean; sellers?: Array<{ id: string; label: string }>; sellerSearch?: string };
-type WorkflowSlots = { search?: string; vendorName?: string; vendorCounterpartyId?: string; includeIneligible?: boolean };
+type WorkflowSlots = { voucherAction?: 'VOUCHER_SUBMIT' | 'VOUCHER_APPROVE' | 'VOUCHER_PAY'; search?: string; vendorName?: string; vendorCounterpartyId?: string; includeIneligible?: boolean };
 export type LineWorkflowTargets = { targets: ReimbursementRequestSummary[]; total: number; exhaustive: boolean; receiptBlocked?: ReimbursementRequestSummary[]; notAssigned?: ReimbursementRequestSummary[] };
 
 @Injectable()
@@ -56,9 +57,10 @@ export class LineWorkflowTargetService {
         const allowed = act === 'REIMBURSEMENT_APPROVE' ? claim.approvalActions?.canApprove
           : act === 'REIMBURSEMENT_REJECT' ? claim.approvalActions?.canReject
             : act === 'REIMBURSEMENT_SUBMIT' ? readiness?.ready ?? await this.actions.canSubmitClaim(ctx, claim.id)
-              : (act !== 'REIMBURSEMENT_CANCEL' || canTransition(claim.status, 'CANCELLED'))
+              : (act !== 'REIMBURSEMENT_RECORD_PAYMENT' || ['APPROVED', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'].includes(claim.status))
+                && (act !== 'REIMBURSEMENT_CANCEL' || canTransition(claim.status, 'CANCELLED'))
                 && await this.actions.permitted(ctx, { expenseId: claim.id, createdByUserId: claim.requesterUserId, preview: { action: act as ExpenseAction } });
-        if (!allowed && ['REIMBURSEMENT_APPROVE', 'REIMBURSEMENT_REJECT'].includes(act)) notAssigned.set(claim.id, claim);
+        if (!allowed && ['REIMBURSEMENT_APPROVE', 'REIMBURSEMENT_REJECT', 'REIMBURSEMENT_RECORD_PAYMENT'].includes(act)) notAssigned.set(claim.id, claim);
         if (allowed) targets.set(claim.id, claim);
         else if (readiness && 'receiptMissing' in readiness && readiness.receiptMissing
           && claim.status === 'DRAFT' && claim.requesterUserId === ctx.userId) receiptBlocked.set(claim.id, claim);
@@ -86,6 +88,25 @@ export class LineWorkflowTargetService {
   }
 
   private async pickRecords(ctx: RequestContext, workflow: ExpenseWorkflowId, slots: WorkflowSlots): Promise<LineWorkflowRecordTargets> {
+    if (workflow === 'payment_voucher' && slots.voucherAction) {
+      await this.voucherActions.authorize(ctx, slots.voucherAction);
+      const expected = LINE_VOUCHER_WORKFLOW_STATUS[slots.voucherAction];
+      const result = await this.readPages([null], async (_set, page) => {
+        const list = await this.vouchers.listForLine(ctx, { page, pageSize: 100, ...(slots.includeIneligible ? {} : { status: expected }) });
+        return { rows: list.data, total: list.total };
+      });
+      const documents = lineWorkflowPickerText(slots.search ?? '').documents;
+      const targets: LineWorkflowRecordTarget[] = [];
+      for (const row of result.rows) {
+        const numbers = row.documentNumber ? [row.documentNumber] : [];
+        if (documents.length && !documents.every(document => numbers.some(number => lineDocumentNumberMatches(number, document)))) {
+          const detail = await this.vouchers.get(ctx, row.id, true);
+          numbers.push(...detail.lines.flatMap(line => [line.expenseNumber, line.vendorInvoiceNumber].filter((value): value is string => !!value)));
+        }
+        targets.push({ id: row.id, status: row.status, label: [row.documentNumber, row.payeeName].filter(Boolean).join(' · '), amount: row.totalAmount, currency: 'THB', documentNumbers: numbers });
+      }
+      return { targets, total: result.total, exhaustive: result.exhaustive };
+    }
     if (workflow === 'wht_certificate') {
       await this.voucherActions.authorize(ctx, 'WHT_CERTIFICATE_ISSUE');
       const result = await this.readPages([null], async (_set, page) => {

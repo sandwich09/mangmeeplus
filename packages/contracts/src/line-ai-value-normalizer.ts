@@ -670,6 +670,11 @@ export function extractValueCandidates(
   }
 
   for (const match of mapped.matchAll(/(?:รอบ|ข้อ|(?:อัน|ใบ|รายการ|ร่าง)ที่)\s*\d+/gu)) recordDateRange(match.index, match.index + match[0].length);
+  for (const match of mapped.matchAll(/(?:รอบ\s*(?:ที่\s*)?|(?:อัน|ใบ|รายการ|ร่าง)ที่\s*)/gu)) {
+    const start = match.index + match[0].length;
+    const end = /^\d+/u.exec(mapped.slice(start))?.[0].length ?? (mapped.startsWith('แรก', start) ? 3 : (scanThaiWordTokens(mapped, start)?.end ?? start) - start);
+    if (end) recordDateRange(match.index, start + end);
+  }
 
   // 6) Digit amounts (Thai digits already mapped). Tokens inside date spans are excluded so
   //    a year like 2537 can never legitimize an amount of 2537.

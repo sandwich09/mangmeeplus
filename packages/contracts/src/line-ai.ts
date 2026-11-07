@@ -2326,3 +2326,9 @@ export function stripLineFieldParticles(text: string): string {
   // Punctuation alone is kept ("หจก."); it goes only together with a removed particle.
   return removed ? words.join('').trim() : text.trim();
 }
+
+/** A put-off is a task control, never a collected field. */
+export function isLineWorkflowPutOff(text: string): boolean {
+  const value = stripLineFieldParticles(text.normalize('NFC'));
+  return !/[?？]|ไหม|มั้ย/u.test(value) && /^(?:(?:เอา|ขอ|งั้น|ก็|โอเค|ok)\s*)*(?:ไว้ก่อน|พัก(?:เรื่องนี้|งานนี้|ใบรับรองแทนใบเสร็จ|ใบรับรอง)?(?:ไว้)?ก่อน|พัก\S{0,30}?ไว้(?=$|\s|ก่อน|ค่ะ|คะ|ครับ|คับ|ฮะ|จ้ะ|จ๊ะ|จ้า|นะ)|ไว้ทำทีหลัง|เดี๋ยว(?:กลับมา|ค่อยมา|ค่อย)?ทำ|ยังไม่ทำตอนนี้|(?:ไม่ทำต่อ|ไม่ต่อ|ไม่ทำ|ไม่เอา|ไม่ต้องทำ)$|ขอไปถาม[^\n]*ก่อน|รอก่อน|pause(?: the)?(?: substitute receipt)?(?: for now)?(?:$|\s))/iu.test(value);
+}

@@ -130,3 +130,9 @@ it('R14 text particle trimming preserves exact user proofs and leaves particle-o
     }
   }
 });
+
+it('R15 the shared put-off detector accepts a trailing explanation and excludes values and questions', async () => {
+  const { isLineWorkflowPutOff } = await import('./line-ai.js');
+  for (const text of ['ไว้ก่อนนะ เดี๋ยวค่อยมาทำต่อ', 'พักเรื่องนี้ไว้ก่อน ขอไปถามคนรับเงิน', 'เดี๋ยวกลับมาทำ', 'ยังไม่ทำตอนนี้', 'ขอไปถามคนรับเงินก่อน', 'รอก่อนนะ ต้องหาบิล', 'เอาไว้ก่อนครับ', 'งั้นไว้ก่อน', 'พักไว้ค่ะ', 'พักงานนี้ไว้ก่อนนะ']) assert.equal(isLineWorkflowPutOff(text), true, text);
+  for (const text of ['ไม่ทำใบรับรองแทนใบเสร็จแล้ว', 'ไม่เอาแล้ว', 'ยังไม่ทำ', 'ร้านสมใจ', 'พักไว้ก่อนได้ไหม', 'ค่าที่พักพนักงาน', 'พักผ่อนพนักงานประจำปี']) assert.equal(isLineWorkflowPutOff(text), false, text);
+});

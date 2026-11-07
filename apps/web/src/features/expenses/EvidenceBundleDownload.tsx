@@ -25,9 +25,10 @@ export function EvidenceBundleActions({ plan, busy, allMonths, onDownload, showC
     {showCounts && plan.missingReceiptCount > 0 && <p className="text-sm text-warning-700" role="status">ยังไม่มีใบเสร็จ {plan.missingReceiptCount} รายการ</p>}
     {(plan.partCount > 0 || excelAction) && <ActionGroup align="start">
       {excelAction}
+      {/* A split month names each part short, so every button in the group stays one line at 390 px. */}
       {Array.from({ length: plan.partCount }, (_, index) => <button key={index} type="button" className={accountant && index === 0 ? primaryButtonClass : secondaryButtonClass}
         disabled={busy} aria-busy={busy} onClick={() => onDownload(index + 1)}>
-        {accountant ? `ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี${plan.partCount > 1 ? ` ชุดที่ ${index + 1} จาก ${plan.partCount}` : ''}` : plan.partCount === 1 ? 'ดาวน์โหลดไฟล์ทั้งหมด' : `ไฟล์ชุดที่ ${index + 1} จาก ${plan.partCount}`}
+        {accountant ? plan.partCount > 1 ? `ดาวน์โหลดชุดที่ ${index + 1} จาก ${plan.partCount}` : 'ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี' : plan.partCount === 1 ? 'ดาวน์โหลดไฟล์ทั้งหมด' : `ไฟล์ชุดที่ ${index + 1} จาก ${plan.partCount}`}
       </button>)}
     </ActionGroup>}
     {plan.fileCount > 0 && <p className="text-sm text-gray-500">แตกไฟล์ ZIP ก่อน แล้วเปิด สารบัญ.xlsx ในคอมพิวเตอร์ เพื่อกดเปิดเอกสาร</p>}

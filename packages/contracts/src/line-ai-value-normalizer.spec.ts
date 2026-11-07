@@ -1347,3 +1347,9 @@ it('R14 particle trimming drops only whole particle words, never the end of a re
     assert.equal(stripLineFieldParticles(text), want, text);
   }
 });
+
+it('R15 spoken rounds and row ordinals never become claim amounts', () => {
+  for (const text of ['รอบห้า', 'รอบที่หก', 'รอบแรก', 'ใบที่สอง', 'รอบสามสิบเอ็ด']) {
+    assert.deepEqual(extractValueCandidates(`260 บาท ${text}`, '2026-11-07').amounts.map(a => a.value), ['260'], text);
+  }
+});

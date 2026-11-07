@@ -9,6 +9,7 @@ import { isSerializationFailure } from '../../../common/database/prisma-error';
 import { after, before, describe, it } from 'node:test';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { inflateRawSync } from 'node:zlib';
 import assert from 'node:assert/strict';
 import Decimal from 'decimal.js';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ValidationPipe } from '@nestjs/common';
@@ -488,7 +489,8 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
       const original = await tx.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId, status: 'CONFIRMED', expenseDate: new Date('2026-10-01') } });
       const claim = await tx.reimbursementRequest.create({ data: { companyId, branchId, requesterUserId: userId, requesterDisplayNameSnapshot: 'ผู้เบิก',
         reason: 'ค่าเดินทาง', categoryKey: 'travel', amount: '100', incurredDate: new Date('2026-10-01'), createdByUserId: userId,
-        status: 'PAID', requestNo: `RB-${randomUUID()}`, lines: { create: [{ companyId, lineNo: 1, incurredDate: new Date('2026-10-01'), description: 'ค่าเดินทาง', categoryKey: 'travel', amount: '100', linkedExpenseId: original.id }] } }, include: { lines: true } });
+        // The insert trigger writes line 1 from the header (ensure_reimbursement_request_fallback_line).
+        status: 'PAID', requestNo: `RB-${randomUUID()}`, linkedExpenseId: original.id }, include: { lines: true } });
       const projection = await tx.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId, status: 'CONFIRMED', expenseDate: new Date('2026-10-01'),
         sourceReimbursementRequestId: claim.id, sourceReimbursementLineId: claim.lines[0]!.id } });
       const repo = new PrismaReimbursementRepository({ client: tx } as any, {} as any);
@@ -526,7 +528,14 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
         const result = await useCase.execute({ ...context(), companyId: shop.id, roles: [], permissions: ['expense.read', 'expense.export'], scopes: { branchIds: [branch.id] } },
           { yearMonth: '2026-09', expenseIds: [first.id, excluded.id, foreign.id] });
         assert.deepEqual(result.indexRows.map(row => row.expense_number), ['PACK-A']);
-        const workbook = Buffer.from(result.indexXlsxBase64, 'base64').toString();
+        // The workbook is a zip; read the text of every part.
+        const file = Buffer.from(result.indexXlsxBase64, 'base64'), parts: string[] = [];
+        for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+          const size = file.readUInt32LE(offset + 18), length = file.readUInt16LE(offset + 26);
+          const start = offset + 30 + length + file.readUInt16LE(offset + 28), data = file.subarray(start, start + size);
+          parts.push((file.readUInt16LE(offset + 8) === 8 ? inflateRawSync(data) : data).toString()); offset = start + size;
+        }
+        const workbook = parts.join('');
         assert.ok(workbook.includes('รายงานภาษีซื้อ'));
         assert.ok(workbook.includes('INV-PACK-A'));
         assert.ok(!workbook.includes('PACK-B') && !workbook.includes('PACK-FOREIGN'));

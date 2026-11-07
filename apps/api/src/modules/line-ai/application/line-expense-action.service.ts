@@ -1,5 +1,7 @@
+import { LINE_VOUCHER_WORKFLOW_STATUS } from './line-voucher-action.service';
+import { isLineWorkflowPutOff } from '@watchdog-bms/contracts';
 import { stripLineFieldParticles } from '@watchdog-bms/contracts';
-import { matchLineClaimTargets } from '../domain/logic/line-ai-classifier.logic';
+import { lineWorkflowCommand, matchLineClaimTargets } from '../domain/logic/line-ai-classifier.logic';
 import { createLineAiInputEvidence, extractValueCandidatesV2, mapThaiDigits, type LineWorkflowId } from '@watchdog-bms/contracts';
 import { LINE_CLAIM_PICKER_COPY, LINE_EXPENSE_PICKER_COPY } from '../domain/logic/line-business-card.logic';
 import { LineWorkflowTargetService, type LineWorkflowTargets, type LineWorkflowRecordTargets, type LineWorkflowRecordTarget } from './line-workflow-target.service';
@@ -511,14 +513,15 @@ export class LineExpenseActionService {
     }
     if (!this.workflowTargets) return unavailable;
     if (!pickerAnswer) await this.claimPickers.discard(ctx.companyId, `expense-action-claim-picker:${chat}`);
-    let result = await this.workflowTargets.pick(ctx, chat, workflow, {}, 1);
+    const voucherAction = action === 'VOUCHER_SUBMIT' || action === 'VOUCHER_APPROVE' || action === 'VOUCHER_PAY' ? action : undefined;
+    let result = await this.workflowTargets.pick(ctx, chat, workflow, { ...(voucherAction ? { voucherAction, ...(parsed.documents.length ? { search: text } : {}) } : {}) }, 1);
     let searchedDocument: string | undefined;
     if (pickerAnswer && !result.exhaustive) {
       searchedDocument = parsed.documents.length === 1 ? parsed.documents[0] : undefined;
-      const claimSearch = this.isClaim(action) && amounts.length === 1 && (parsed.requester || parsed.rounds.length)
-        ? [amounts[0]!.value, parsed.requester && parsed.requester !== 'ฉัน' ? parsed.requester : '', ...parsed.rounds.map(round => `รอบ ${round}`)].filter(Boolean).join(' ') : '';
+      const claimSearch = this.isClaim(action) && (amounts.length === 1 && (parsed.requester || parsed.rounds.length) || parsed.requester && parsed.rounds.length)
+        ? [amounts.length === 1 ? amounts[0]!.value : '', parsed.requester && parsed.requester !== 'ฉัน' ? parsed.requester : '', ...parsed.rounds.map(round => `รอบ ${round}`)].filter(Boolean).join(' ') : '';
       const search = searchedDocument ?? (claimSearch || undefined);
-      if (search) result = await this.workflowTargets.pick(ctx, chat, workflow, { search }, 1);
+      if (search) result = await this.workflowTargets.pick(ctx, chat, workflow, { search, ...(voucherAction ? { voucherAction } : {}) }, 1);
     }
     if ((rounds.length || pickerAnswer) && !this.isClaim(action) && action !== 'WHT_CERTIFICATE_ISSUE') {
       for (const target of result.targets as LineWorkflowRecordTarget[]) {
@@ -609,7 +612,7 @@ export class LineExpenseActionService {
     for (const field of ['reason', 'payeeName', 'payeeAddress']) {
       const value = input[field];
       if (typeof value !== 'string') continue;
-      if (lineWorkflowPickerText(value).question) delete input[field];
+      if (lineWorkflowPickerText(value).question || isLineWorkflowPutOff(value)) delete input[field];
       else input[field] = stripLineFieldParticles(field === 'reason' ? value.replace(/^เหตุผล(?:คือ)?\s*[:：]?\s*/u, '') : value);
     }
     let action = input.action as ExpenseAction;
@@ -641,6 +644,15 @@ export class LineExpenseActionService {
       if (ids.length > DISBURSEMENT_VOUCHER_MAX_LINES) return { reply: en ? `Select up to ${DISBURSEMENT_VOUCHER_MAX_LINES} expenses and put the remaining expenses on another voucher.` : DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_too_many_lines };
       if (ids.some(id => !id || id.length > 200)) return { reply: en ? 'Select an expense shown in this chat.' : 'ขอเลือกจากรายการที่แสดงในแชตนี้ก่อนค่ะ' };
       if (!opened && !resolvedFromText && !(await Promise.all(ids.map(id => this.grounded(ctx, chat, id, this.isVoucher(action) && action !== 'VOUCHER_CREATE' ? 'voucher' : this.isClaim(action))))).every(Boolean)) return { reply: (en ? 'Please select a record already shown in this chat.' : 'ขอเลือกจากรายการที่แสดงในแชตนี้ก่อนค่ะ') };
+      if (opened && (action === 'VOUCHER_SUBMIT' || action === 'VOUCHER_APPROVE' || action === 'VOUCHER_PAY')) {
+        await this.vouchers!.authorize(ctx, action);
+        const current = await this.vouchers!.read(ctx, { action, id });
+        if (current.status !== LINE_VOUCHER_WORKFLOW_STATUS[action]) return {
+          reply: en ? `This voucher is ${lineUiLabel(current.status, 'en').toLowerCase()}. Open it to continue.`
+            : `ใบเตรียมจ่ายนี้${current.status === 'DRAFT' ? 'ยังเป็นร่าง' : this.status(action, current.status)} เปิดใบในเว็บเพื่อทำต่อค่ะ`,
+          webPath: `/companies/${ctx.companyId}/expenses/disbursement-vouchers/${id}`,
+        };
+      }
       const voucher = this.isVoucher(action) ? await this.vouchers!.prepare(ctx, action, id, input, language, requestedVoucherCount) : undefined;
       if (voucher) action = voucher.payload.action;
       const record = voucher?.record ?? await this.read(ctx, id, action);
@@ -912,7 +924,7 @@ export class LineExpenseActionService {
     return { entry, expense };
   }
   async answerEvidence(ctx: RequestContext, chat: string, text: string, language: LineReplyLanguage = 'th') {
-    if (lineWorkflowPickerText(text).question) return null;
+    if (lineWorkflowPickerText(text).question || isLineWorkflowPutOff(text) || lineWorkflowCommand(text) && lineWorkflowPickerText(text, true).explicit) return null;
     text = ({ 'Send receipt photo': 'ส่งรูปใบเสร็จ', 'Wait for receipt': 'รอใบเสร็จ', 'Prepare substitute receipt': 'จัดทำใบรับรองแทนใบเสร็จ', 'Use other evidence': 'ใช้หลักฐานอื่นที่มี', cancel: 'ยกเลิก' } as Record<string, string>)[text.trim()] ?? text;
     const evidence = await this.evidenceChoice(ctx, chat);
     if (!evidence) return null;
@@ -986,7 +998,7 @@ export class LineExpenseActionService {
     return this.preview(ctx, chat, { ...pending?.paymentIntent, recordPaymentAfterConfirm: !!pending?.paymentIntent, expenseId, action: 'CONFIRM' }, true, undefined, language);
   }
   async answerCategory(ctx: RequestContext, chat: string, text: string, language: LineReplyLanguage = 'th') {
-    if (lineWorkflowPickerText(text).question) return null;
+    if (lineWorkflowPickerText(text).question || isLineWorkflowPutOff(text) || lineWorkflowCommand(text) && lineWorkflowPickerText(text, true).explicit) return null;
     const repair = await this.repair(ctx, chat);
     if (!repair || repair.editPreviewId) return null;
     const choices = await this.repairChoices(ctx, chat, undefined, language);
@@ -1059,11 +1071,13 @@ export class LineExpenseActionService {
   }
 
   async collectionQuestion(ctx: RequestContext, chat: string, language: LineReplyLanguage = 'th') {
+    const evidence = await this.evidenceChoice(ctx, chat);
+    if (evidence?.entry.stage === 'reason') return { reply: language === 'en' ? 'Why should this evidence be used instead of a receipt?' : 'ใช้หลักฐานนี้แทนใบเสร็จเพราะอะไรคะ' };
     const entry = await this.store.load(ctx.companyId, this.key(chat));
     if (!entry || !(entry.awaitingField || entry.awaitingReason) || !await this.bound(ctx, chat, entry) || !await this.permitted(ctx, entry)) return null;
     const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher).catch(() => null);
     if (!record || record.updatedAt.toISOString() !== entry.revision || record.digest !== entry.digest) return null;
-    return { reply: this.question(entry, language) };
+    return { reply: this.question(entry, language), action: entry.preview.action, sourceId: entry.voucher?.id ?? entry.expenseId };
   }
   async pending(ctx: RequestContext, chat: string, requestId?: string): Promise<ExpenseActionPreview | null> {
     const team = await this.teams?.pending(ctx, chat, requestId);
@@ -1187,6 +1201,13 @@ export class LineExpenseActionService {
         return { status: 'cancelled', reply: language === 'en' ? 'Action cancelled; no change was made.' : 'ไม่ทำรายการนี้ค่ะ',
           taskSource: { action: entry.preview.action, id: entry.voucher?.id ?? entry.expenseId } };
       }
+      if (entry.preview.reason && isLineWorkflowPutOff(entry.preview.reason)) {
+        await this.store.releaseClaim(ctx.companyId, this.key(chat), claim.token);
+        const prepared = await this.preview(ctx, chat, { action: entry.preview.action, expenseId: entry.expenseId,
+          reimbursementId: entry.expenseId, voucherId: entry.voucher?.id }, true, undefined, language);
+        return prepared.preview ? { status: 'prepared', ...prepared, preview: prepared.preview }
+          : { status: 'blocked', ...prepared, taskSource: { action: entry.preview.action, id: entry.voucher?.id ?? entry.expenseId } };
+      }
       if (entry.awaitingReason || entry.awaitingField) return { status: 'blocked', reply: this.question(entry, language) };
       const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher);
       if (record.updatedAt.toISOString() !== entry.revision || record.digest !== entry.digest) return { status: 'blocked', reply: language === 'en' ? 'The record changed; please request a new card.' : EXPENSE_ACTION_CHANGED };
@@ -1286,7 +1307,7 @@ export class LineExpenseActionService {
   async answerReason(ctx: RequestContext, chat: string, reason: string, evidence?: LineAiInputEvidenceV2): Promise<{ preview?: ExpenseActionPreview; reply: string; cancelled?: true; taskSource?: { action: ExpenseAction; id: string } } | null> {
     const entry = await this.store.load(ctx.companyId, this.key(chat));
     if (!(entry?.awaitingReason || entry?.awaitingField) || !await this.bound(ctx, chat, entry)) return null;
-    if (lineWorkflowPickerText(reason).question) return null;
+    if (lineWorkflowPickerText(reason).question || isLineWorkflowPutOff(reason) || lineWorkflowCommand(reason) && lineWorkflowPickerText(reason, true).explicit) return null;
     reason = stripLineFieldParticles(entry.awaitingReason || entry.awaitingField === 'reason' ? reason.replace(/^เหตุผล(?:คือ)?\s*[:：]?\s*/u, '') : reason);
     if (!reason) return { reply: this.question(entry) };
     const language: LineReplyLanguage = /[\u0E00-\u0E7F]/u.test(reason) ? 'th' : entry.awaitingField && entry.awaitingField !== 'reason' ? entry.preview.language ?? 'th' : lineReplyLanguage(reason, entry.preview.language ?? 'th');

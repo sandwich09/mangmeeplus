@@ -1,3 +1,4 @@
+import { isLineWorkflowPutOff } from '@watchdog-bms/contracts';
 import { lineWorkflowPickerText } from '../../../line-ai/domain/logic/line-ai-classifier.logic';
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
@@ -239,7 +240,7 @@ export function isSubstitutePauseControl(text: string): boolean {
   // Short forms + the plain refusals develop's SUBSTITUTE_PAUSE admits (R15 offers “ไม่ทำต่อ” as the way
   // out), then our natural “พัก + ใบรับรองแทนใบเสร็จ …” phrasings and the English opt-out. Anchored, so
   // “ยังไม่ทำ”/“ไม่เอาแล้ว” (a non-committal answer) stay OUT and route as a zero-write no-op instead.
-  return /^(ไว้ทำทีหลัง|ไม่ทำต่อ|ไม่ต่อ|ไม่ทำ|ไม่เอา|ไม่ต้องทำ)$/u.test(t)
+  return isLineWorkflowPutOff(t)
     || new RegExp(`^พัก(?:${SUBSTITUTE_DOC_NAME})?(?:ไว้)?(?:ก่อน)?$`, 'u').test(t)
     || /^pause(?: the)?(?: substitute receipt)?(?: for now)?$/u.test(t);
 }
