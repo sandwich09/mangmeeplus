@@ -484,7 +484,7 @@ export class ListSubstituteReceiptCandidatesUseCase {
       if (collectSubstituteReceiptEligibilityIssues(expense, undefined, { routeCheckBill: isCheckBillClassification(expense.aiVerificationSummaryJson) })
         .some(issue => ['expense_status_ineligible', 'currency_not_supported', 'classification_ineligible', 'document_kind_ineligible'].includes(issue.code))) return false;
       if (expense.substituteReceiptEvidence && expense.substituteReceiptEvidence.status !== 'SUPERSEDED') return false;
-      if (search && ![expense.expenseNumber, expense.vendorNameSnapshot, ...expense.lines.map((line) => line.description)]
+      if (search && ![expense.expenseNumber, expense.vendorDocumentNumber, expense.vendorNameSnapshot, ...expense.lines.map((line) => line.description)]
         .some((value) => value?.toLocaleLowerCase().includes(search.toLocaleLowerCase()))) return false;
       const assessment = expenseEvidenceAssessment(expense);
       if (assessment?.route === 'SOURCE_DOCUMENT' && assessment.receiptProblem === 'NONE') return false;
@@ -492,7 +492,7 @@ export class ListSubstituteReceiptCandidatesUseCase {
       return true;
     }).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id));
     return { items: eligible.slice((page - 1) * pageSize, page * pageSize).map((expense) => ({
-      id: expense.id, expenseNumber: expense.expenseNumber, expenseDate: expense.expenseDate.toISOString(),
+      id: expense.id, expenseNumber: expense.expenseNumber, vendorDocumentNumber: expense.vendorDocumentNumber, expenseDate: expense.expenseDate.toISOString(),
       vendorNameSnapshot: expense.vendorNameSnapshot, grandTotalAmount: expense.grandTotalAmount.toString(), currency: expense.currency,
       lines: expense.lines.map((line) => ({ description: line.description })),
     })), total: eligible.length, page, pageSize };

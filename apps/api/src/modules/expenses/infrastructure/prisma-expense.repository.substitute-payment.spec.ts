@@ -298,7 +298,7 @@ describe('substitute approval reservations and cancelled personal receipts (real
     const ids = Array.from({ length: 205 }, () => randomUUID());
     const otherBranch = await client!.branch.create({ data: { companyId, code: 'OTHER', name: 'สาขาอื่น' } });
     await client!.expenseRecord.createMany({ data: ids.map((id, index) => ({ id, companyId, branchId, createdByUserId: 'candidate-payer',
-      expenseNumber: `CANDIDATE-${index}`, expenseDate: PAID_AT, createdAt: new Date(VERSION.getTime() - index * 1000),
+      expenseNumber: `CANDIDATE-${index}`, vendorDocumentNumber: `SELLER-${index}`, expenseDate: PAID_AT, createdAt: new Date(VERSION.getTime() - index * 1000),
       status: 'NEEDS_REVIEW', sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY',
       inputVatClaimStatus: 'NON_CLAIMABLE', vendorNameSnapshot: 'ผู้ขายทดสอบ', accountHintKey: 'GENERAL_EXPENSE',
       grandTotalAmount: '100', netPayableAmount: '100', outstandingAmount: '100' })) });
@@ -313,10 +313,11 @@ describe('substitute approval reservations and cancelled personal receipts (real
     assert.equal(first.total, 203); assert.equal(first.items[0]?.id, ids[2]);
     const last = await useCase.execute(own, { page: 41, pageSize: 5 });
     assert.deepEqual(last.items.map((row) => row.id), ids.slice(202));
-    for (const search of ['CANDIDATE-204', 'สินค้าทดสอบ 204']) {
+    for (const search of ['CANDIDATE-204', 'สินค้าทดสอบ 204', 'SELLER-204']) {
       const result = await useCase.execute(own, { search }); assert.equal(result.total, 1); assert.equal(result.items[0]?.id, ids[204]);
     }
     assert.equal((await useCase.execute(own, { search: 'ผู้ขายทดสอบ' })).total, 203);
+    assert.equal((await useCase.execute(own, { search: 'SELLER-1' })).items.some(row => row.id === ids[1]), false);
   });
 
   it('company substitute approval refuses the committed reservation before issuing or paying and succeeds after release', async (t) => {
@@ -406,6 +407,7 @@ it('candidate search combines its OR with the existing branch OR instead of repl
   await repo.listSubstituteReceiptCandidateSources({ ...branchScope, search: 'old' }, {});
   assert.deepEqual(query.where.AND[0], branchScope);
   assert.equal(query.where.AND[1].OR[2].lines.some.description.contains, 'old');
+  assert.equal(query.where.AND[1].OR[3].vendorDocumentNumber.contains, 'old');
 });
 
 it('certificate signer choices identify the active owner without changing branch visibility', async () => {

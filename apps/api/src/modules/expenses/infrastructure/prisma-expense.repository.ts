@@ -1733,7 +1733,8 @@ export class PrismaExpenseRepository {
     const rows = await this.prisma.client.expenseRecord.findMany({
       where: { status: { notIn: ['REJECTED', 'VOIDED'] }, AND: [where,
         ...(search ? [{ OR: [{ expenseNumber: { contains: search, mode: 'insensitive' as const } },
-          { vendorNameSnapshot: { contains: search, mode: 'insensitive' as const } }, { lines: { some: { description: { contains: search, mode: 'insensitive' as const } } } }] }] : [])] },
+          { vendorNameSnapshot: { contains: search, mode: 'insensitive' as const } }, { lines: { some: { description: { contains: search, mode: 'insensitive' as const } } } },
+          { vendorDocumentNumber: { contains: search, mode: 'insensitive' as const } }] }] : [])] },
       include: { lines: { orderBy: { lineNumber: 'asc' } }, substituteReceiptEvidences: { where: { status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' }, take: 1 } },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });

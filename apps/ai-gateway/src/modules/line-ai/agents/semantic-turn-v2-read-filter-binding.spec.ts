@@ -159,7 +159,9 @@ describe('item 3: whatever still cannot be bound stays honest, never a permissio
     assert.notEqual(coverage?.status, 'needs_user');
     assert.equal(coverage?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
     assert.doesNotMatch(result.replyText, /ไม่มีสิทธิ์|เจ้าของกิจการ/u);
-    assert.match(result.replyText, /ลองส่งข้อความเดิมอีกครั้งค่ะ/u);
+    assert.equal(result.replyText, 'ในแชตยังแสดงข้อมูลตามที่ถามไม่ได้ เปิดรายการในเว็บเพื่อดูต่อค่ะ');
+    assert.ok(result.webLinks.some(link => link.path === '/companies/company/expenses'));
+    assert.doesNotMatch(result.replyText, /ส่งข้อความเดิม|ถามใหม่/u);
     assert.doesNotMatch(result.replyText, /ดึงข้อมูลส่วนนี้ไม่ได้/u);
   });
 });

@@ -183,14 +183,14 @@ export class LineSubstituteReceiptActionService {
       webPath: absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts`) };
   }
 
-  async apply(ctx: RequestContext, chat: string, control: ExpenseActionControl, language: LineReplyLanguage = 'th'): Promise<{ reply: string; expenseId?: string; preview?: SubstituteActionPreview }> {
-    if (!['expense_action_confirm', 'expense_action_cancel'].includes(control.action)) return { reply: language === 'en' ? 'This proposal expired; please prepare a fresh card.' : EXPIRED };
+  async apply(ctx: RequestContext, chat: string, control: ExpenseActionControl, language: LineReplyLanguage = 'th'): Promise<{ reply: string; expenseId?: string; preview?: SubstituteActionPreview; refused?: true }> {
+    if (!['expense_action_confirm', 'expense_action_cancel'].includes(control.action)) return { refused: true, reply: language === 'en' ? 'This proposal expired; please prepare a fresh card.' : EXPIRED };
     const claim = await this.store.claimCurrent(ctx.companyId, this.key(chat), control.token.split('.')[0]!);
-    if (!claim) { const preview = this.webHandoff(ctx, language); return { reply: preview.summary, preview }; }
+    if (!claim) { const preview = this.webHandoff(ctx, language); return { reply: preview.summary, preview, refused: true }; }
     const entry = claim.entry;
     try {
-      if (entry.action === 'PREPARE' && !entry.decision) return { reply: language === 'en' ? 'Request a fresh preparation card.' : EXPIRED };
-      if (!await this.bound(ctx, chat, entry, control.token)) { const preview = this.webHandoff(ctx, language); return { reply: preview.summary, preview }; }
+      if (entry.action === 'PREPARE' && !entry.decision) return { refused: true, reply: language === 'en' ? 'Request a fresh preparation card.' : EXPIRED };
+      if (!await this.bound(ctx, chat, entry, control.token)) { const preview = this.webHandoff(ctx, language); return { reply: preview.summary, preview, refused: true }; }
       // Old sign/approve cards are navigation only, even if their source revision has changed.
       if (entry.action !== 'PREPARE') {
         const expense = await this.repo.findByIdWithRelations(ctx.companyId, entry.expenseId, undefined, ctx.scopes ?? {});

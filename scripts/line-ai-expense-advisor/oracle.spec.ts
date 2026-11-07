@@ -486,3 +486,25 @@ it('R14 a gold claim legacy fallback replacement allows only an identical line i
   assert.equal(checkWorkflowGold(task, [before, extra]).wrongApplied, 1);
   assert.equal(checkWorkflowGold({ ...task, confirmTurn: 2 }, [before, after]).wrongApplied, 2);
 });
+
+it('R16 voucher payment allows only expense and payment effects linked by its own lines', () => {
+  const task = { id: 'pay', kind: 'payment_voucher', startTurn: 0, endTurn: 1, confirmTurn: 1, minimalTurns: 2, completable: true,
+    goldTerminal: { effect: 'VOUCHER_PAID', records: [{ table: 'DisbursementVoucher', ref: '$seed:voucher', status: 'PAID' }] } } as any;
+  const business: any = { DisbursementVoucher: [{ id: 'voucher', companyId: 'c', status: 'PAID' }],
+    DisbursementVoucherLine: [{ id: 'line', companyId: 'c', voucherId: 'voucher', expenseId: 'bill', expensePaymentId: 'payment' }],
+    ExpenseRecord: [{ id: 'bill', companyId: 'c', paymentStatus: 'PAID' }], ExpensePayment: [{ id: 'payment', companyId: 'c', expenseId: 'bill' }] };
+  const effects = [{ kind: 'DisbursementVoucher.update', recordId: 'voucher' }, { kind: 'DisbursementVoucherLine.update', recordId: 'line' },
+    { kind: 'ExpenseRecord.update', recordId: 'bill' }, { kind: 'ExpensePayment.create', recordId: 'payment' }];
+  const score = () => checkWorkflowGold(task, [{ turnIndex: 0, businessSnapshot: { business: {}, collectionState: {} }, unintendedEffects: [] },
+    { turnIndex: 1, businessSnapshot: { business, collectionState: {} }, unintendedEffects: effects }] as any);
+  assert.equal(score().wrongApplied, 0);
+  delete business.DisbursementVoucherLine[0].expensePaymentId;
+  business.DisbursementVoucherLine[0].coversPaymentId = 'payment';
+  assert.equal(score().wrongApplied, 0);
+  business.DisbursementVoucherLine[0].coversPaymentId = 'another-payment';
+  assert.equal(score().wrongApplied, 1);
+  business.DisbursementVoucherLine[0].expenseId = 'another-expense';
+  assert.equal(score().wrongApplied, 2);
+  business.DisbursementVoucherLine[0].expenseId = 'bill'; business.ExpenseRecord[0].companyId = 'foreign';
+  assert.equal(score().wrongApplied, 2);
+});

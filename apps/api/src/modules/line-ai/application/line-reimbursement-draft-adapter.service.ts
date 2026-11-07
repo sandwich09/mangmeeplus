@@ -1,6 +1,6 @@
 import { isLineWorkflowPutOff } from '@watchdog-bms/contracts';
 import { stripLineFieldParticles } from '@watchdog-bms/contracts';
-import { matchLineClaimTargets, lineWorkflowPickerText } from '../domain/logic/line-ai-classifier.logic';
+import { matchLineClaimTargets, lineWorkflowPickerText, lineClaimTargetSearch } from '../domain/logic/line-ai-classifier.logic';
 import { effectivePolicy } from '../../reimbursements/domain/reimbursement.constants';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import { Inject, Injectable, Optional } from '@nestjs/common';
@@ -84,6 +84,7 @@ type Accepted = {
   suggestedCategoryChoiceId?: string;
   receipts?: LineReimbursementValidatedFieldReceiptV1[];
   awaitingPhoto?: boolean;
+  amountDescriptions?: Array<{ amount: string; description: { value: string; proof: LineReimbursementFieldProofV1 } }>;
   lineQuestion?: { text: string; amountChoices: Array<{ label: string; text: string }> };
   admission?: { requestId?: string; subrequestIndex?: number; taskId?: string; taskSubrequestIndex?: number; source?: 'workflow'; eventIdHash?: string };
 };
@@ -159,10 +160,8 @@ export class LineReimbursementDraftAdapterService {
       const start = part.rawText.indexOf(match[2]!);
       return start >= 0 && amount.source.startUtf16 >= start && amount.source.endUtf16 <= start + match[2]!.length;
     });
-    const parsed = lineWorkflowPickerText(locator, true);
     if (!exhaustive) {
-      const search = parsed.documents[0] ?? ((parsed.rounds.length || locatorAmounts.length === 1)
-        ? [locatorAmounts.length === 1 ? locatorAmounts[0]!.value : '', parsed.requester && parsed.requester !== 'ฉัน' ? parsed.requester : '', ...parsed.rounds.map(round => `รอบ ${round}`)].filter(Boolean).join(' ') : '');
+      const search = lineClaimTargetSearch(locator, locatorAmounts);
       if (search) {
         const found = await this.repo.listRequests({ companyId: input.ctx.companyId, status: 'DRAFT', scopes: input.ctx.scopes,
           ...(input.ctx.permissions.includes('reimbursement.finance_review') ? {} : { requesterUserId: input.ctx.userId }), search, skip: 0, take: 100 });
@@ -419,6 +418,9 @@ export class LineReimbursementDraftAdapterService {
     const lines = accepted.proposal.lineChanges?.filter(change => change.operation === 'ADD') ?? [];
     if (lines.length > 1 || lines.some(line => line.values.linkedExpenseChoiceId)) return null;
     const fields = (active.commandJson as { fieldPaths?: string[] }).fieldPaths ?? [];
+    const categories = accepted.options.choices.filter(choice => choice.kind === 'CATEGORY' && choice.label === stripLineFieldParticles(text).replace(/^เลือกหมวดค่าใช้จ่าย\s*/u, ''));
+    if (categories.length === 1) return this.choose({ ...input, control: { action: 'reimbursement_choice',
+      ...this.publicOptions(accepted.options, accepted.proposal, accepted.awaitingPhoto).control, choice: categories[0]!.choiceId } });
     if (/^ส่ง(?:รูป)?(?:ใบเสร็จ|บิล|สลิป)/u.test(text) && fields.some(path => path.endsWith('.attachmentChoiceId')))
       return this.choose({ ...input, control: { action: 'reimbursement_choice', ...this.publicOptions(accepted.options, accepted.proposal, accepted.awaitingPhoto).control, choice: 'photo' } });
     if (NO_RECEIPT_ANSWER.test(text) && fields.some(path => path.endsWith('.attachmentChoiceId'))) {
@@ -452,10 +454,20 @@ export class LineReimbursementDraftAdapterService {
     const proposal = this.mergeProposal(accepted.proposal, fragment);
     const line = proposal.lineChanges?.find(change => change.operation === 'ADD');
     if (!line || line.operation !== 'ADD') return { status: 'blocked', errorCode: 'invalid_field' };
-    if (parsed.amountChoices.length) delete line.values.amount;
+    const amountDescriptions = parsed.amountDescriptions.filter(item => parseLineReimbursementDraftProposalV1({ schemaVersion: 1,
+      taskId: active.taskId, taskRevision: accepted.options.taskRevision, operation: 'CREATE', fields: {},
+      lineChanges: [{ operation: 'ADD', values: { description: item.description } }] }, { evidence: input.evidence, candidateValues, candidateSources }));
+    if (parsed.amountChoices.length) {
+      delete line.values.amount;
+      delete line.values.description;
+    } else if (amountOnly && parsed.values.amount) {
+      const paired = accepted.amountDescriptions?.filter(item => item.amount === parsed.values.amount!.value);
+      if (paired?.length === 1) line.values.description = clone(paired[0]!.description);
+    }
     const question = parsed.amountChoices.length ? MANUAL_CLAIM_AMOUNTS_QUESTION : !line.values.amount ? MANUAL_CLAIM_AMOUNT_QUESTION
       : !line.values.description ? MANUAL_CLAIM_DESCRIPTION_QUESTION : undefined;
     return this.proposeCollected(input, active, { ...accepted, proposal,
+      amountDescriptions: parsed.amountChoices.length ? amountDescriptions : undefined,
       lineQuestion: question ? { text: question, amountChoices: parsed.amountChoices } : undefined });
   }
 

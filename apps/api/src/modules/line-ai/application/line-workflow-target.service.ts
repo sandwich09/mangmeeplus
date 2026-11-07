@@ -18,7 +18,7 @@ export type LineWorkflowRecordTarget = { id: string; label: string; amount: stri
   status?: string; documentNumbers?: string[]; roundText?: string; revision?: string; branchId?: string };
 export type LineWorkflowRecordTargets = { targets: LineWorkflowRecordTarget[]; total: number; exhaustive: boolean;
   latestPaidWithoutWithholding?: boolean; latestOnly?: boolean; sellers?: Array<{ id: string; label: string }>; sellerSearch?: string };
-type WorkflowSlots = { voucherAction?: 'VOUCHER_SUBMIT' | 'VOUCHER_APPROVE' | 'VOUCHER_PAY'; search?: string; vendorName?: string; vendorCounterpartyId?: string; includeIneligible?: boolean };
+type WorkflowSlots = { latestPaid?: boolean; voucherAction?: 'VOUCHER_SUBMIT' | 'VOUCHER_APPROVE' | 'VOUCHER_PAY'; search?: string; vendorName?: string; vendorCounterpartyId?: string; includeIneligible?: boolean };
 export type LineWorkflowTargets = { targets: ReimbursementRequestSummary[]; total: number; exhaustive: boolean; receiptBlocked?: ReimbursementRequestSummary[]; notAssigned?: ReimbursementRequestSummary[] };
 
 @Injectable()
@@ -109,10 +109,12 @@ export class LineWorkflowTargetService {
     }
     if (workflow === 'wht_certificate') {
       await this.voucherActions.authorize(ctx, 'WHT_CERTIFICATE_ISSUE');
-      const result = await this.readPages([null], async (_set, page) => {
-        const list = await this.vouchers.listForLine(ctx, { page, pageSize: 100, status: 'PAID', q: slots.search });
-        return { rows: list.data, total: list.total };
-      });
+      const latestPage = slots.latestPaid ? await this.vouchers.listForLine(ctx, { page: 1, pageSize: 1, status: 'PAID', order: 'newest' }) : undefined;
+      const result = latestPage ? { rows: latestPage.data, total: latestPage.data.length, exhaustive: true }
+        : await this.readPages([null], async (_set, page) => {
+          const list = await this.vouchers.listForLine(ctx, { page, pageSize: 100, status: 'PAID', q: slots.search });
+          return { rows: list.data, total: list.total };
+        });
       const targets: LineWorkflowRecordTarget[] = [];
       for (const row of result.rows) if (await this.voucherActions.canOfferCertificate(ctx, row.id)) {
         targets.push({ id: row.id, label: row.payeeName || row.documentNumber || '', amount: row.totalAmount, currency: 'THB',
@@ -129,7 +131,7 @@ export class LineWorkflowTargetService {
         return { rows: list.items, total: list.total };
       });
       return { targets: result.rows.map(row => ({ id: row.id, label: row.vendorNameSnapshot || row.expenseNumber || '',
-        amount: row.grandTotalAmount, currency: row.currency, documentNumbers: row.expenseNumber ? [row.expenseNumber] : [] })), total: result.total, exhaustive: result.exhaustive };
+        amount: row.grandTotalAmount, currency: row.currency, documentNumbers: [row.expenseNumber, row.vendorDocumentNumber].filter((number): number is string => !!number) })), total: result.total, exhaustive: result.exhaustive };
     }
     let vendorCounterpartyId = slots.vendorCounterpartyId;
     const latestOnly = !!slots.vendorName && !ctx.permissions.includes('accounting.counterparty.read');

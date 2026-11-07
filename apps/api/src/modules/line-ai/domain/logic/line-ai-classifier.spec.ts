@@ -351,3 +351,43 @@ it('R15 controller: a negated verb starts nothing, a voucher read is not a vouch
   assert.equal(lineVoucherWorkflowAction('ทำใบเตรียมจ่ายจากบิล ทดสอบ-0012'), undefined);
   assert.equal(lineWorkflowPickerText('ไม่มีใบเสร็จต้องกรอกตรงไหนคะ').question, true);
 });
+
+it('R16 claim verbs after their target and tax document starts are lexical while status questions stay reads', async () => {
+  const { lineWorkflowCommand } = await import('./line-ai-classifier.logic');
+  for (const [text, workflow] of [
+    ['ใบเบิกค่าน้ำมัน รอบ 2 ส่งอนุมัติด้วยนะ', 'reimbursement_submit'],
+    ['ใบเบิกค่าออฟฟิศ รอบ 4 ยกเลิกเลย', 'reimbursement_cancel'],
+    ['ใบเบิก รอบ 6 ไม่อนุมัติ', 'reimbursement_reject'], ['ใบเบิก รอบ 6 อนุมัติเลย', 'approvals'],
+    ['โอนคืนใบเบิกค่าบริการ รอบ 15', 'reimbursement_pay'], ['ใบเบิก รอบ 6 จ่ายคืนเลย', 'reimbursement_pay'],
+    ['ขอใบรับรองแทนใบเสร็จให้บิล ทดสอบ-0002 หน่อย', 'substitute_receipt'],
+    ['ออก 50 ทวิให้ใบที่จ่ายล่าสุด', 'wht_certificate'], ['ทำหนังสือรับรองหัก ณ ที่จ่ายของใบเตรียมจ่ายที่เพิ่งจ่าย', 'wht_certificate'],
+  ] as const) assert.equal(lineWorkflowCommand(text), workflow, text);
+  for (const text of ['ใบเบิกค่าน้ำมันรอบ 300 สถานะอะไรแล้ว', 'ใบเบิก รอบ 2 อยู่ขั้นไหนคะ', 'ใบเบิก รอบ 2 ถึงไหนแล้ว', 'ใบเบิก รอบ 2 ไม่ต้องอนุมัติ']) assert.equal(lineWorkflowCommand(text), undefined, text);
+  for (const text of ['ใบเบิกค่าน้ำมันรอบ 300 สถานะ', 'ใบเบิก รอบ 2 อยู่ขั้นไหนคะ', 'ใบเบิก รอบ 2 ถึงไหนแล้ว', 'ใบเบิก รอบ 2 ตอนนี้ไหนคะ']) assert.equal(lineWorkflowPickerText(text).question, true, text);
+});
+
+it('R16 category words narrow claim round matches in either word order', async () => {
+  const { matchLineClaimTargets } = await import('./line-ai-classifier.logic');
+  const rows = [{ id: 'gold', reason: 'ค่าบริการ รอบ 15', categoryLabelSnapshot: 'ค่าบริการ', amount: '300' },
+    { id: 'other', reason: 'ค่าน้ำมัน รอบ 15', categoryLabelSnapshot: 'ค่าน้ำมัน', amount: '300' }];
+  for (const text of ['อนุมัติใบเบิกค่าบริการ รอบ 15 ให้หน่อย', 'ของสมชาย ค่าบริการรอบ 15']) {
+    const candidates = rows.map(row => ({ ...row, requesterDisplayNameSnapshot: 'สมชาย' }));
+    assert.deepEqual(matchLineClaimTargets(text, candidates, [], 'me').map(row => row.id), ['gold'], text);
+  }
+});
+
+it('R16 a past status in a claim description cannot override its requested action', async () => {
+  const { lineWorkflowCommand } = await import('./line-ai-classifier.logic');
+  assert.equal(lineWorkflowCommand('ยกเลิกใบเบิกที่อนุมัติแล้ว รอบ 2'), 'reimbursement_cancel');
+  assert.equal(lineWorkflowCommand('จ่ายคืนใบเบิกที่อนุมัติแล้ว รอบ 2'), 'reimbursement_pay');
+  assert.equal(lineWorkflowCommand('ใบเบิกที่อนุมัติแล้ว รอบ 2 จ่ายคืนเลย'), 'reimbursement_pay');
+});
+
+it('R16 controller: a claim named before its verb starts that job, a state sentence starts nothing', async () => {
+  const { lineWorkflowCommand } = await import('./line-ai-classifier.logic');
+  for (const [text, workflow] of [['ใบเบิกค่าน้ำมัน รอบ 2 ส่งอนุมัติด้วยนะ', 'reimbursement_submit'], ['ใบเบิกค่าออฟฟิศ รอบ 4 ยกเลิกเลย', 'reimbursement_cancel'],
+    ['ใบเบิก รอบ 6 ไม่อนุมัติ', 'reimbursement_reject'], ['ใบเบิกค่าบริการ รอบ 9 อนุมัติจ้ะ', 'approvals'], ['โอนคืนใบเบิกค่าเดินทาง รอบ 3', 'reimbursement_pay']] as const)
+    assert.equal(lineWorkflowCommand(text), workflow, text);
+  for (const text of ['ใบเบิกที่ส่งไปรออนุมัติ', 'ใบเบิกรออนุมัติ', 'ใบเบิกที่ยกเลิกไป', 'ใบเบิกที่ไม่อนุมัติ', 'ใบเบิกที่อนุมัติแล้ว', 'ใบเบิกที่จ่ายคืนแล้ว'])
+    assert.equal(lineWorkflowCommand(text), undefined, text);
+});

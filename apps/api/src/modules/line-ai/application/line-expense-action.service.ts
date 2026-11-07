@@ -1,7 +1,7 @@
 import { LINE_VOUCHER_WORKFLOW_STATUS } from './line-voucher-action.service';
 import { isLineWorkflowPutOff } from '@watchdog-bms/contracts';
 import { stripLineFieldParticles } from '@watchdog-bms/contracts';
-import { lineWorkflowCommand, matchLineClaimTargets } from '../domain/logic/line-ai-classifier.logic';
+import { lineWorkflowCommand, matchLineClaimTargets, lineClaimTargetSearch } from '../domain/logic/line-ai-classifier.logic';
 import { createLineAiInputEvidence, extractValueCandidatesV2, mapThaiDigits, type LineWorkflowId } from '@watchdog-bms/contracts';
 import { LINE_CLAIM_PICKER_COPY, LINE_EXPENSE_PICKER_COPY } from '../domain/logic/line-business-card.logic';
 import { LineWorkflowTargetService, type LineWorkflowTargets, type LineWorkflowRecordTargets, type LineWorkflowRecordTarget } from './line-workflow-target.service';
@@ -498,6 +498,7 @@ export class LineExpenseActionService {
         const start = raw.indexOf(document);
         return start >= 0 && amount.source.startUtf16 >= start && amount.source.endUtf16 <= start + document.length;
       })) return false;
+      if (action === 'WHT_CERTIFICATE_ISSUE' && [...raw.matchAll(/50\s*ทวิ/gu)].some(match => amount.source.startUtf16 >= match.index && amount.source.endUtf16 <= match.index + match[0].length)) return false;
       return ![...raw.matchAll(/(?:รอบ|สาขา|ใบที่|รายการที่|อันที่)\s*\d+|(?:บิล|ใบ|เอกสาร)?เลขที่\s*[^\s,]+|[A-Za-zก-๙]+[-/]\d[\d/-]*|\d+\s*(?:ใบ|บิล)/gu)]
         .some(match => amount.source.startUtf16 >= match.index && amount.source.endUtf16 <= match.index + match[0].length);
     };
@@ -518,8 +519,7 @@ export class LineExpenseActionService {
     let searchedDocument: string | undefined;
     if (pickerAnswer && !result.exhaustive) {
       searchedDocument = parsed.documents.length === 1 ? parsed.documents[0] : undefined;
-      const claimSearch = this.isClaim(action) && (amounts.length === 1 && (parsed.requester || parsed.rounds.length) || parsed.requester && parsed.rounds.length)
-        ? [amounts.length === 1 ? amounts[0]!.value : '', parsed.requester && parsed.requester !== 'ฉัน' ? parsed.requester : '', ...parsed.rounds.map(round => `รอบ ${round}`)].filter(Boolean).join(' ') : '';
+      const claimSearch = this.isClaim(action) ? lineClaimTargetSearch(text, amounts) : undefined;
       const search = searchedDocument ?? (claimSearch || undefined);
       if (search) result = await this.workflowTargets.pick(ctx, chat, workflow, { search, ...(voucherAction ? { voucherAction } : {}) }, 1);
     }

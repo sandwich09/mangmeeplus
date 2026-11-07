@@ -128,20 +128,22 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   const self = claim && /ของ(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ|\d|[?？]|นะคะ|นะครับ|ค่ะ|ครับ|คะ|$)/u.test(text);
   const requester = self || namedRequester && /^(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)$/u.test(namedRequester) ? 'ฉัน' : namedRequester;
   const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?(?:เลขที่|เลขท้าย|ลงท้าย|เลข)\s*([A-Za-zก-๙]+[-/]\d[\d/-]*|[A-Za-z0-9][A-Za-z0-9/-]*)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
-  const questionText = text.replace(/(?:อะไร|ใคร|ที่ไหน)ก็ได้/gu, '');
+  const questionText = text.replace(/(?:อะไร|ใคร|ที่ไหน)ก็ได้|เดี๋ยวบอก(?:ว่า)?ใบไหน|เดี๋ยวบอกใบที่จะทำ|บอกทีหลัง/gu, '');
   const questionTail = text.replace(/[.!?,…ๆ]+$/u, '').trim();
   // "A หรือ B" ending in a question particle asks; amount alternatives and "…ก็ได้" are statements.
   const alternativeQuestion = /หรือ/u.test(text) && /(?:คะ|จ๊ะ|ครับ|คับ|ฮะ|งับ)[าะ]*$/u.test(questionTail)
     && stripLineFieldParticles(questionTail) !== questionTail && !/\d[\d,.]*\s*(?:บาท|บ\.?)?\s*หรือ\s*\d/u.test(text)
     && !/ก็ได้/u.test(text) && !/^(?:เงินสด|โอน|บัตร|เช็ค)/u.test(text);
-  const question = alternativeQuestion || /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|ตรงไหน|ช่องไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
+  const question = /สถานะ|ถึงไหนแล้ว|อยู่ขั้นไหน|ใครถืออยู่|ไหน\s*(?:คะ|ค่ะ|ครับ|จ้ะ|จ๊ะ|นะ|แล้ว)?[.!ๆ]*$/u.test(questionText) || alternativeQuestion || /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|ตรงไหน|ช่องไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
     .test((ordinal !== undefined || documents.length || /^(?:(?:ช่วย|ขอ)\s*)?(?:อนุมัติ|ส่ง|ยกเลิก|ลบ|บันทึก|ทำ|สร้าง|จ่าย|เลือก|เอา|ใช้)/u.test(text)) ? questionText.replace(/(?:หน่อย)?ได้(?:ไหม|มั้ย|ปะ)/gu, '') : questionText);
   const rounds = [...text.matchAll(/รอบ\s*(?:ที่\s*)?(\d+|แรก|[ก-๙]+)/gu)].flatMap(match => {
     const number = match[1] === 'แรก' ? '1' : extractValueCandidates(match[1]!).amounts[0]?.value;
     return number ? [number] : [];
   });
   const explicit = ordinal !== undefined || documents.length > 0 || rounds.length > 0 || /สาขา\s*\S+/u.test(text) || !!requester;
-  return { question, ordinal, requester, documents, rounds, explicit };
+  const categoryWords = [...stripLineFieldParticles(text).matchAll(/ค่า(?:(?!รอบ|ของ|ยอด|จำนวน|ให้|หน่อย|ส่ง|อนุมัติ|ยกเลิก|สถานะ|ถึงไหน|อยู่ขั้น|ใคร)[ก-๙])+/gu)]
+    .map(match => match[0]).filter(word => word !== 'ค่าใช้จ่าย');
+  return { question, ordinal, requester, documents, rounds, explicit, categoryWords };
 }
 
 /** Explicit action language is also used before admission and when a person changes jobs. */
@@ -153,15 +155,16 @@ export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/cont
     .replace(/\bpay\s*(?:claim|ใบเบิก)/giu, 'จ่ายคืนใบเบิก').replace(/\s+(?=ใบเบิก)/gu, '').trim().replace(/^(?:หมายถึง|ขอทำอย่างเดียวก่อน)[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ)\s*)+/u, '');
   // "อย่าลบร่าง", "ไม่ต้องยกเลิกใบเบิก": a negated verb never starts that job.
   if (/(?:อย่า|ไม่ต้อง|ห้าม)\s*(?:ลบ|ยกเลิก|ยืนยัน|อนุมัติ|ส่ง|จ่าย|บันทึก|สร้าง|ทำ)/u.test(text)) return;
-  if (/ส่ง(?:ใบเบิก.*อนุมัติ|อนุมัติใบเบิก)/u.test(text)) return 'reimbursement_submit';
+  if (/ส่ง(?:ใบเบิก.*อนุมัติ|อนุมัติใบเบิก)|ใบเบิก.*(?<!ที่|ถูก)ส่ง(?:ให้|เข้า(?:คิว)?)?อนุมัติ/u.test(text)) return 'reimbursement_submit';
   if (/ใบเตรียมจ่าย/u.test(text) && (/^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u.test(text) || lineVoucherWorkflowAction(text))) return 'payment_voucher';
+  if (/^(?:ออก|ทำ)(?:(?:หนังสือรับรอง)?(?:หัก\s*ณ\s*ที่จ่าย)?\s*50\s*ทวิ|หนังสือรับรองหัก\s*ณ\s*ที่จ่าย)/u.test(text)) return 'wht_certificate';
   return ([
-    ['reimbursement_reject', /ไม่อนุมัติใบเบิก/u], ['approvals', /(?<!ไม่)อนุมัติใบเบิก/u],
-    ['reimbursement_submit', /ส่งใบเบิก.*อนุมัติ/u], ['reimbursement_cancel', /(?:ยกเลิก|ถอน|ดึงกลับ)ใบเบิก/u],
+    ['reimbursement_reject', /ไม่อนุมัติใบเบิก|ใบเบิก.*(?<!ที่|ถูก|โดน)ไม่อนุมัติ(?!แล้ว)/u], ['approvals', /(?<!ไม่)อนุมัติใบเบิก|ใบเบิก.*(?<!ไม่|รอ|ที่|ผ่าน|ได้รับ|ถูก)อนุมัติ(?!แล้ว)/u],
+    ['reimbursement_submit', /ส่งใบเบิก.*อนุมัติ/u], ['reimbursement_cancel', /(?:ยกเลิก|ถอน|ดึงกลับ)ใบเบิก|ใบเบิก.*(?<!ที่|ถูก|โดน)(?:ยกเลิก|ถอน|ดึงกลับ)(?!แล้ว|ไป)/u],
     ['expense_confirm', /ยืนยัน(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_submit', /ส่ง(?:ตรวจ(?:บิล|รายจ่าย|ค่าใช้จ่าย)|(?:บิล|รายจ่าย|ค่าใช้จ่าย).*ให้ตรวจ)/u],
     ['expense_delete', /ลบ(?:ร่าง|บิล|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_void', /^ยกเลิก(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u],
-    ['reimbursement_pay', /^(?:บันทึกจ่ายคืน|จ่ายคืนใบเบิก|โอนคืนผู้เบิก)/u], ['expense_pay', /^(?:บันทึกจ่าย|จ่ายเงิน)/u],
-    ['payment_voucher', /^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u], ['substitute_receipt', /^ทำใบรับรองแทนใบเสร็จ/u],
+    ['reimbursement_pay', /^(?:บันทึกจ่ายคืน|จ่ายคืนใบเบิก|โอนคืน(?:ผู้เบิก|ใบเบิก))|ใบเบิก.*(?<!ที่|ถูก|ได้รับเงิน)(?:จ่ายคืน|โอนคืน)(?!แล้ว)/u], ['expense_pay', /^(?:บันทึกจ่าย|จ่ายเงิน)/u],
+    ['payment_voucher', /^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u], ['substitute_receipt', /^(?:ทำ|สร้าง|เตรียม)?ใบรับรองแทนใบเสร็จ/u],
   ] as Array<[import('@watchdog-bms/contracts').LineWorkflowId, RegExp]>).find(([, pattern]) => pattern.test(text))?.[0];
 }
 
@@ -194,17 +197,22 @@ export async function parseManualClaimLine(
   if (dates.length === 1) values.incurredDate = { value: dates[0]!.value,
     proof: { kind: 'USER_TEXT', candidateId: dates[0]!.candidateId, refs: [dates[0]!.source] } };
   const descriptions: Array<{ value: string; proof: import('@watchdog-bms/contracts').LineReimbursementFieldProofV1 }> = [];
+  const amountDescriptions: Array<{ amount: string; description: NonNullable<typeof values.description> }> = [];
   for (const part of evidence.parts) {
     const spans = [...verified.amounts, ...verified.dates, ...verified.periods].map(item => item.source)
       .filter(source => source.partId === part.partId).sort((a, b) => a.startUtf16 - b.startUtf16);
     let start = 0;
     for (const span of [...spans, { startUtf16: part.rawText.length, endUtf16: part.rawText.length }]) {
       const raw = part.rawText.slice(start, span.startUtf16);
-      const value = stripLineFieldParticles(raw.replace(/^(?:บาท|[\s\p{P}])+/u, ''));
-      if (Array.from(value).length >= 2) {
+      const value = stripLineFieldParticles(raw.replace(/^(?:บาท|บ\.?(?=\s|กับ|และ|$)|฿|THB|baht|[\s\p{P}])+/iu, '').replace(/^(?:(?:ขอ)?(?:สร้าง|ทำ)?ใบเบิก|ขอเบิก|เบิก|กับ|และ)\s*/u, ''));
+      const amount = amounts.find(amount => amount.source.partId === part.partId && amount.source.startUtf16 === span.startUtf16);
+      if (Array.from(value).length >= 2 && value !== 'หรือ') {
         const offset = start + raw.indexOf(value);
         descriptions.push({ value, proof: { kind: 'USER_TEXT', refs: [{ partId: part.partId, rawSha256: part.rawSha256,
           startUtf16: offset, endUtf16: offset + value.length }] } });
+        if (amount) amountDescriptions.push({ amount: amount.value, description: descriptions.at(-1)! });
+      } else if (amount && value === 'หรือ' && amountDescriptions.length) {
+        amountDescriptions.push({ amount: amount.value, description: amountDescriptions.at(-1)!.description });
       }
       start = Math.max(start, span.endUtf16);
     }
@@ -223,7 +231,17 @@ export async function parseManualClaimLine(
   if (descriptions[0]) values.description = descriptions[0];
   const question = amounts.length > 1 ? MANUAL_CLAIM_AMOUNTS_QUESTION : !values.amount ? MANUAL_CLAIM_AMOUNT_QUESTION
     : !values.description ? MANUAL_CLAIM_DESCRIPTION_QUESTION : undefined;
-  return { values, question, amountChoices: amounts.length > 1 ? amounts.slice(0, 4).map(item => ({ label: `${Number(item.value).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`, text: item.span })) : [] };
+  return { values, question, amountDescriptions, amountChoices: amounts.length > 1 ? amounts.slice(0, 4).map(item => ({ label: `${Number(item.value).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`, text: item.span })) : [] };
+}
+
+/** Keep bounded claim searches aligned with the same user locators as the picker. */
+export function lineClaimTargetSearch(text: string, amounts: Array<{ value: string }>): string | undefined {
+  const parsed = lineWorkflowPickerText(text, true);
+  if (parsed.documents.length === 1) return parsed.documents[0];
+  if (!(parsed.rounds.length && (parsed.categoryWords.length || parsed.requester || amounts.length === 1)
+    || amounts.length === 1 && parsed.requester)) return;
+  return [amounts.length === 1 ? amounts[0]!.value : '', parsed.requester && parsed.requester !== 'ฉัน' ? parsed.requester : '',
+    ...parsed.categoryWords, ...parsed.rounds.map(round => `รอบ ${round}`)].filter(Boolean).join(' ');
 }
 
 /** Match only user locators against the already-permitted claim rows. */
@@ -246,6 +264,7 @@ export function matchLineClaimTargets<T>(text: string, rows: T[], amounts: Array
     const ordinalIndex = ordinalRows === rows ? index : ordinalRows.indexOf(row);
     return (parsed.ordinal === undefined || parsed.ordinal === ordinalIndex + 1)
       && (!parsed.requester || (parsed.requester === 'ฉัน' ? r.requesterUserId === userId : normalize(r.requesterDisplayNameSnapshot ?? '').includes(normalize(parsed.requester))))
+      && parsed.categoryWords.every(word => normalize(corpus).includes(normalize(word)))
       && parsed.rounds.every(round => [...mapThaiDigits(corpus).matchAll(/รอบ\s*(\d+)/gu)].some(m => m[1] === round))
       && parsed.documents.every(d => lineDocumentNumberMatches(r.requestNo ?? '', d))
       && money.length <= 1 && (!money.length || (!r.currency || r.currency === 'THB') && new Decimal(r.amount ?? 0).eq(money[0]!.value))

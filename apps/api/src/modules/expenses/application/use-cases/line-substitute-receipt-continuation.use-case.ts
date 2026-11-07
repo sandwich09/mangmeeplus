@@ -291,7 +291,7 @@ function bounded(value: string | undefined, max = MAX_VALUE_LENGTH): string | un
 
 const LABELS = {
   missingReceiptReason: 'เหตุผล(?:ที่ไม่มีใบเสร็จ)?|สาเหตุ|(?:reason|missing receipt reason)(?=\\s*:)',
-  businessPurpose: 'วัตถุประสงค์(?:ทางธุรกิจ)?|ใช้เพื่อ|(?:purpose|business purpose)(?=\\s*:)',
+  businessPurpose: 'วัตถุประสงค์(?:ทางธุรกิจ)?|ใช้เพื่อ|เพื่อ|(?:purpose|business purpose)(?=\\s*:)',
   payeeName: 'ผู้รับเงิน|ผู้ขาย|ร้านค้า|(?:payee|seller)(?=\\s*:)',
   paymentMethod: 'วิธีชำระ(?:เงิน)?|วิธีจ่าย|ชำระด้วย|จ่ายด้วย|จ่ายโดย|(?:payment method|paid by)(?=\\s*:)',
   paymentDate: 'วันที่จ่าย|วันที่ชำระ|ชำระเมื่อ|จ่ายเมื่อ|วันที่|(?:payment date|paid on)(?=\\s*:)',

@@ -131,6 +131,10 @@ function recordMatches(record: GoldRecord, row: Record<string, unknown>, snapsho
 function linkedToGoldParent(table: string, row: Record<string, unknown>, parents: Array<{ table: string; row: Record<string, unknown> }>, snapshot: BusinessRows, explicit = false): boolean {
   const has = (parentTable: string, id: unknown) => id != null && parents.some(parent => parent.table === parentTable && parent.row.id === id && (!row.companyId || !parent.row.companyId || row.companyId === parent.row.companyId));
   if (explicit && (table === 'ReimbursementLine' || table === 'ReimbursementPayment')) return has('ReimbursementRequest', row.reimbursementRequestId);
+  if ((table === 'ExpenseRecord' || table === 'ExpensePayment') && (snapshot.DisbursementVoucherLine ?? []).some(line =>
+    has('DisbursementVoucher', line.voucherId) && (!row.companyId || !line.companyId || row.companyId === line.companyId)
+    && line.expenseId === (table === 'ExpenseRecord' ? row.id : row.expenseId)
+    && (table === 'ExpenseRecord' || line.expensePaymentId === row.id || line.coversPaymentId === row.id))) return true;
   if (explicit && (table === 'ExpensePayment' || table === 'ExpenseSubstituteReceiptEvidence')) return has('ExpenseRecord', row.expenseId);
   if (table === 'ReimbursementApprovalStep') return has('ReimbursementRequest', row.reimbursementRequestId);
   if (table === 'ReimbursementDraftAction' && row.status === 'APPLIED') return has('ReimbursementRequest', row.requestId);

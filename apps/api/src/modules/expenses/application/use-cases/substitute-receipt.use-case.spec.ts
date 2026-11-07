@@ -2566,3 +2566,12 @@ it('R12 a substitute payee question never becomes the awaiting free-text value',
   assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.payeeName, undefined);
   assert.equal(h.saves.length, before);
 });
+
+it('R16 LINE substitute candidates search and return both permitted document numbers', async () => {
+  const row = expense({ attachments: [], substituteReceiptEvidence: null, expenseNumber: 'ทดสอบ-0002', vendorDocumentNumber: 'ผู้ขาย-0099', aiVerificationSummaryJson: null });
+  let scope: any;
+  const list = new ListSubstituteReceiptCandidatesUseCase({ listSubstituteReceiptCandidateSources: async (query: any) => { scope = query; return [row]; } } as any);
+  const result = await list.execute({ ...ctx(), authProvider: 'line' }, { search: 'ผู้ขาย-0099' }, { channel: 'line' });
+  assert.equal(result.total, 1); assert.equal(result.items[0]?.expenseNumber, 'ทดสอบ-0002'); assert.equal(result.items[0]?.vendorDocumentNumber, 'ผู้ขาย-0099');
+  assert.equal(scope.search, 'ผู้ขาย-0099'); assert.equal(scope.companyId, ctx().companyId);
+});

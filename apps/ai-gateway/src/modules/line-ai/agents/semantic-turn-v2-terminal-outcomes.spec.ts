@@ -53,7 +53,8 @@ describe('item 6: an uncovered product-help question is terminal, and still help
     assert.notEqual(coverage?.status, 'needs_user');
     assert.equal(coverage?.reasonCode, 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE');
     // Must still help: name that system setup is done on the web, not just list read capabilities.
-    assert.match(result.replyText, /ยังไม่มีคู่มือที่ตรวจสอบแล้ว.*เว็บ/u);
+    assert.equal(result.replyText, 'ในแชตยังอธิบายขั้นตอนนี้ไม่ได้ เปิดคู่มือในเว็บเพื่อดูต่อค่ะ');
+    assert.ok(result.webLinks.some(link => link.path === '/companies/company/user-guide/expenses'));
   });
 
   it('same outcome in English, still naming the web app for setup', async () => {
@@ -71,7 +72,8 @@ describe('item 6: an uncovered product-help question is terminal, and still help
     const coverage = result.semanticCoverage?.[0];
     assert.equal(coverage?.status, 'unsupported');
     assert.equal(coverage?.reasonCode, 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE');
-    assert.match(result.replyText, /reviewed guide.*not available.*web/u);
+    assert.equal(result.replyText, 'I cannot explain these steps in chat yet; open the web guide to continue.');
+    assert.ok(result.webLinks.some(link => link.path === '/companies/company/user-guide/expenses'));
   });
 });
 

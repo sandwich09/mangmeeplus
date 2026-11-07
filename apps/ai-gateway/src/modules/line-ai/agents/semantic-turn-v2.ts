@@ -1010,7 +1010,7 @@ export async function runSemanticTurnV2(input: {
         ? { status: 'needs_user', reasonCode: 'READ_FILTER_NOT_UNDERSTOOD',
           text: periodAskBackText(itemText.get(index) ?? req.messageText, req.valueCandidates?.periods ?? [], language) }
         : { status: 'unsupported', reasonCode: 'TOOL_INPUT_NOT_AUTHORIZED', text: language === 'en'
-          ? 'I could not prepare this request; please send the same message again.' : 'ยังเตรียมข้อมูลตามคำขอนี้ไม่สำเร็จ ลองส่งข้อความเดิมอีกครั้งค่ะ' });
+          ? 'I cannot show the requested data in chat; open the web page to continue.' : 'ในแชตยังแสดงข้อมูลตามที่ถามไม่ได้ เปิดรายการในเว็บเพื่อดูต่อค่ะ' });
     }
   }
   // Item 2 (223-turn eval batch 2): computed once per index right after the tool-call loop — not
@@ -1489,7 +1489,7 @@ export async function runSemanticTurnV2(input: {
         sourceRefIds: knowledge.sourceRefs.map(sourceId) }
         : documentExplanationTopic(itemText.get(item.index) ?? '') && composed?.status === 'handled' ? composed
         : { index: item.index, status: 'unsupported', reasonCode: 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE',
-          text: language === 'en' ? 'A reviewed guide for this question is not available yet; your company admin can help on the web.' : 'ยังไม่มีคู่มือที่ตรวจสอบแล้วสำหรับคำถามนี้ ให้ผู้ดูแลร้านช่วยตรวจบนเว็บได้ค่ะ' };
+          text: language === 'en' ? 'I cannot explain these steps in chat yet; open the web guide to continue.' : 'ในแชตยังอธิบายขั้นตอนนี้ไม่ได้ เปิดคู่มือในเว็บเพื่อดูต่อค่ะ' };
       // Reviewed product instructions or the fixed capability list, never model prose either way.
       modelComposed = !knowledge && answer === composed;
     }
@@ -1649,6 +1649,17 @@ export async function runSemanticTurnV2(input: {
     toolData: result.status === 'ok' ? [{ tool: result.toolName, data: result.data }] : [], asOf: result.asOf }));
   const sourceRefs = [...new Map(sources.map(ref => [sourceId(ref), ref])).values()];
   const webLinks = [...scopeWebLinks, ...sources.filter(ref => ref.webPath).map(ref => ({ label: ref.label, path: ref.webPath! }))];
+  for (const item of inventory) {
+    if (!['read', 'help'].includes(item.kind) || scopePolicyForcedIndices.has(item.index)
+      || !coverage.some(entry => entry.index === item.index && entry.status === 'unsupported')) continue;
+    const text = itemText.get(item.index) ?? req.messageText;
+    const claim = /ใบเบิก|reimbursement|claim/iu.test(text)
+      && req.userContext.permissions.some(key => ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.read_related'].includes(key));
+    const voucher = /ใบเตรียมจ่าย|ใบสำคัญจ่าย|voucher/iu.test(text) && req.userContext.permissions.includes('expense.disbursement.read');
+    const path = item.kind === 'help' ? `user-guide/${claim ? 'reimbursements' : 'expenses'}`
+      : claim ? 'reimbursements' : voucher ? 'expenses/disbursement-vouchers' : permissionAlternative(req.userContext.permissions, language).page === 'expenses' ? 'expenses' : 'account';
+    webLinks.push({ label: language === 'en' ? 'Open on web' : 'เปิดในเว็บ', path: `/companies/${req.userContext.companyId}/${path}` });
+  }
   if ((coverage.some(item => item.status === 'denied') || approvalDeniedIndices.size > 0) && !webLinks.length) {
     const alternative = permissionAlternative(req.userContext.permissions, language);
     webLinks.push(...scopePolicyWebLinks({ reasonCode: 'ROLE_PERMISSION_REQUIRED', text: '', webPage: approvalDeniedIndices.size > 0 ? 'packages' : alternative.page }, req.userContext.permissions, req.userContext.companyId, language));

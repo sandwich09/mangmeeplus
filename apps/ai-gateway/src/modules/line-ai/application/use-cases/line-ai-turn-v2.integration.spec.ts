@@ -516,7 +516,7 @@ it('does not let model-authored product buttons escape the reviewed-help boundar
       { index: 1, status: 'handled', text: 'กำไรกับเงินสดเป็นคนละมุมมองของธุรกิจ' },
     ] })] });
   assert.doesNotMatch(run.response.replyText, /MAGIC_AUTO_APPROVE_ALL|อนุมัติจ่ายให้อัตโนมัติ/);
-  assert.match(run.response.replyText, /ยังไม่มีคู่มือที่ตรวจสอบแล้ว/);
+  assert.match(run.response.replyText, /ในแชตยังอธิบายขั้นตอนนี้ไม่ได้ เปิดคู่มือในเว็บเพื่อดูต่อค่ะ/);
   assert.match(run.response.replyText, /กำไรกับเงินสดเป็นคนละมุมมอง/);
   // Spec R-L3: "no reviewed guide yet" is a statement, not a question to the user, so it is terminal.
   assert.deepEqual(run.response.semanticCoverage?.map(item => item.status), ['unsupported', 'handled']);

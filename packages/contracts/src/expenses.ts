@@ -1550,7 +1550,7 @@ export type SupersedeSubstituteReceiptInput = {
 };
 
 export type SubstituteReceiptCandidateFilter = { includeBlocked?: boolean; branchId?: string; search?: string; page?: number; pageSize?: number };
-export type SubstituteReceiptCandidate = { blockedReason?: 'USABLE_RECEIPT'; id: string; expenseNumber: string | null; expenseDate: string;
+export type SubstituteReceiptCandidate = { blockedReason?: 'USABLE_RECEIPT'; id: string; expenseNumber: string | null; vendorDocumentNumber?: string | null; expenseDate: string;
   vendorNameSnapshot: string | null; grandTotalAmount: string; currency: string; lines: Array<{ description: string }> };
 export type SubstituteReceiptCandidatePage = { items: SubstituteReceiptCandidate[]; total: number; page: number; pageSize: number };
 

@@ -242,7 +242,8 @@ export class BedrockProvider implements IModelProvider {
             const backoffMs = jitteredThrottleBackoffMs();
             // Never retry past this call's own deadline — a retry that could not finish before the
             // turn's work deadline is strictly worse than failing now and letting the caller decide.
-            if (context?.deadlineAt === undefined || Date.now() + backoffMs < context.deadlineAt) {
+            if (Date.now() + backoffMs < startedAt + this.cfg.timeoutMs && !context?.signal?.aborted
+              && (context?.deadlineAt === undefined || Date.now() + backoffMs < context.deadlineAt)) {
               retryCount += 1;
               await (this.cfg.sleep ?? defaultThrottleSleep)(backoffMs);
               continue;

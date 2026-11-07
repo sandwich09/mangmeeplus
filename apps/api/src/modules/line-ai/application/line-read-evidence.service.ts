@@ -383,6 +383,10 @@ export class LineReadEvidenceService {
     // Replay only the accepted catalog name and amount, never the original chat text.
     const whtGrounding = calculation ? [calculation['incomeCategoryName'], calculation['baseAmount']].filter(v => typeof v === 'string').join(' ') : undefined;
     const whtReadChoices = calculation ? parseWhtReadChoices(calculation['readChoices']) : undefined;
+    // Due-date help resolves a spoken month before reading; recheck that month without chat text.
+    const duePeriod = result.toolName === 'wht.get_month_summary' && input.dueDateOnly === true
+      && result.data && typeof result.data === 'object' ? (result.data as Record<string, unknown>).periodKey : undefined;
+    if (isCivilPeriodKey(duePeriod)) input = { ...input, periodKey: duePeriod };
     const snapshot = JSON.stringify({ input, locale: ctx.locale, ...(whtGrounding !== undefined ? { whtGrounding } : {}),
       ...(whtReadChoices?.length ? { whtReadChoices } : {}), ...(ctx.chatKeyHash ? { chatKeyHash: ctx.chatKeyHash } : {}),
       ...(expenseSummary ? { expenseSummary } : {}), ...(readMemory ? { readMemory } : {}) });

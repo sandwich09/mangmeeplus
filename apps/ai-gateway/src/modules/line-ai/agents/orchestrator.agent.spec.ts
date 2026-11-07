@@ -2661,7 +2661,8 @@ describe('Fix-up 29: forbidden tools always name the permission owner without le
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
     assert.equal(result.semanticCoverage?.[0]?.status, 'unsupported');
     assert.doesNotMatch(result.replyText, /ไม่มีสิทธิ์/u);
-    assert.match(result.replyText, /ลองส่งข้อความเดิมอีกครั้งค่ะ/u);
+    assert.equal(result.replyText, 'ในแชตยังแสดงข้อมูลตามที่ถามไม่ได้ เปิดรายการในเว็บเพื่อดูต่อค่ะ');
+    assert.ok(result.webLinks.some(link => link.path === '/companies/company-1/expenses'));
   });
 });
 
