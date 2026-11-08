@@ -318,6 +318,8 @@ function reimbursementOptionsMessages(options: { choices: Array<{ choiceId?: str
     if (!chosen && choices.length) return buttons(`เลือก${name}ได้เลยค่ะ`, choices.slice(0, 12).map(choice => ({ label: choice.label, text: `เลือก${name} ${choice.label}`, ...(kind !== 'TARGET' ? { choice: choice.choiceId } : {}) }))
       .concat(choices.length > 12 || options.pages[kind.toLowerCase()]?.hasMore ? [{ label: 'ค้นหาเพิ่มเติม', text: `ขอค้นหา${name}เพิ่มเติม` }] : []));
   }
+  // An edit with its claim chosen asks what to change; the details question belongs to a new claim.
+  if (!options.collection?.lineChosen && options.operation === 'UPDATE' && options.selected?.targetRef) return [{ type: 'text', text: 'จะแก้อะไรในใบเบิกนี้คะ เช่น แก้เหตุผลเป็น… แก้ยอดเป็น… หรือแก้หมวดเป็น…' }];
   const bills = options.choices.filter(choice => choice.kind === 'SOURCE' && choice.details?.['eligible'] !== false);
   if (!options.collection?.lineChosen && !options.lineQuestion && bills.length) return buttons('เลือกบิลที่จะเบิก หรือเริ่มรายการใหม่ได้เลยค่ะ', [
     ...bills.slice(0, 4).map(choice => {
@@ -361,6 +363,7 @@ function reimbursementOptionsEnglish(options: Parameters<typeof buildReimburseme
     if (!selected && choices.length) return buttons(`Please choose the ${label}.`, choices.slice(0, 12).map(entry => ({ label: entry.label, text: `Choose ${label}: ${entry.label}`, ...(kind !== 'TARGET' ? { choice: entry.choiceId } : {}) }))
       .concat(choices.length > 12 || options.pages[kind.toLowerCase()]?.hasMore ? [{ label: 'Search more', text: `Find more ${label} choices` }] : []));
   }
+  if (!options.collection?.lineChosen && options.operation === 'UPDATE' && options.selected?.targetRef) return [{ type: 'text', text: 'What should change in this claim? For example: change the reason to…, the amount to…, or the category to…' }];
   if (!options.collection?.lineChosen && options.lineQuestion) return [{ type: 'text', text: options.lineQuestion.text,
     ...(options.lineQuestion.amountChoices.length ? { quickReply: lineChoiceQuickReply(options.lineQuestion.amountChoices) } : {}) }];
   if (!options.collection?.lineChosen) {

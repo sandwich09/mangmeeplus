@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 // package is necessarily built.
 import { PERMISSIONS, ROLE_GRANTS, SYSTEM_ROLES } from '../../apps/api/src/modules/auth/permission-registry';
 import { TIER_FEATURE_PRESETS } from '../../packages/contracts/src/menu-entitlements';
+import { disbursementVoucherSourceHash } from '../../apps/api/src/modules/expenses/domain/logic/disbursement-voucher.logic';
 import { ALL_FEATURE_ENTITLEMENT_KEYS } from '../../packages/contracts/src/feature-entitlements';
 import { civilPeriodKey, todayCivilDate, DEFAULT_COMPANY_TIME_ZONE } from '../../packages/contracts/src/civil-date';
 import { CURRENT_LEGAL_DOCUMENTS, LEGAL_ACCEPTANCE_STATEMENT_VERSION, legalAcceptanceStatements } from '../../packages/contracts/src/legal-acceptance';
@@ -551,7 +552,11 @@ export function buildWorkflowSeed(now: Date, requestedActors: Actor[] = []): Wor
       }
       rows.push({ model: 'disbursementVoucher', data: { id, companyId: company.companyId, branchId: company.branchIds[0], status, origin: 'PREPARED', payeeName: 'ผู้รับเงินนอกคู่ค้า', payeeBasis: 'SINGLE', totalAmount: '1000.00', preparedByUserId: company.users.OWNER.userId,
         ...(status === 'PAID' ? { paidDate: now, paidRecordedAt: now, paidByUserId: company.users.OWNER.userId, paidMethod: 'CASH' } : {}) } });
+      // A submitted voucher line keeps its source fingerprint; pay and approve compare it with the expense.
+      const sourceHash = status === 'PENDING_APPROVAL' || status === 'APPROVED' ? disbursementVoucherSourceHash({ ...expense.data, branchId: expense.data.branchId ?? null,
+        vendorTaxIdSnapshot: expense.data.vendorTaxIdSnapshot ?? null } as Parameters<typeof disbursementVoucherSourceHash>[0]) : undefined;
       rows.push({ model: 'disbursementVoucherLine', data: { id: `${id}-line1`, companyId: company.companyId, voucherId: id, expenseId, position: 1, amount: '1000.00',
+        ...(sourceHash ? { sourceHashAtSubmit: sourceHash } : {}),
         ...(status === 'PAID' ? { expensePaymentId: paymentId, coversPaymentId: paymentId } : {}) } });
     }
     rows.push({ model: 'companyAiConfiguration', data: { id: `ai-config-${company.companyKey}`, companyId: company.companyId, ...workflowCreditState(company.companyKey === 'C' ? 'exhausted' : 'normal') } });

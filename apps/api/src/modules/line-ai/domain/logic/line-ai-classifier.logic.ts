@@ -124,7 +124,7 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   const ordinalMatch = /(?:(?:อัน|ใบ|รายการ|ร่าง)ที่|ข้อ)\s*(\d+|[ก-๙]+)/u.exec(text);
   const ordinalNumber = ordinalMatch && extractValueCandidates(ordinalMatch[1]!).amounts[0]?.value;
   const ordinal = /(?:อัน|ใบ|รายการ)แรก/u.test(text) ? 1 : ordinalNumber ? Number(ordinalNumber) : undefined;
-  const namedRequester = claim ? stripLineFieldParticles(/(?:^|\s|ใบเบิก)ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ(?:ฉัน|คุณ)|\d|[?？]|$)/u.exec(text)?.[1] ?? '') || undefined : undefined;
+  const namedRequester = claim ? stripLineFieldParticles(/(?:^|\s|ใบเบิก)ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ(?:ฉัน|คุณ)|ให้|หน่อย|\d|[?？]|$)/u.exec(text)?.[1] ?? '') || undefined : undefined;
   const self = claim && /ของ(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ|\d|[?？]|นะคะ|นะครับ|ค่ะ|ครับ|คะ|$)/u.test(text);
   const requester = self || namedRequester && /^(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)$/u.test(namedRequester) ? 'ฉัน' : namedRequester;
   const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?(?:เลขที่|เลขท้าย|ลงท้าย|เลข)\s*([A-Za-zก-๙]+[-/]\d[\d/-]*|[A-Za-z0-9][A-Za-z0-9/-]*)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0])
@@ -134,9 +134,9 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   const questionTail = text.replace(/[.!?,…ๆ]+$/u, '').trim();
   // "A หรือ B" ending in a question particle asks; amount alternatives and "…ก็ได้" are statements.
   const alternativeQuestion = /หรือ/u.test(text) && /(?:คะ|จ๊ะ|ครับ|คับ|ฮะ|งับ)[าะ]*$/u.test(questionTail)
-    && stripLineFieldParticles(questionTail) !== questionTail && !/\d[\d,.]*\s*(?:บาท|บ\.?)?\s*หรือ\s*\d/u.test(text)
+    && stripLineFieldParticles(questionTail) !== questionTail && !/\d[\d,.]*\s*(?:บาท|บ\.?)?\s*หรือ\s*\d|\d[\d,.]*\s*(?:บาท|บ\.)\s*หรือ/u.test(text)
     && !/ก็ได้/u.test(text) && !/^(?:เงินสด|โอน|บัตร|เช็ค)/u.test(text);
-  const question = /^(?:(?:ช่วย|ขอ)\s*)*(?:บอก|แสดง|ทราบ)|สถานะ|ถึงไหนแล้ว|อยู่ขั้นไหน|ใครถืออยู่|ไหน\s*(?:คะ|ค่ะ|ครับ|จ้ะ|จ๊ะ|นะ|แล้ว)?[.!ๆ]*$/u.test(questionText) || alternativeQuestion || /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|ตรงไหน|ช่องไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
+  const question = /^(?:(?:ช่วย|ขอ)\s*)*(?:บอก|แสดง|ทราบ)|สถานะ|ถึงไหนแล้ว|อยู่ขั้นไหน|ใครถืออยู่|ไหน\s*(?:คะ|ค่ะ|ครับ|จ้ะ|จ๊ะ|นะ|แล้ว)?[.!ๆ]*$/u.test(questionText) || alternativeQuestion || /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|แค่ไหน|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|ตรงไหน|ช่องไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu
     .test((ordinal !== undefined || documents.length || /^(?:(?:ช่วย|ขอ)\s*)?(?:อนุมัติ|ส่ง|ยกเลิก|ลบ|บันทึก|ทำ|สร้าง|จ่าย|เลือก|เอา|ใช้)/u.test(text)) ? questionText.replace(/(?:หน่อย)?ได้(?:ไหม|มั้ย|ปะ)/gu, '') : questionText);
   const rounds = [...text.matchAll(/รอบ\s*(?:ที่\s*)?(\d+|แรก|[ก-๙]+)/gu)].flatMap(match => {
     const number = match[1] === 'แรก' ? '1' : extractValueCandidates(match[1]!).amounts[0]?.value;
@@ -151,7 +151,9 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
 /** Explicit action language is also used before admission and when a person changes jobs. */
 export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/contracts').LineWorkflowId | undefined {
   if (lineWorkflowPickerText(rawText).question || /^(?:(?:ขอ|ช่วย|รบกวน)\s*)*(?:วิธี|อธิบาย|สอน)|^explain\b/iu.test(rawText.trim())) return;
+  // Staff write "คอนเฟิร์ม"/"confirm" for ยืนยัน and "คชจ." for ค่าใช้จ่าย.
   const text = rawText.replace(/อนุมัด/gu, 'อนุมัติ').replace(/ปฎิเสธ|ปฏิเสธ/gu, 'ไม่อนุมัติ').replace(/ใบเบก/gu, 'ใบเบิก')
+    .replace(/\s*(?:คอนเฟิร์ม|คอนเฟิม|คอนเฟริ์ม|\bconfirm\b)\s*/giu, 'ยืนยัน').replace(/\s*คชจ\.?/gu, 'ค่าใช้จ่าย')
     .replace(/\bapprove\s*(?:claim|ใบเบิก)/giu, 'อนุมัติใบเบิก').replace(/\bcancel\s*(?:claim|ใบเบิก)/giu, 'ยกเลิกใบเบิก')
     .replace(/\breject\s*(?:claim|ใบเบิก)/giu, 'ไม่อนุมัติใบเบิก').replace(/\bsubmit\s*(?:claim|ใบเบิก)/giu, 'ส่งใบเบิกอนุมัติ')
     .replace(/\bpay\s*(?:claim|ใบเบิก)/giu, 'จ่ายคืนใบเบิก').replace(/\s+(?=ใบเบิก)/gu, '').trim().replace(/^(?:หมายถึง|ขอทำอย่างเดียวก่อน)[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ)\s*)+/u, '');

@@ -334,3 +334,15 @@ it('Z3 saved expense edits keep the signed confirmation next step and expense we
     assert.match(payload, /https:\/\/web.test\/companies\/company\/expenses\/expense/);
   }
 });
+
+it('R18 controller: a claim edit with its claim chosen asks what to change, not the new-claim details question', async () => {
+  const { buildReimbursementOptionsMessages } = await import('./line-reimbursement-draft-card.logic');
+  for (const language of ['th', 'en'] as const) {
+    const base = { pages: {}, choices: [{ choiceId: 'src-1', kind: 'SOURCE', label: 'บิลเดิม', details: { eligible: true } }], collection: { lineChosen: false, receiptChosen: false, categoryChosen: false } };
+    const edit = JSON.stringify(buildReimbursementOptionsMessages({ ...base, operation: 'UPDATE', selected: { targetRef: 'target-1' } } as any, 'https://web.test', language));
+    assert.match(edit, language === 'th' ? /จะแก้อะไรในใบเบิกนี้คะ/u : /What should change in this claim/);
+    assert.doesNotMatch(edit, /ขอรายละเอียดรายการ|item details|เลือกบิลที่จะเบิก|Choose an expense to claim/u);
+    const create = JSON.stringify(buildReimbursementOptionsMessages({ ...base, choices: [], operation: 'CREATE', selected: {} } as any, 'https://web.test', language));
+    assert.match(create, language === 'th' ? /ขอรายละเอียดรายการ/u : /item details/);
+  }
+});

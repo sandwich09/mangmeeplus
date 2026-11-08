@@ -422,3 +422,20 @@ it('R17 controller: recheck wording — ขอส่ง voucher submit, bill num
   assert.equal(lineWorkflowCommand('อยากให้คนตรวจบิลของ หจก. ออฟฟิศ ซัพพลาย จ้ะ'), 'expense_submit');
   assert.equal(lineWorkflowCommand('ขอให้คนตรวจบิล ทดสอบ-0003'), 'expense_submit');
 });
+
+it('R18 controller: คอนเฟิร์ม, confirm and คชจ. read as the everyday words; a negation still wins; แค่ไหน asks', async () => {
+  const { lineWorkflowCommand, isPendingFieldAnswer } = await import('./line-ai-classifier.logic');
+  for (const text of ['คอนเฟิร์มบิล ทดสอบ-0004 ให้หน่อย', 'ช่วย confirm รายจ่าย ทดสอบ-0004', 'ขอคอนเฟิมค่าใช้จ่ายใบล่าสุด']) assert.equal(lineWorkflowCommand(text), 'expense_confirm', text);
+  assert.equal(lineWorkflowCommand('ยกเลิก คชจ. ทดสอบ-0020 ที่ลงผิด'), 'expense_void');
+  assert.equal(lineWorkflowCommand('ลบร่าง คชจ ทดสอบ-0002'), 'expense_delete');
+  assert.equal(lineWorkflowCommand('ไม่ต้องคอนเฟิร์มบิล ทดสอบ-0004'), undefined);
+  assert.equal(lineWorkflowPickerText('เหตุผลต้องยาวแค่ไหนคะ').question, true);
+  assert.equal(isPendingFieldAnswer('ต้องเขียนละเอียดแค่ไหนถึงผ่านครับ', 'reason'), false);
+  assert.equal(isPendingFieldAnswer('ลงซ้ำกับบิลเดิม', 'reason'), true);
+  // Two priced items joined by หรือ state a choice of claim; they do not ask a question.
+  assert.equal(lineWorkflowPickerText('เบิกค่าเรือ 90 บาท หรือค่ารถสองแถว 60 บาท อันเดียวพอครับ').question, false);
+  assert.equal(lineWorkflowPickerText('ใบนี้หรือใบนั้นครับ').question, true);
+  // "ของสมหญิงให้หน่อย": the requester's name ends before ให้/หน่อย.
+  assert.equal(lineWorkflowPickerText('อนุมัติใบเบิก รอบ 2 ของสมหญิงให้หน่อยครับ', true).requester, 'สมหญิง');
+  assert.equal(lineWorkflowPickerText('ใบเบิกของวิภาหน่อยค่ะ', true).requester, 'วิภา');
+});

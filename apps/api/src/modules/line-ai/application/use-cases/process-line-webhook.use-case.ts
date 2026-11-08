@@ -4317,6 +4317,8 @@ export class ProcessLineWebhookUseCase {
       if (amount.currencyToken) return /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(amount.currencyToken);
       const source = amount.source, raw = evidence?.parts.find(part => part.partId === source?.partId)?.rawText;
       if (!source || raw === undefined) return false;
+      // "อันแรกของสามใบนี้": a number before ใบ/อัน/รายการ counts the rows; it is not an amount.
+      if (/^\s*(?:ใบ|อัน|รายการ)/u.test(raw.slice(source.endUtf16))) return false;
       // Ordinals, branch numbers and document identifiers are locators, not payment amounts.
       const locators = mapThaiDigits(raw).matchAll(/(?:อัน|ใบ|รายการ|ร่าง)ที่\s*\d+|สาขา\s*\d+|(?:ใบเลขที่|เลขที่|เลขเอกสาร)\s*\S+|[A-Za-zก-๙]+-\d[\d-]*/gu);
       return ![...locators].some(match => source.startUtf16 >= match.index && source.endUtf16 <= match.index + match[0].length);
@@ -4446,6 +4448,19 @@ export class ProcessLineWebhookUseCase {
     try { await this.handleWorkflowControl(event, ctx, features, { vendorCounterpartyId: matches[0]!.id }); }
     finally { event.workflowStart = previous; }
     await this.voucherVendors().discardIfCurrent(ctx.companyId, key, pending.previewId);
+    return true;
+  }
+
+  /** "ค่าเดินทาง รอบ 9" names a claim round; with no record to act on, ask instead of capturing a new expense. */
+  private async askClaimLikeRound(event: LineTextEvent, ctx: RequestContext): Promise<boolean> {
+    const claimLocator = lineWorkflowPickerText(event.messageText, true);
+    if (/^(?:เหตุผล|วัตถุประสงค์|เพื่อ|แก้|เปลี่ยน|edit|บันทึก(?:รายจ่าย|ค่าใช้จ่าย|ค่า)|สร้าง(?:รายจ่าย|ค่าใช้จ่าย)|จ่ายค่า)/iu.test(event.messageText.trim()) || lineWorkflowCommand(event.messageText)
+      || claimLocator.question || !claimLocator.rounds.length || !/ใบเบิก|ค่า/u.test(event.messageText)) return false;
+    const owner = this.boundConversations.get(event);
+    const collecting = owner && await this.reimbursementDrafts?.active?.({ ctx, owner: owner.owner, ownerEpoch: owner.epoch });
+    if (collecting?.status === 'COLLECTING') return false;
+    await this.deliverReply(event, 'ต้องการทำอะไรกับใบเบิกนี้คะ', lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
+    await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
     return true;
   }
 
@@ -8395,17 +8410,11 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       return;
     }
     if (await this.handleWorkflowChoice(event, expenseDraftCtx, entitledFeatureKeys)) return;
-    if (await this.showNamedRecordActions(event, expenseDraftCtx, entitledFeatureKeys)) return;
-    const claimLocator = lineWorkflowPickerText(event.messageText, true);
-    if (!/^(?:เหตุผล|วัตถุประสงค์|เพื่อ|แก้|เปลี่ยน|edit|บันทึก(?:รายจ่าย|ค่าใช้จ่าย|ค่า)|สร้าง(?:รายจ่าย|ค่าใช้จ่าย)|จ่ายค่า)/iu.test(event.messageText.trim()) && !lineWorkflowCommand(event.messageText) && !claimLocator.question && claimLocator.rounds.length && /ใบเบิก|ค่า/u.test(event.messageText)) {
-      const owner = this.boundConversations.get(event);
-      const collecting = owner && await this.reimbursementDrafts?.active?.({ ctx: expenseDraftCtx, owner: owner.owner, ownerEpoch: owner.epoch });
-      if (collecting?.status !== 'COLLECTING') {
-        await this.deliverReply(event, 'ต้องการทำอะไรกับใบเบิกนี้คะ', lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
-        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
-        return;
-      }
-    }
+    // The workflow classifier reads the verb first (typos, English, a verb at the end);
+    // the record-action chooser runs only after it finds no workflow.
+    const classifierFirst = boundSemanticV2 && typeof this.aiGateway.requestLineWorkflowClassify === 'function';
+    if (!classifierFirst && await this.showNamedRecordActions(event, expenseDraftCtx, entitledFeatureKeys)) return;
+    if (!classifierFirst && await this.askClaimLikeRound(event, expenseDraftCtx)) return;
 
     if (event.workflowTierTwoOnly && boundSemanticV2) conversationContext = await this.loadConversationContext(companyId, identity.userId, event);
     const claimOwner = this.boundConversations.get(event);
@@ -8523,6 +8532,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       if (!open) return;
       if (await this.handleExpensePaymentText(event, expenseDraftCtx, entitledFeatureKeys, conversationContext)) return;
       if (await this.tryWorkflowClassify(event, expenseDraftCtx, entitledFeatureKeys, open, draftRoutingEnabled)) return;
+      if (await this.showNamedRecordActions(event, expenseDraftCtx, entitledFeatureKeys) || await this.askClaimLikeRound(event, expenseDraftCtx)) return;
       const candidates = await this.textValueCandidates(event, event.messageText);
       semanticRoutePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({ event, requestId, webhookEventId: event.webhookEventId,
         companyId, userId: identity.userId, permissions: resolvedAccess.permissions, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : null,

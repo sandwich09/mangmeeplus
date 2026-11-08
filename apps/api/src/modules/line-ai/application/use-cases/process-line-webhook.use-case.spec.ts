@@ -18200,7 +18200,8 @@ it('M4 round 8 claim filler and named requester ambiguities use only permitted c
 });
 
 it('M4 round 8 document filler and spoken ordinals select their delivered row', async () => {
-  for (const text of ['บิลเลขที่ ทดสอบ-0003 ที่ให้เลือกเมื่อกี้นะคะ', 'อันแรก', 'ใบแรก', 'รายการแรก', 'อันที่ 1', 'ใบที่ 1 ได้ไหม']) {
+  // A count before ใบ/อัน ('สองใบ', '3 อัน') is not an amount.
+  for (const text of ['บิลเลขที่ ทดสอบ-0003 ที่ให้เลือกเมื่อกี้นะคะ', 'อันแรก', 'ใบแรก', 'รายการแรก', 'อันที่ 1', 'ใบที่ 1 ได้ไหม', 'เอาใบแรกจากสองใบที่ขึ้นมา', 'อันแรกใน 3 อันนี้']) {
     const h = await m4PickerHarness();
     assert.equal(await h.answer(text), true); assert.deepEqual(h.selected, ['listed-1'], text);
   }
@@ -19240,6 +19241,8 @@ it('R14 deferred claim starts and claim-like unknown picks cannot capture an exp
     assert.equal(h.intakeRequests.length, 0);
   }
   const h = await r7OffPagePicker(t);
+  // R18: the classifier reads it first; finding no workflow and no record, the claim prompt follows.
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: 'unclear', confidence: 0.8, secondLabel: 'none', secondConfidence: 0, slots: {} });
   await h.execute('ค่าเดินทาง รอบ 999 ค่ะ');
   assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0); assert.match(JSON.stringify(h.delivered.at(-1)), /ต้องการทำอะไรกับใบเบิก/);
 });
@@ -20177,10 +20180,33 @@ it('R17 named claim action buttons use the existing English action labels', asyn
 it('R17 a read-only named bill shows its record and web exit without invented mutation buttons', async t => {
   const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets; h.flow.editableExpenses = h.source.targets.expenses;
   h.source.ctx.permissions = ['line.ai.query', 'ai.tool.invoke', 'expense.read'];
-  h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('the named readable bill needs no classifier');
+  // R18: the classifier reads the verb first; with none, the record chooser follows it.
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: 'unclear', confidence: 0.9, secondLabel: 'none', secondConfidence: 0, slots: {} });
   await h.execute('จัดการบิล ทดสอบ-0003');
   const reply = JSON.stringify(h.delivered.at(-1));
   assert.match(reply, /ทดสอบ-0003/); assert.match(reply, /\/expenses\/workflow-expense-c-2/); assert.doesNotMatch(reply, /wf_open|ต้องการทำอะไร/);
+  assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+});
+
+it('R18 controller: a named bill whose verb the lexicon misses goes to the classifier, not the record chooser', async t => {
+  for (const text of ['ทดสอบ-0003 รบกวนส่งตรวดให้ที', 'รบกวน submit บิล ทดสอบ-0003 นะ']) {
+    const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets; h.flow.editableExpenses = h.source.targets.expenses;
+    await h.execute(text);
+    assert.equal(h.classifyCalls(), 1, text);
+    const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+    assert.equal(pending?.preview.action, 'MARK_READY', text); assert.equal(pending?.expenseId, 'workflow-expense-c-2', text);
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /เลือกงานสำหรับรายการนี้/u);
+    assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+  }
+});
+
+it('R18 controller: a read-only member naming a bill with คอนเฟิร์ม gets the permission refusal, not a web-only record card', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets; h.flow.editableExpenses = h.source.targets.expenses;
+  h.source.ctx.permissions = ['line.ai.query', 'ai.tool.invoke', 'expense.read'];
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('the permission refusal needs no model');
+  const event = await h.execute('คอนเฟิร์มบิล ทดสอบ-0003 ให้หน่อย');
+  assert.equal(h.flow.workflowTaskOutcomes.get(event)?.status, 'REFUSED');
+  assert.match(JSON.stringify(h.delivered.at(-1)), /ยังไม่มีสิทธิ์/u);
   assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
 });
 

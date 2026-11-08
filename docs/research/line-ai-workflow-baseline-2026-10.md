@@ -469,3 +469,50 @@ Blind set v6 is ready: 219 conversations, 644 turns, overlap 0 with every earlie
   - **Scorer.** W1 credits deterministic routes, and reason comparison ignores trailing particles.
   - **Speed overlap is not built.** Intake settlement finishes inside the gateway call, so an unused parallel intake call cannot yet be guaranteed company-absorbed.
 - **Next gate.** Blind set v9.
+
+## Blind set v9 and round 18, measured 2026-11-08
+**Blind set v9** ran on main `e3156bb4a` (round 17 and its recheck fixes) and cost 127.34 THB. It covered 220 conversations, 596 turns and 294 tasks. MA3/MA6 is **not met**.
+
+| Measure | Result |
+|---|---|
+| W3 workflow | 123/176 (69.9%) |
+| All tasks | 229/294 (77.9%) |
+| W6 wrongApplied | 0 |
+| W1 | 14/22 classifier gold turns. The 8 misses never reached the classifier (first cause below). |
+| Plain-text replies outside the locked card | 0 |
+| Reply length | p50 132, p95 333, max 504 visible characters; 17 over 400 |
+
+- **Reply time:**
+
+  | Tier | p50 | p95 | Max |
+  |---|---|---|---|
+  | T0 | 1.3 s | 1.7 s | 2.2 s |
+  | T1 | 2.9 s | 3.1 s | 3.2 s |
+  | T2 | 5.7 s | 11.8 s | 15.1 s (one knowledge answer) |
+
+  30 turns took over 8 s. The slowest ran the classifier, then the intake route, then the turn, in sequence.
+- **Causes, by failed tasks (65):**
+
+  | Cause | Tasks |
+  |---|---|
+  | **Round 17 regression.** The named-record chooser ("เลือกงานสำหรับรายการนี้") ran before the workflow classifier whenever the word list missed the verb: a misspelling, an English verb, the abbreviation คชจ., or the verb at the end. A clear request got a chooser instead of its preview. A read-only member got a web-only record card instead of the permission refusal. A reason or payment method typed next went to the model. | 48 |
+  | A confirm-then-pay request in one message: the confirm verb (คอนเฟิร์ม) was not in the word list, so the model's multi chooser answered. | 4 |
+  | A typed picker answer naming a row by position took the count of rows ("สามใบ") as an amount. | 1 |
+  | A side question at the void-reason question ("…แค่ไหน…") was taken as the reason. | 1 |
+  | Two priced items joined by หรือ were read as a question. The model path then drafted the claim and failed provenance: a dead end. | 1 |
+  | A claim submit typed after saving: the classifier split between claim and expense submit (0.55/0.35) and asked which. | 1 |
+  | **Seed, not product.** The seeded approved voucher has no `sourceHashAtSubmit`, so the web pay precondition answers "changed". Vouchers made in the chat pay normally. | 2 |
+  | **Harness, not product.** The claim-edit preview was correct on screen, but `runtimeDeliveredPreviews` records it as `UNVERIFIED_PREVIEW`. | 3 |
+  | Open: a vendor named only on the expense lists an unfiltered picker (author gap G2); the approvals picker was not narrowed when the requester's name ran into "ให้…"; a bank-reconciliation request was refused in words, but the reply was recorded as an answer. | 4 |
+
+- **Harness limits.** The corpus author's gaps G3–G8 still hold. W15 is not rebuilt from saved evidence, and rescore puts every turn in Tier 0. The controller's own latency audit computes tiers from the calls each turn made.
+- **Round 18** (controller, this commit):
+  - The classifier reads every typed request first; the record chooser and the claim-round prompt run only when it finds no workflow.
+  - The word list reads คอนเฟิร์ม/confirm as ยืนยัน and คชจ. as ค่าใช้จ่าย. A negation still wins.
+  - A number before ใบ/อัน/รายการ counts rows, not money.
+  - "แค่ไหน" asks a question. "N บาท หรือ …" states priced alternatives.
+  - A requester's name ends before ให้/หน่อย.
+  - A claim edit asks what to change, instead of the new-claim details question.
+  - The seed gives pending and approved vouchers their source fingerprint.
+- **Next:** a recheck of the v9 failures (no longer blind), then blind set v10 as the gate.
+
