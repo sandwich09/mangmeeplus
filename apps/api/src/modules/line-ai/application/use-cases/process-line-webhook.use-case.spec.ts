@@ -20200,6 +20200,18 @@ it('R18 controller: a named bill whose verb the lexicon misses goes to the class
   }
 });
 
+it('R18 controller: the record chooser opens the one allowed action the words name, never on a negation', async t => {
+  for (const [text, opened] of [['บิล ทดสอบ-0003 ของร้านนอกหน้า ส่งตรวจได้เลยนะ', true], ['บิล ทดสอบ-0003 ไม่ต้องส่งตรวจนะ', false]] as const) {
+    const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets; h.flow.editableExpenses = h.source.targets.expenses;
+    h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: 'unclear', confidence: 0.8, secondLabel: 'none', secondConfidence: 0, slots: {} });
+    await h.execute(text);
+    const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+    assert.equal(pending?.preview.action, opened ? 'MARK_READY' : undefined, text);
+    if (!opened) assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/, text);
+    assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+  }
+});
+
 it('R18 controller: a read-only member naming a bill with คอนเฟิร์ม gets the permission refusal, not a web-only record card', async t => {
   const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets; h.flow.editableExpenses = h.source.targets.expenses;
   h.source.ctx.permissions = ['line.ai.query', 'ai.tool.invoke', 'expense.read'];
@@ -20208,6 +20220,22 @@ it('R18 controller: a read-only member naming a bill with คอนเฟิร�
   assert.equal(h.flow.workflowTaskOutcomes.get(event)?.status, 'REFUSED');
   assert.match(JSON.stringify(h.delivered.at(-1)), /ยังไม่มีสิทธิ์/u);
   assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+});
+
+it('R18 controller: a claim-or-expense split on pay, cancel or submit follows the named record or the verb', async () => {
+  for (const [messageText, label, second, expected] of [
+    ['ขอโอนคืนค่าเดินทาง รอบ 3 ของสมศรีหน่อย', 'reimbursement_pay', 'expense_pay', 'reimbursement_pay'],
+    ['ยกเลิกเอกสาร ทดสอบ-0020 ให้ที', 'expense_void', 'reimbursement_cancel', 'expense_void'],
+    ['ร่างที่เพิ่งทำ ส่งอนุมัติเลยครับ', 'reimbursement_submit', 'expense_submit', 'reimbursement_submit'],
+    ['จ่ายอันนั้นให้หน่อย', 'reimbursement_pay', 'expense_pay', undefined],
+  ] as const) {
+    const h = await b4WorkflowHarness(), started: string[] = [];
+    h.event.messageText = messageText; h.setDecision({ label, confidence: 0.55, secondLabel: second, secondConfidence: 0.35 });
+    h.flow.startClassifiedWorkflow = async (_event: any, _ctx: any, _features: any, workflow: string) => { started.push(workflow); };
+    await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open);
+    assert.deepEqual(started, expected ? [expected] : [], messageText);
+    assert.equal(h.intakeRequests.length, 0);
+  }
 });
 
 it('R17 controller: a claim opener followed by "then submit" starts the claim, not the first-task chooser', async () => {

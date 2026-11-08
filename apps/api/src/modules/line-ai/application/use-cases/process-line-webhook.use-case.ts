@@ -4187,6 +4187,20 @@ export class ProcessLineWebhookUseCase {
       || !Number.isFinite(result.confidence) || !Number.isFinite(result.secondConfidence)
       || result.secondConfidence < 0 || result.secondConfidence > result.confidence || result.confidence > 1) return false;
     const decision = result.secondLabel === result.label ? { ...result, secondLabel: 'none' as const, secondConfidence: 0 } : result;
+    // Claims and expenses share the pay, cancel and submit verbs. When the classifier splits between the pair,
+    // the words decide: a claim round or "ใบเบิก" names a claim, a bill number names an expense.
+    const pair = ([['reimbursement_pay', 'expense_pay'], ['reimbursement_cancel', 'expense_void'], ['reimbursement_submit', 'expense_submit']] as const)
+      .find(ids => [decision.label, decision.secondLabel].every(label => (ids as readonly string[]).includes(label)));
+    if (pair) {
+      const text = event.messageText;
+      const claimCue = /ใบเบิก|รอบ\s*\d/u.test(text) || pair[0] === 'reimbursement_submit' && /อนุมัติ/u.test(text) && !/ตรวจ/u.test(text);
+      const expenseCue = parsed.documents.length > 0 && !/ใบเบิก/u.test(text) || pair[1] === 'expense_submit' && /ส่งตรวจ/u.test(text);
+      const picked = claimCue !== expenseCue ? claimCue ? pair[0] : pair[1] : undefined;
+      if (picked) {
+        await this.startClassifiedWorkflow(event, ctx, features, picked, { ...decision, label: picked, secondLabel: 'none', secondConfidence: 0 }, evidence);
+        return true;
+      }
+    }
     if (!LINE_WORKFLOW_IDS.includes(decision.secondLabel as LineWorkflowId) && parsed.explicit && !parsed.question
       && this.mayStartWorkflow(decision.label as LineWorkflowId, ctx, features)
       && await this.startNamedWorkflowTarget(event, ctx, features, decision.label as LineWorkflowId)) return true;
@@ -4475,7 +4489,7 @@ export class ProcessLineWebhookUseCase {
     if (!evidence) return false;
     const claim = /ใบเบิก|รอบ/u.test(event.messageText);
     const workflows = claim ? CLAIM_WORKFLOW_ACTIONS : EXPENSE_WORKFLOW_ACTIONS;
-    const choices: Array<{ label: string; text: string; data: string }> = [];
+    const choices: Array<{ label: string; text: string; data: string; control: Extract<NonNullable<LineTextEvent['workflowControl']>, { action: 'wf_open' }> }> = [];
     const targets = new Map<string, any>();
     for (const [workflow, action] of Object.entries(workflows)) {
       if (workflow === 'payment_voucher' || workflow === 'wht_certificate' || !this.mayStartWorkflow(workflow as LineWorkflowId, ctx, features)) continue;
@@ -4489,7 +4503,7 @@ export class ProcessLineWebhookUseCase {
       const card = claim ? buildClaimWorkflowPicker(result, workflow as ClaimWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl, {}, replyLanguage(event))
         : buildExpenseWorkflowPicker(result, workflow as ExpenseWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl);
       const row = this.workflowPickerRows([card])?.rows[0];
-      if (row) choices.push({ label: lineUiLabel(EXPENSE_ACTION_LABELS[action as ExpenseAction], replyLanguage(event)), text: lineUiLabel(EXPENSE_ACTION_LABELS[action as ExpenseAction], replyLanguage(event)), data: lineControlData(new URLSearchParams({ action: 'wf_open', act: row.control.act, id: row.control.id, sig: row.control.sig }).toString(), replyLanguage(event)) });
+      if (row) choices.push({ label: lineUiLabel(EXPENSE_ACTION_LABELS[action as ExpenseAction], replyLanguage(event)), text: lineUiLabel(EXPENSE_ACTION_LABELS[action as ExpenseAction], replyLanguage(event)), data: lineControlData(new URLSearchParams({ action: 'wf_open', act: row.control.act, id: row.control.id, sig: row.control.sig }).toString(), replyLanguage(event)), control: row.control });
     }
     if (!targets.size && claim && ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.read_related', 'reimbursement.finance_review'].some(permission => ctx.permissions.includes(permission))) {
       const candidates = await extractValueCandidatesV2(evidence, todayCivilDate('Asia/Bangkok'));
@@ -4516,8 +4530,17 @@ export class ProcessLineWebhookUseCase {
       await this.deliverRequiredMessages(event, [buildWorkflowExitMessage([target.requesterDisplayNameSnapshot ?? target.label, target.reason ?? target.documentNumbers?.[0], `${target.amount} ${target.currency === 'THB' || !target.currency ? replyLanguage(event) === 'en' ? 'THB' : 'บาท' : target.currency}`, status].filter(Boolean).join(' · '), `/companies/${ctx.companyId}/${claim ? 'reimbursements' : 'expenses'}/${target.id}`, ctx.companyId, this.config.webBaseUrl, replyLanguage(event))]);
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId); return true;
     }
+    // "…ยืนยันได้เลย": when the words name exactly one allowed action, open its preview; a negation never does.
+    const said = event.messageText.replace(/คอนเฟิร์ม|คอนเฟิม|คอนเฟริ์ม|\bconfirm\b/giu, 'ยืนยัน').toLocaleLowerCase();
+    const named = choices.filter(choice => said.includes(choice.label.toLocaleLowerCase()));
+    const spoken = named.filter(choice => !named.some(other => other !== choice && other.label.includes(choice.label)));
+    if (spoken.length === 1 && !/อย่า|ไม่ต้อง|ห้าม|\b(?:don'?t|do not)\b/iu.test(event.messageText)) {
+      event.workflowControl = spoken[0]!.control;
+      try { await this.handleWorkflowControl(event, ctx, features); } finally { delete event.workflowControl; }
+      return true;
+    }
     const target = [...targets.values()][0];
-    await this.deliverReply(event, `${replyLanguage(event) === 'en' ? 'Choose an action' : 'เลือกงานสำหรับรายการนี้'}\n` + [target.requesterDisplayNameSnapshot, target.reason ?? target.title ?? target.label, target.requestNo ?? target.documentNumbers?.[0], `${target.amount} ${target.currency === 'THB' || !target.currency ? replyLanguage(event) === 'en' ? 'THB' : 'บาท' : target.currency}`].filter(Boolean).join(' · '), lineChoiceQuickReply(choices));
+    await this.deliverReply(event, `${replyLanguage(event) === 'en' ? 'Choose an action' : 'เลือกงานสำหรับรายการนี้'}\n` + [target.requesterDisplayNameSnapshot, target.reason ?? target.title ?? target.label, target.requestNo ?? target.documentNumbers?.[0], `${target.amount} ${target.currency === 'THB' || !target.currency ? replyLanguage(event) === 'en' ? 'THB' : 'บาท' : target.currency}`].filter(Boolean).join(' · '), lineChoiceQuickReply(choices.map(({ control: _control, ...choice }) => choice)));
     await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
     return true;
   }
