@@ -1,4 +1,4 @@
-import { isLineWorkflowPutOff } from '@watchdog-bms/contracts';
+import { isLineWorkflowPutOff, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS } from '@watchdog-bms/contracts';
 import { lineWorkflowPickerText } from '../../../line-ai/domain/logic/line-ai-classifier.logic';
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
@@ -508,14 +508,14 @@ function groundedSideAnswer(expense: ExpenseRecordWithRelations, text: string, l
   if (/(vat|ภาษีมูลค่าเพิ่ม|ภาษีซื้อ|เคลมภาษี|เครดิตภาษี)/iu.test(text)
     && /[?？]|ไหม|ได้หรือไม่|อย่างไร|ยังไง/u.test(text)) {
     return [
-      `คำถามแทรก — VAT: รายการปัจจุบันมีสถานะหลักฐานภาษี ${expense.taxEvidenceStatus ?? 'รอตรวจสอบ'}`,
+      `คำถามแทรก — VAT\nหลักฐานภาษีของรายการนี้${TAX_EVIDENCE_STATUS_LABELS[expense.taxEvidenceStatus] ?? 'รอตรวจ'}`,
       'ใบรับรองแทนใบเสร็จรับเงินเป็นหลักฐานภายใน ไม่ใช่ใบกำกับภาษีจากผู้ขาย และไม่ทำให้ VAT ซื้อกลายเป็นเครดิตภาษีได้',
       'หากมีใบกำกับภาษีจากผู้ขาย ให้แนบในรายการและให้ผู้มีสิทธิ์ตรวจสอบในเว็บ',
     ].join('\n');
   }
   if (/(ใบนี้|เอกสารนี้).*(คืออะไร|ประเภทอะไร|เป็นอะไร)|ประเภทเอกสาร/u.test(text)
     && /[?？]|อะไร|ไหม/u.test(text)) {
-    return `คำถามแทรก — ประเภทเอกสารในระบบตอนนี้: ${expense.sourceDocumentType ?? 'ยังไม่ระบุ'} (ต้องตรวจจากหลักฐานต้นทางในเว็บ)`;
+    return `ประเภทเอกสารของรายการนี้ ${SOURCE_DOCUMENT_TYPE_LABELS[expense.sourceDocumentType] ?? 'รอตรวจประเภทเอกสาร'} ตรวจหลักฐานต้นทางในเว็บได้ค่ะ`;
   }
   return undefined;
 }
@@ -1705,8 +1705,8 @@ export class LineSubstituteReceiptContinuationUseCase {
         badge: substituteReceiptBadge({ language, status: 'FORBIDDEN' }),
         blockers: [blocker('expense_review_forbidden', 'ไม่มีสิทธิ์ตรวจทานเพื่อจัดทำใบรับรองแทนใบเสร็จรับเงิน')],
         replyText: formatStandalone({ language,
-          headline: (language === 'en' ? 'Ask an authorized expense reviewer to prepare the substitute receipt.' : 'จัดทำใบรับรองแทนใบเสร็จรับเงินต้องมีสิทธิ์ตรวจทานค่าใช้จ่าย (expense.review) ซึ่งบัญชีนี้ยังไม่มีค่ะ'),
-          question: (language === 'en' ? 'Please ask your shop administrator for expense-review access.' : 'ขอสิทธิ์ตรวจทานค่าใช้จ่ายจากผู้ดูแลบริษัทก่อนได้ไหมคะ?'),
+          headline: (language === 'en' ? 'Ask an authorized expense reviewer to prepare the substitute receipt.' : 'คุณยังไม่มีสิทธิ์ตรวจทานค่าใช้จ่ายเพื่อทำใบรับรองแทนใบเสร็จค่ะ'),
+          question: (language === 'en' ? 'Ask the shop owner or an authorized administrator for expense-review access.' : 'ให้เจ้าของกิจการหรือผู้ดูแลร้านเปิดสิทธิ์ให้ค่ะ'),
         }),
       };
     }

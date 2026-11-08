@@ -570,3 +570,63 @@ Blind set v6 is ready: 219 conversations, 644 turns, overlap 0 with every earlie
   - a claim edit typed with "เปลี่ยนยอด…" missed the edit rule, which read only "แก้…".
 - **Round 19b:** the model-routed substitute path records a pause or cancel as declined, and a permission, eligibility or stale result as refused. "เปลี่ยน/ปรับ(ยอด|เหตุผล|หมวด)ใบเบิก…" starts the same claim edit as "แก้…".
 - **Next:** blind set v11 as the gate.
+
+## Blind set v11 and round 20, measured 2026-11-08
+**Blind set v11** ran on main `787677daf` (rounds 19 and 19b) and cost 122.86 THB. It covered 219 conversations, 564 turns and 232 tasks. MA3/MA6 is **not met**.
+
+| Measure | Result |
+|---|---|
+| W3 workflow | 172/189 (91.0%) |
+| Advisor | 43/43 |
+| All tasks | 215/232 (92.7%) |
+| W6, W9, W14, W15 | 0 wrong applied, 0 invalid of 77 classifier calls, 0 timeouts, 0 rejected-and-charged |
+| W1 | 193/216 (89.4%) |
+| Plain-text replies outside the locked card | 0 |
+| Reply length | p50 155, p95 382, max 550 visible characters; 19 over 400 |
+
+- **Reply time:**
+
+  | Tier | p50 | p95 | Max |
+  |---|---|---|---|
+  | T0 | 1.3 s | 1.5 s | 2.7 s |
+  | T1 | 2.9 s | 3.2 s | 3.4 s |
+  | T2 | 6.0 s | 11.8 s | 12.7 s |
+
+  39 turns took over 8 s, all on the full model path.
+- **Causes, by failed workflow tasks (17):**
+
+  | Cause | Tasks |
+  |---|---|
+  | **A glued document token.** Thai runs words together. "…ใบเตรียมจ่ายที่มีบิล<number>" after a verb, "…บิลเลข<number>" and "เอาบิล<number>" were read as one long number. Two voucher chains lost their first preview and every press after it (4 tasks each); a big-shop void lost its pick. | 9 |
+  | A substitute-receipt put-off after a side question was answered by the model without pausing. One start that asked its first field had no pending question, so it was recorded as refused. | 2 |
+  | A list opener with a space before "ได้" ("…ที่ฉัน <verb> ได้…"). | 1 |
+  | The typo "ลบล่าง" for ลบร่าง went to the classifier's delete/claim-cancel choice. | 1 |
+  | An English "pay <bill>" got the low-confidence confirm. | 1 |
+  | A claim reason typed as "เหตุผล …" after a two-job opener went to the model, and the opener skipped the multi choice (author G4). | 1 |
+  | A 50 ทวิ request naming a voucher by its bill matched the voucher rule first (author G3). | 1 |
+  | A claim repayment named by category and round: the category word ran into "ตามใบเบิก", so the claim was not found. | 1 |
+
+- **Author static gaps, not yet in the run's failures:** G1, a side question at the duplicate-vendor choice repeats the choice. G2, "เมื่อไร" is not a question word. G5, a vendor-named delete or submit gets the broad picker. G6, a substitute-receipt permission denial shows the raw key `expense.review`.
+
+- **Round 20.** The controller fixed the following:
+  - Leading verbs and the words "เลข", "เอา" and "ที่มีบิล" are stripped before a record number.
+  - `lineDocumentNumberMatches` accepts a typed run that ends in the whole record number.
+  - "ลบล่าง" is read as ลบร่าง, and "pay บิล…" as บันทึกจ่าย.
+  - A 50 ทวิ request is checked before the voucher rule (G3).
+  - "เมื่อไร/เมื่อไหร่/ตอนไหน" ask a question (G2).
+  - Category words stop at ตาม/ใบเบิก/ใบเสร็จ/จาก.
+  - The list opener allows a space before "ได้".
+  - The claim-cancel and expense-delete pair is settled from the words.
+- **Lane r20a:**
+  - A put-off pauses a substitute receipt whichever path opened it, with 0 model calls, and is recorded as declined.
+  - A side question at an open substitute question gets its answer and the question is re-asked.
+  - A start that shows a question card keeps its question pending.
+  - The substitute denial and side answers show plain Thai, not `expense.review` or internal codes (G6).
+- **Lane r20b:**
+  - Two different jobs in one message defer every lexical start to the classifier's multi choice. A claim followed by its own submit, and confirm-then-pay, stay one job.
+  - An explicit "เหตุผล …" fills the claim reason after that choice.
+  - A side question at the duplicate-vendor choice is answered and the choice is kept (G1).
+  - Delete and submit narrow by one vendor word when no bill number is named (G5).
+- **Controller guard:** shop words ("ร้านนี้", "ร้านเรา", "ผู้ขายชื่อซ้ำ") never become a vendor filter.
+- **Lexicon diff over 4,345 corpus texts (v1–v11):** only the intended texts changed. The changes are cleaner document tokens, six two-job openers, five knowledge questions with "เมื่อไร", and the four typo, English and 50 ทวิ fixes.
+- **Next:** blind set v12 as the gate.

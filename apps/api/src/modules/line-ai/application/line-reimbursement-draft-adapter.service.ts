@@ -539,7 +539,7 @@ export class LineReimbursementDraftAdapterService {
     // The persisted preview owns a plain answer even when intake omitted its continuation hint.
     const explicitReason = input.text.trim().match(/^เหตุผล(?:คือ)?\s*[:：]?\s*(.+)$/u);
     const value = stripLineFieldParticles(explicitReason?.[1]?.trim().replace(/^คือ\s*/u, '') ?? input.text.trim().replace(/^(?:วัตถุประสงค์(?:คือ)?|เพื่อ)\s*/u, ''));
-    if (!isPendingFieldAnswer(value, 'claim')
+    if (!isPendingFieldAnswer(value, explicitReason ? 'reason' : 'claim')
       || (await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok')))?.amounts.length !== 0) return null;
     const purposeAnswer = /^(?:วัตถุประสงค์(?:คือ)?|เพื่อ)\s*/u.test(input.text.trim());
     if (purposeAnswer && active?.status === 'COLLECTING') {

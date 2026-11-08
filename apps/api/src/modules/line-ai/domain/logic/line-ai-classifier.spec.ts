@@ -461,3 +461,29 @@ it('R19 controller: a list asked for one job names that job, a state read stays 
   assert.deepEqual(lineWorkflowPickerText('ตัวลงท้ายด้วย 0003 ค่ะ').documents, ['0003']);
   assert.equal(lineClaimTargetSearch('ใบเบิก 820 บาท', [{ value: '820' }]), '820');
 });
+
+it('R20 controller: a document number glued to the words before it, typos and English pay, 50 ทวิ before the voucher rule', async () => {
+  const { lineWorkflowCommand } = await import('./line-ai-classifier.logic');
+  for (const [text, number] of [['ขอส่งอนุมัติใบเตรียมจ่ายที่มีบิลอื่น-0099 หน่อย', 'อื่น-0099'], ['ใบเตรียมจ่ายที่มีบิลเลขอื่น-0099 ส่งตรวจด้วย', 'อื่น-0099'], ['เอาบิลอื่น-0099 นะ', 'อื่น-0099']] as const)
+    assert.deepEqual(lineWorkflowPickerText(text).documents, [number], text);
+  assert.equal(lineDocumentNumberMatches('อื่น-0099', 'ส่งต่อบิลอื่น-0099'), true);
+  assert.equal(lineDocumentNumberMatches('อื่น-00991', 'บิลอื่น-0099'), false);
+  assert.equal(lineDocumentNumberMatches('ทดสอบ-0099', 'อื่น-0099'), false);
+  assert.equal(lineWorkflowCommand('ลบล่างบิลอื่น-0099 ให้หน่อย'), 'expense_delete');
+  assert.equal(lineWorkflowCommand('pay บิลอื่น-0099 ด้วยค่ะ'), 'expense_pay');
+  assert.equal(lineWorkflowCommand('ออก 50 ทวิ ให้ใบเตรียมจ่ายที่มีบิลอื่น-0099'), 'wht_certificate');
+  assert.equal(lineWorkflowPickerText('ใบรับรองแทนใบเสร็จต้องทำตอนไหน').question, true);
+  assert.equal(lineWorkflowPickerText('จะได้เงินคืนเมื่อไหร่').question, true);
+  assert.deepEqual(lineWorkflowPickerText('จ่ายคืนค่าทางด่วนตามใบเบิกรอบสอง', true).categoryWords, ['ค่าทางด่วน']);
+  assert.equal(lineWorkflowListOpener('ขอใบเบิกที่ผม approve ได้มาให้เลือกหน่อย'), 'approvals');
+});
+
+it('R20 joined different workflow verbs defer lexical starts while confirm then pay stays on its bill', async () => {
+  const { lineWorkflowCommand } = await import('./line-ai-classifier.logic');
+  for (const join of ['แล้ว', 'จากนั้น', 'กับ', 'และ']) {
+    assert.equal(lineWorkflowCommand(`ยืนยันบิล ทดสอบ-0003 ${join}ส่งใบเตรียมจ่าย`), undefined);
+    assert.equal(lineWorkflowCommand(`ส่งตรวจบิล ทดสอบ-0003 ${join}ลบร่าง`), undefined);
+    assert.equal(lineWorkflowCommand(`เบิกค่าทางด่วน 60 บาท ${join}บันทึกจ่ายคืนด้วย`), undefined);
+  }
+  assert.equal(lineWorkflowCommand('ยืนยันบิล ทดสอบ-0003 แล้วบันทึกจ่ายเงินสด'), 'expense_confirm');
+});

@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 import { expenseEvidenceFingerprint, SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
 import { describe, it } from 'node:test';
 import { createHash } from 'node:crypto';
+
+
 import {
   PaperSubstituteReceiptUseCase,
   ApproveSubstituteReceiptUseCase,
@@ -2576,4 +2578,44 @@ it('R16 LINE substitute candidates search and return both permitted document num
   const result = await list.execute({ ...ctx(), authProvider: 'line' }, { search: 'ผู้ขาย-0099' }, { channel: 'line' });
   assert.equal(result.total, 1); assert.equal(result.items[0]?.expenseNumber, 'ทดสอบ-0002'); assert.equal(result.items[0]?.vendorDocumentNumber, 'ผู้ขาย-0099');
   assert.equal(scope.search, 'ผู้ขาย-0099'); assert.equal(scope.companyId, ctx().companyId);
+});
+
+it('R20 substitute permission refusals explain the way out without keys or writes for paid and free shops', async () => {
+  for (const freeExpenseDrafts of [false, true]) {
+    const h = lineHarness();
+    const result = await h.useCase.execute({ ...lineCtx(['expense.receipt.line_upload']), freeExpenseDrafts }, {
+      messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'รายการ' }],
+    });
+    assert.equal(result.status, 'FORBIDDEN');
+    assert.match(result.replyText, /สิทธิ์ตรวจทานค่าใช้จ่าย/);
+    assert.match(result.replyText, /เจ้าของกิจการ|ผู้ดูแลร้าน/);
+    assert.doesNotMatch(result.replyText, /expense\.review/);
+    assert.equal(result.webPath, undefined);
+    assert.deepEqual(h.saves, []); assert.deepEqual(h.prepares, []); assert.deepEqual(h.audits, []);
+  }
+});
+
+it('R20 every substitute funding question is returned and stored as pending on menu and confirmed model starts', async () => {
+  for (const messageText of ['ทำใบรับรองแทนใบเสร็จ', 'ใช่']) {
+    const h = lineHarness();
+    const result = await h.useCase.execute(lineCtx(), { messageText, chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'รายการ' }], confirmedStart: true, requireStartConfirmation: true });
+    assert.equal(result.status, 'BLOCKED');
+    assert.match(result.pendingQuestion!, /เงินของบริษัท/);
+    assert.equal(result.questionCard?.question, result.pendingQuestion!.split('\n')[1]?.replace(/^• /u, '') ?? result.pendingQuestion);
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingQuestion, result.pendingQuestion);
+    assert.deepEqual(h.prepares, []);
+  }
+});
+
+it('R20 substitute side answers display Thai document and evidence names without internal codes', async () => {
+  for (const [messageText, expected] of [['ใบนี้เคลมภาษีซื้อได้ไหม', 'ใช้ได้เมื่อมีหลักฐานอื่นประกอบ'], ['เอกสารนี้ประเภทอะไร', 'โน้ตค่าใช้จ่าย']]) {
+    const h = lineHarness();
+    await h.useCase.execute(lineCtx(), { messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'รายการ' }] });
+    const before = h.saves.length;
+    const result = await h.useCase.execute(lineCtx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.match(result.replyText, new RegExp(expected));
+    assert.doesNotMatch(result.replyText, /SUPPORTING_ONLY|EXPENSE_NOTE_TEXT/);
+    assert.equal(h.saves.length, before); assert.deepEqual(h.prepares, []);
+  }
 });

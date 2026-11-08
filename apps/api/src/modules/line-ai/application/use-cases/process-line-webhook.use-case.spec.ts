@@ -1,4 +1,6 @@
 import { ctx as substituteDecisionCtx, readyHarness as substituteDecisionHarness } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec';
+
+
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 
 import { LineSubstituteReceiptActionService, buildSubstituteReceiptActionCard } from '../line-substitute-receipt-action.service';
@@ -14405,7 +14407,8 @@ describe('LINE-ACT2 deleted claim actions', () => {
 
 describe('free expense LINE boundary', () => {
   it('R27 free commands and welcome bypass every text model call', async () => {
-    for (const messageText of ['สวัสดี', 'ถ่ายใบเสร็จ', 'ลองส่งใบเสร็จ', 'เมนูหลัก', 'บริการของเรา', '/companies', 'ติดต่อเจ้าหน้าที่', 'ดูแพ็กเกจ', 'วันนี้ขายดีไหม', 'แก้ยอดบิลเป็น 500']) {
+    for (const messageText of ['สวัสดี', 'ถ่ายใบเสร็จ', 'ลองส่งใบเสร็จ', 'เมนูหลัก', 'บริการของเรา', '/companies', 'ติดต่อเจ้าหน้าที่', 'ดูแพ็กเกจ', 'วันนี้ขายดีไหม', 'แก้ยอดบิลเป็น 500',
+      'ทำใบรับรองแทนใบเสร็จ', 'ต้องเขียนชื่อคนขายด้วยไหม', 'ขอพักไว้ก่อนนะ', 'เดี๋ยวค่อยมาทำต่อพรุ่งนี้']) {
       const { prisma } = makePrisma();
       const h = makeUseCase(prisma, { freeExpenseDrafts: true,
         permissions: ['expense.read_own', 'expense.update', 'expense.receipt.line_upload'],
@@ -20323,4 +20326,149 @@ it('R19 controller: ปรับ/เปลี่ยน start the same claim edit
     }
     assert.equal(row.amount, '150'); assert.equal(other.amount, '150');
   }
+});
+
+
+it('R20 two workflow verbs offer a choice before any preview or business write', async t => {
+  for (const text of ['ยืนยันบิล ทดสอบ-0003 แล้วส่งใบเตรียมจ่าย', 'ส่งตรวจบิล ทดสอบ-0003 จากนั้นลบร่าง', 'ยืนยันบิล ทดสอบ-0003 กับลบร่าง', 'ยืนยันบิล ทดสอบ-0003 และลบร่าง', 'ยกเลิกใบเบิก แล้ว ยกเลิกบิล', 'สร้างใบเบิกค่าทางด่วน 60 บาท แล้วบันทึกจ่ายคืนด้วย']) {
+    const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+    h.source.ctx.permissions.push('expense.confirm', 'expense.delete', 'expense.void', 'expense.disbursement.prepare', 'expense.disbursement.read', 'reimbursement.create', 'reimbursement.cancel_own', 'reimbursement.payment.record');
+    let classifierCalls = 0;
+    h.flow.aiGateway.requestLineWorkflowClassify = async () => { classifierCalls++; return { status: 'CLASSIFIED', label: 'multi', confidence: .99, secondLabel: 'none', secondConfidence: 0, slots: {} }; };
+    await h.execute(text);
+    assert.equal(classifierCalls, 1);
+    assert.match(JSON.stringify(h.delivered.at(-1)), /ต้องการทำเรื่องไหน/);
+    assert.deepEqual(h.source.previewed, []); assert.deepEqual(h.applied, []);
+    assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+  }
+});
+
+it('R20 claim selected after a two-job opener accepts its explicit reason without a model', async () => {
+  const h = await b4WorkflowHarness(), claim = manualClaimHarness();
+  const text = 'เบิกค่าทางด่วน 60 บาท แล้วบันทึกจ่ายคืนด้วย ขอทำทีละอย่าง';
+  h.ctx.permissions.push('reimbursement.payment.record');
+  h.event.messageText = text; h.setDecision({ label: 'multi' });
+  h.flow.textEvidenceV2 = async () => (await createLineAiInputEvidence({ turnKey: 'r20-opener', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: h.event.messageText }] }))!.inputEvidence;
+  h.flow.reimbursementAdapter = claim.adapter; h.flow.reimbursementDrafts = claim.drafts;
+  await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open);
+  const card = h.sentMessages.at(-1) as any;
+  assert.match(JSON.stringify(card), /ต้องการทำเรื่องไหน/);
+  const button = card.quickReply.items.find((item: any) => item.action.data?.includes('pick=reimbursement_claim'));
+  assert.ok(button);
+  const params = new URLSearchParams(button.action.data);
+  h.event.workflowControl = { action: 'wf_choice', token: params.get('token'), pick: 'reimbursement_claim' };
+  assert.equal(await h.flow.handleWorkflowChoice(h.event, h.ctx, null), true);
+  delete h.event.workflowControl;
+  assert.equal(h.event.messageText, 'เบิกค่าทางด่วน 60 บาท');
+  const answer = async (text: string) => {
+    const evidence = (await createLineAiInputEvidence({ turnKey: deliveryHash(text), parts: [{ partId: 'part-0', eventIdHash: 'b'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    h.event.messageText = text; h.event.inputEvidence = evidence;
+    return h.flow.continueReimbursementQuestion(h.event, h.ctx);
+  };
+  await answer('ค่าทางด่วน 60 บาท วันนี้'); await answer('ไม่มีใบเสร็จ'); await answer('ค่าเดินทาง');
+  const reason = 'ขอคืนค่าทางด่วนที่จ่ายไปส่งของให้ร้าน';
+  assert.equal(claim.action().status, 'COLLECTING');
+  const callsBeforeReason = h.calls.length;
+  const result = await answer(`เหตุผล ${reason}`);
+  assert.equal(h.calls.length, callsBeforeReason);
+  assert.equal(result, true);
+  assert.equal(claim.action().status, 'PREVIEW');
+  assert.equal(claim.action().previewJson.after.reason, reason);
+  assert.equal(h.calls.length, 1); assert.equal(h.intakeRequests.length, 0); assert.equal(h.starts.length, 0);
+});
+
+it('R20 a duplicate-vendor side question explains the displayed difference and retains its choices', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+  h.source.ctx.permissions.push('accounting.counterparty.read', 'expense.disbursement.read', 'expense.disbursement.prepare');
+  h.source.targets.counterparties = { execute: async () => ({ data: [{ id: 'one', displayName: 'ร้านสมใจ', taxId: '1111111111111' }, { id: 'two', displayName: 'ร้านสมใจ', taxId: '2222222222222' }], total: 2 }) };
+  await h.execute('ทำใบเตรียมจ่ายร้านสมใจ');
+  await h.execute('สองร้านนี้ต่างกันยังไง');
+  const reply = JSON.stringify(h.delivered.at(-1));
+  assert.match(reply, /เทียบ/); assert.match(reply, /1111111111111/); assert.match(reply, /2222222222222/);
+  assert.match(reply, /เลือกผู้ขาย 1/); assert.match(reply, /เลือกผู้ขาย 2/);
+  assert.deepEqual(h.source.previewed, []); assert.equal(h.creates(), 0); assert.equal(h.classifyCalls(), 0); assert.equal(h.intakeRequests.length, 0);
+});
+
+it('R20 delete and submit narrow by vendor snapshots with one, several and no matches', async t => {
+  for (const workflow of ['expense_submit', 'expense_delete']) for (const count of [0, 1, 2]) {
+    const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+    h.source.ctx.permissions.push('expense.delete');
+    h.source.records.forEach((row, index) => { row.vendorNameSnapshot = index < count ? 'ร้านสมใจ' : 'ร้านอื่น'; });
+    await h.execute(workflow === 'expense_delete' ? 'ลบร่างของร้านสมใจ' : 'ส่งตรวจบิลร้านสมใจ');
+    const reply = JSON.stringify(h.delivered.at(-1));
+    assert.deepEqual(h.source.previewed, count === 1 ? [h.source.records[0].id] : []);
+    assert.doesNotMatch(reply, /ร้านอื่น/);
+    if (count !== 1) assert.match(reply, /เปิด|ดูทั้งหมดในเว็บ|เลือก/);
+    assert.equal(h.creates(), 0); assert.deepEqual(h.applied, []); assert.equal(h.classifyCalls(), 0); assert.equal(h.intakeRequests.length, 0);
+  }
+});
+
+
+it('R20 free source-draft shops refuse these workflow messages before any model or business write', async () => {
+  for (const messageText of ['เบิกค่าทางด่วน 60 บาท แล้วบันทึกจ่ายคืนด้วย', 'ยืนยันบิล ทดสอบ-0003 แล้วส่งใบเตรียมจ่าย', 'เหตุผล ขอคืนค่าทางด่วน', 'สองร้านนี้ต่างกันยังไง', 'ลบร่างของร้านสมใจ', 'ส่งตรวจบิลร้านสมใจ']) {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { freeExpenseDrafts: true, permissions: ['line.ai.query', 'ai.tool.invoke', 'expense.read', 'expense.update'] });
+    const flow = h.useCase as any;
+    flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('free shops never reach the classifier');
+    flow.workflowTargets = { pick: async () => assert.fail('free shops never list paid workflow targets') };
+    flow.captureExpenseNote = { execute: async () => assert.fail('free chat never creates an expense') };
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `r20-free-${messageText}`, messageText });
+    assert.match(h.replies.at(-1)!, /^สิทธิ์ใช้ฟรียังไม่รวม(?:คำถาม|งานนี้) พิมพ์ ‘เมนูหลัก’ เพื่อดูทางเลือกค่ะ$/);
+    assert.equal(h.aiGatewayRequests.length, 0); assert.equal(h.intakeRequests.length, 0);
+  }
+});
+
+it('R20 vendor narrowing also matches the current counterparty when its receipt snapshot has an older name', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+  h.source.ctx.permissions.push('accounting.counterparty.read');
+  h.source.records.forEach((row, index) => { row.vendorNameSnapshot = 'ชื่อเดิม'; row.vendorCounterpartyId = index === 2 ? 'renamed' : null; });
+  h.source.targets.counterparties = { execute: async () => ({ data: [{ id: 'renamed', displayName: 'ร้านสมใจ' }], total: 1 }) };
+  await h.execute('ส่งตรวจบิลร้านสมใจ');
+  assert.deepEqual(h.source.previewed, [h.source.records[2].id]);
+  assert.equal(h.creates(), 0); assert.equal(h.classifyCalls(), 0); assert.equal(h.intakeRequests.length, 0);
+});
+
+it('R20 substitute put-offs pause menu and model questions with zero model calls and no document write', async () => {
+  const { harness, ctx } = await import('../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec');
+  for (const text of ['ทำใบรับรองแทนใบเสร็จจากเมนู', 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ']) {
+    for (const candidateExpenseIds of [undefined, ['expense-1']]) {
+      for (const messageText of ['ขอพักไว้ก่อนนะ', 'เดี๋ยวค่อยมาทำต่อพรุ่งนี้']) {
+        const source = harness(), actor = ctx(), { prisma } = makePrisma();
+        const h = makeUseCase(prisma, { intakeRouteFn: () => assert.fail('pause cannot call intake'), aiGatewayFn: () => assert.fail('pause cannot call the model') });
+        const flow = h.useCase as any, event = { ...BASE_EVENT, messageText };
+        await source.useCase.execute(actor, { messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: chatKeyHashOf(event), recentCandidates: [{ id: 'expense-1', label: 'รายการ' }] });
+        const before = source.saves.length;
+        let waiting = [{ id: 'question', text, question: 'ใช้เงินของบริษัทหรือเงินส่วนตัวคะ', candidateExpenseIds,
+          clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', entry: {} }];
+        flow.ledger = { openWaitingUser: async () => waiting };
+        flow.substituteReceiptContinuation = source.useCase;
+        flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('pause cannot classify');
+        flow.waitingSourcesCurrent = async () => true;
+        flow.consumeClarifications = async () => { waiting = []; };
+        flow.rememberSubstituteDeliverySource = async () => undefined;
+        flow.appendSourceBoundClarifications = async () => assert.fail('pause must close the question');
+        flow.deliverCompletedReply = async (_event: any, reply: string) => { assert.match(reply, /พักงานนี้ไว้แล้ว/); };
+        assert.equal(await flow.continueSubstituteWorkflow(event, actor), true);
+        assert.equal(source.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'PAUSED');
+        assert.deepEqual(flow.workflowTaskOutcomes.get(event), { kind: 'substitute_receipt', status: 'DECLINED' });
+        assert.equal(source.saves.length, before + 1, 'only continuation metadata changes');
+        assert.deepEqual(source.prepares, []); assert.deepEqual(source.audits, []);
+        assert.equal(waiting.length, 0); assert.equal(h.intakeRequests.length, 0); assert.equal(h.getAiGatewayCalled(), false);
+      }
+    }
+  }
+});
+
+it('R20 a blocked substitute question card keeps its question open and its task OPEN', async () => {
+  const { prisma } = makePrisma(), h = makeUseCase(prisma), flow = h.useCase as any;
+  const event = { ...BASE_EVENT, messageText: 'ทำใบรับรองแทนใบเสร็จ' }, pending: any[] = [];
+  flow.rememberSubstituteDeliverySource = async () => undefined;
+  flow.deliverCompletedReply = async () => undefined;
+  flow.consumeClarifications = async () => undefined;
+  flow.appendSourceBoundClarifications = async (_event: any, input: any) => pending.push(...input.items);
+  await flow.deliverSubstituteWorkflow(event, substituteDecisionCtx(), { status: 'BLOCKED', expenseId: 'expense-1',
+    replyText: 'ใช้เงินของบริษัทหรือเงินส่วนตัวคะ', questionCard: { record: 'รายการ', amount: '200.00', question: 'ใช้เงินของบริษัทหรือเงินส่วนตัวคะ', remainingQuestions: 1 } }, []);
+  assert.deepEqual(flow.workflowTaskOutcomes.get(event), { kind: 'substitute_receipt', status: 'OPEN' });
+  assert.equal(pending[0]?.clarifyQuestion, 'ใช้เงินของบริษัทหรือเงินส่วนตัวคะ');
+  assert.deepEqual(pending[0]?.candidateExpenseIds, ['expense-1']);
 });

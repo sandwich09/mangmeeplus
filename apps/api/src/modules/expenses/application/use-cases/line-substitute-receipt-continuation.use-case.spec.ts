@@ -709,7 +709,8 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       messageText: 'ใบนี้เคลม VAT ได้ไหม', chatKeyHash: 'chat-hash', recentCandidates: [],
     });
     assert.deepEqual(result.acceptedFields, []);
-    assert.match(result.replyText, /SUPPORTING_ONLY/);
+    assert.match(result.replyText, /หลักฐานภาษีของรายการนี้ใช้ได้เมื่อมีหลักฐานอื่นประกอบ/);
+    assert.doesNotMatch(result.replyText, /SUPPORTING_ONLY/);
     assert.match(result.replyText, /ไม่ใช่ใบกำกับภาษี/);
     assert.match(result.replyText, /งานเดิมยังอยู่/);
     assert.deepEqual(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.missingFields, before);

@@ -1,3 +1,4 @@
+import { normalizeVendorName } from '../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
 import { lineDocumentNumberMatches, lineWorkflowPickerText } from '../domain/logic/line-ai-classifier.logic';
 import { ListExpensesUseCase } from '../../expenses/application/use-cases/expense-draft.use-case';
 import { expenseListReadScope } from '../../expenses/application/expense-list-read-scope';
@@ -134,8 +135,18 @@ export class LineWorkflowTargetService {
         amount: row.grandTotalAmount, currency: row.currency, documentNumbers: [row.expenseNumber, row.vendorDocumentNumber].filter((number): number is string => !!number) })), total: result.total, exhaustive: result.exhaustive };
     }
     let vendorCounterpartyId = slots.vendorCounterpartyId;
-    const latestOnly = !!slots.vendorName && !ctx.permissions.includes('accounting.counterparty.read');
-    if (slots.vendorName && !latestOnly && !vendorCounterpartyId) {
+    const snapshotVendor = !!slots.vendorName && ['expense_delete', 'expense_submit'].includes(workflow);
+    const snapshotVendorIds = new Set<string>();
+    if (snapshotVendor && ctx.permissions.includes('accounting.counterparty.read')) {
+      const sellers = await this.readPages([null], async (_set, page) => {
+        const list = await this.counterparties.execute(ctx, page, 100, { search: slots.vendorName });
+        return { rows: list.data, total: list.total };
+      });
+      if (!sellers.exhaustive) return { targets: [], total: sellers.total, exhaustive: false };
+      for (const seller of sellers.rows) snapshotVendorIds.add(seller.id);
+    }
+    const latestOnly = !snapshotVendor && !!slots.vendorName && !ctx.permissions.includes('accounting.counterparty.read');
+    if (slots.vendorName && !snapshotVendor && !latestOnly && !vendorCounterpartyId) {
       const sellers = await this.readPages([null], async (_set, page) => {
         const list = await this.counterparties.execute(ctx, page, 100, { search: slots.vendorName });
         return { rows: list.data, total: list.total };
@@ -159,6 +170,7 @@ export class LineWorkflowTargetService {
     });
     const targets: LineWorkflowRecordTarget[] = [];
     for (const row of result.rows.sort((a, b) => b.expenseDate.getTime() - a.expenseDate.getTime() || b.id.localeCompare(a.id))) {
+      if (snapshotVendor && !snapshotVendorIds.has(row.vendorCounterpartyId ?? '') && !normalizeVendorName(row.vendorNameSnapshot).includes(normalizeVendorName(slots.vendorName).replace(/^(?:ร้าน|ผู้ขาย)/u, ''))) continue;
       if (creatorOnly && row.createdByUserId !== ctx.userId) continue;
       if (action === 'MARK_READY' && validateStatusTransition(row.status, row.status === 'REJECTED' ? 'NEEDS_REVIEW' : 'READY_FOR_CONFIRMATION')) continue;
       if (action === 'DELETE_DRAFT' && (!isExpenseDeletableState(row) || row.hasDeletionBlockingHistory || row.hasRetainedSubstituteReceiptEvidence)) continue;
@@ -169,7 +181,7 @@ export class LineWorkflowTargetService {
         roundText: [row.vendorNameSnapshot, row.note, row.internalMemo].filter(Boolean).join(' '), revision: row.updatedAt.toISOString(),
         amount: action === 'RECORD_PAYMENT' ? row.outstandingAmount ?? row.grandTotalAmount : row.grandTotalAmount });
     }
-    return { targets, total: result.total, exhaustive: result.exhaustive, ...(latestOnly ? { latestOnly } : {}) };
+    return { targets, total: snapshotVendor && result.exhaustive ? targets.length : result.total, exhaustive: result.exhaustive, ...(latestOnly ? { latestOnly } : {}) };
   }
 
 }

@@ -787,6 +787,7 @@ const TEXT_EVENT = {
   lineMessageId: 'msg-text-1',
 };
 
+
 const MEDIA_EVENT = {
   webhookEventId: 'evt-media-1',
   lineUserId: 'line-user-secret',
@@ -1826,12 +1827,13 @@ describe('LINE intake dispatch – text path', () => {
 
     await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ยอดขายเดือนนี้เท่าไหร่?' });
 
-    assert.equal(h.substituteCalls.length, 1);
+    assert.equal(h.substituteCalls.length, 0, 'a side question never reaches the field collector');
     assert.equal(h.routeRequests.length, 1, 'the side question still uses the normal read path');
     assert.equal(h.routeRequests[0].openClarifications, undefined, 'pending substitute fields are not exposed as instructions to the side-question router');
     assert.match(h.replies[0] ?? '', /turn-answer/);
-    assert.match(h.replies[0] ?? '', /งานใบรับรองแทนใบเสร็จรับเงิน.*ยังอยู่/);
-    assert.equal(captureLedger.length, 1, 'the current pending question is re-appended after the side answer is delivered');
+    assert.match(JSON.stringify(h.sentMessages), /ต่อจากเมื่อกี้: เหตุผลคืออะไร/);
+    assert.equal(captureLedger.length, 0, 'the original pending question remains open');
+    assert.deepEqual(h.ledgerAcks, []);
   });
 
   // S1: a decline leaves the decision listening, which leaves this chat's clarification open, which
@@ -1888,14 +1890,15 @@ describe('LINE intake dispatch – text path', () => {
         handled: true, status: 'FORBIDDEN', acceptedFields: [],
         blockers: [{ code: 'expense_review_forbidden' }],
         // No resumeCapsule and no sideQuestionAnswered: the old routing lost this reply entirely.
-        replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nต้องมีสิทธิ์ตรวจทานค่าใช้จ่าย (expense.review) ซึ่งบัญชีนี้ยังไม่มีค่ะ',
+        replyText: 'คุณยังไม่มีสิทธิ์ตรวจทานค่าใช้จ่ายเพื่อทำใบรับรองแทนใบเสร็จค่ะ ให้เจ้าของกิจการหรือผู้ดูแลร้านเปิดสิทธิ์ให้ค่ะ',
       },
     });
 
     await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ยอดขายเดือนนี้เท่าไหร่?' });
 
     assert.equal(h.substituteCalls.length, 1);
-    assert.match(h.replies[0] ?? '', /expense\.review/, 'the forbidden reason reaches the user');
+    assert.match(h.replies[0] ?? '', /สิทธิ์ตรวจทานค่าใช้จ่าย/, 'the forbidden reason reaches the user');
+    assert.doesNotMatch(h.replies[0] ?? '', /expense\.review/);
     assert.equal(h.routeRequests.length, 0, 'a forbidden outcome is answered deterministically, not routed to the model');
   });
 
@@ -5622,7 +5625,7 @@ describe('LINE substitute results and resume capsules retain their producing sou
           clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', entry: { id: 'sub-1', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' } }] } : {}),
         substituteResult: { handled: true, status: 'TARGET_REQUIRED', expenseId: 'expense-1', candidateExpenseIds: ['expense-1'],
           acceptedFields: [], blockers: [], replyText: 'ข้อมูลรายการ EXP-001 ที่เลือก', pendingQuestion: 'ทำใบรับรองให้รายการนี้ไหมคะ?',
-          resumeCapsule: 'ข้อมูลรายการ EXP-001 ที่เลือก ยังทำต่อได้' },
+          resumeCapsule: 'ข้อมูลรายการ EXP-001 ที่เลือก ยังทำต่อได้', decisionUnread: lane === 'resume' },
       });
       const uc = h.useCase as any, execute = uc.substituteReceiptContinuation.execute, read = uc.expenseRepo.findByIdWithRelations;
       uc.expenseRepo.findByIdWithRelations = async (...args: unknown[]) => {
@@ -5637,7 +5640,7 @@ describe('LINE substitute results and resume capsules retain their producing sou
         uc.substituteReceiptContinuation.substituteContext = (ctx: any, input: any) =>
           LineSubstituteReceiptContinuationUseCase.prototype.substituteContext.call({ repo: uc.expenseRepo } as any, ctx, input);
       }
-      await h.useCase.execute({ ...TEXT_EVENT, messageText: lane === 'resume' ? 'ยอดขายเดือนนี้เท่าไหร่?' : 'ทำใบรับรองต่อ' });
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: lane === 'resume' ? 'ขอดูยอดขายเดือนนี้' : 'ทำใบรับรองต่อ' });
       assert.deepEqual(steps, ['pause', 'produce']);
       assert.match(h.replies.join('\n'), /ข้อมูลรายการ EXP-001/);
       assert.doesNotMatch(h.replies.join('\n'), /ข้อมูลต้นทางเปลี่ยน/);
@@ -5659,7 +5662,7 @@ describe('LINE substitute results and resume capsules retain their producing sou
           }] } : {}),
           substituteResult: { handled: true, status: 'BLOCKED', workflowId: 'wf-1', expenseId: 'expense-1',
             replyText: 'ข้อมูลใบรับรอง EXP-001 ที่บันทึกไว้', acceptedFields: [], blockers: [],
-            pendingQuestion: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?', sideQuestionAnswered: false,
+            pendingQuestion: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?', sideQuestionAnswered: false, decisionUnread: lane === 'resume',
             resumeCapsule: '↩️ ข้อมูลใบรับรอง EXP-001 ที่บันทึกไว้ ยังทำต่อได้',
           },
         });
@@ -5692,7 +5695,7 @@ describe('LINE substitute results and resume capsules retain their producing sou
           accepted.push(messages); return 'ok';
         };
         uc.lineReply.sendPush = async (_to: string, messages: unknown[]) => { accepted.push(messages); return 'ok'; };
-        const run = h.useCase.execute({ ...TEXT_EVENT, messageText: lane === 'resume' ? 'ยอดขายเดือนนี้เท่าไหร่?' : 'ทำใบรับรองต่อ' });
+        const run = h.useCase.execute({ ...TEXT_EVENT, messageText: lane === 'resume' ? 'ขอดูยอดขายเดือนนี้' : 'ทำใบรับรองต่อ' });
         if (fault === 'unchanged' || lane === 'resume') await run;
         else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
         assert.equal(h.substituteCalls.length, 1); assert.equal(h.captured.length, 0); assert.equal(h.ocrRequests.length, 0);
@@ -6194,6 +6197,58 @@ it('A1 ordinal zero narrows only a server fixed read to simple answer', async ()
       assert.deepEqual(narrowed.allowedProfileIds, ['line-answer/2']);
       assert.equal(row.budgetAuthorityJson.serverRoute, 'fixed_read');
       assert.equal((narrowed as any).serverRoute, undefined);
+    }
+  }
+});
+
+it('R20 a substitute side question is answered and re-asked without collecting or consuming it even when misrouted', async () => {
+  for (const mode of ['off', 'primary']) {
+    for (const intent of ['ADVISOR_CONVERSATION', 'SUBSTITUTE_RECEIPT_CONTINUATION'] as const) {
+      const captureLedger: any[] = [];
+      const h = makeHarness({ permissions: ['expense.review', 'line.ai.query', 'ai.tool.invoke'], captureLedger,
+        routePlan: { status: 'ROUTED', intent, language: 'th', confidence: 1, resolvedClarificationIds: ['sub-question'],
+          semanticSubrequests: [{ index: 0, kind: 'write', writeIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', goal: 'ทำใบรับรอง', dependsOn: [], requestedFilters: {}, requiredEvidence: [] }] },
+        openWaiting: [{ id: 'sub-question', question: 'ใช้เงินของบริษัทหรือเงินส่วนตัวคะ', text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ',
+          askedAt: new Date().toISOString(), clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+          entry: { id: 'sub-question', companyId: 'company-1', userId: 'user-1', key: 'lineai:ledger:company-1:line-user-secret', turnId: 'previous', kind: 'sub_request' } }],
+        substituteResult: { handled: true, status: 'BLOCKED', replyText: 'must not collect this question', acceptedFields: [], blockers: [] },
+      });
+      (h.useCase as any).config.lineAiSubstituteSemanticRoutingMode = mode;
+      (h.useCase as any).substituteReceiptContinuation.substituteContext = async () => ({ workflowState: 'open', hasPendingQuestion: true, preparedState: 'in_progress', recentCandidateCount: 0 });
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ต้องเขียนชื่อคนขายด้วยไหม' });
+      assert.equal(h.substituteCalls.length, 0, `${mode}/${intent} cannot treat a question as a field answer`);
+      assert.equal(h.routeRequests.length, 1); assert.equal(h.routeRequests[0].openClarifications, undefined);
+      assert.ok(h.replies.some(reply => /turn-answer/.test(reply)), `${mode}/${intent} must answer the side question`);
+      assert.match(JSON.stringify(h.sentMessages), /ต่อจากเมื่อกี้: ใช้เงินของบริษัทหรือเงินส่วนตัวคะ/);
+      assert.deepEqual(h.ledgerAcks, []); assert.deepEqual(captureLedger, []);
+      assert.deepEqual(h.createExpenseCalls, []); assert.deepEqual(h.updateExpenseCalls, []);
+      assert.ok(h.turnRequests.every(request => !request.semanticSubrequests?.some((item: any) => item.kind === 'write')));
+    }
+  }
+});
+
+it('R20 a put-off after a side question closes menu and model waiting entries before any new model call', async () => {
+  for (const text of ['ทำใบรับรองแทนใบเสร็จจากเมนู', 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ']) {
+    for (const messageText of ['ขอพักไว้ก่อนนะ', 'เดี๋ยวค่อยมาทำต่อพรุ่งนี้']) {
+      const h = makeHarness({ permissions: ['expense.review', 'line.ai.query', 'ai.tool.invoke'],
+        routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 },
+        openWaiting: [{ id: 'sub-question', question: 'ใช้เงินของบริษัทหรือเงินส่วนตัวคะ', text,
+          askedAt: new Date().toISOString(), clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+          entry: { id: 'sub-question', companyId: 'company-1', userId: 'user-1', key: 'lineai:ledger:company-1:line-user-secret', turnId: 'previous', kind: 'sub_request' } }],
+        substituteResult: { handled: true, status: 'PAUSED', expenseId: 'expense-1', replyText: 'พักงานนี้ไว้แล้ว ข้อมูลที่รับไว้ยังอยู่', acceptedFields: [], blockers: [] },
+      });
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ต้องเขียนชื่อคนขายด้วยไหม' });
+      assert.equal(h.substituteCalls.length, 0); assert.equal(h.ledgerAcks.length, 0);
+      assert.match(JSON.stringify(h.sentMessages), /ต่อจากเมื่อกี้: ใช้เงินของบริษัทหรือเงินส่วนตัวคะ/);
+      const routes = h.routeRequests.length, turns = h.turnRequests.length;
+      const event = { ...TEXT_EVENT, webhookEventId: 'put-off', lineMessageId: 'put-off-message', messageText };
+      await h.useCase.execute(event);
+      assert.equal(h.routeRequests.length, routes); assert.equal(h.turnRequests.length, turns);
+      assert.equal(h.substituteCalls.length, 1); assert.equal(h.substituteCalls[0].messageText, messageText);
+      assert.deepEqual((h.useCase as any).workflowTaskOutcomes.get(event), { kind: 'substitute_receipt', status: 'DECLINED' });
+      assert.ok(h.ledgerAcks.some(ack => ack.entryId === 'sub-question' && ack.outcome === 'business_answer'));
+      assert.match(JSON.stringify(h.sentMessages.at(-1)), /พักงานนี้ไว้แล้ว/);
+      assert.deepEqual(h.createExpenseCalls, []); assert.deepEqual(h.updateExpenseCalls, []);
     }
   }
 });
