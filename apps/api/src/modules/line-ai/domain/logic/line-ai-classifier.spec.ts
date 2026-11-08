@@ -508,9 +508,10 @@ it('R22 controller: "คชจ." opens a job list, and a waiting-for-repayment s
 it('R23 controller: "พัก<งาน>ก่อน" and "รอทำ…ทีหลัง" put a task off; "ต้องใส่ A หรือ B" is a question', async () => {
   const { isLineWorkflowPutOff } = await import('@watchdog-bms/contracts');
   const { lineWorkflowPickerText } = await import('./line-ai-classifier.logic');
-  for (const text of ['พักใบเตรียมจ่ายนี้ก่อนนะ', 'พักเรื่องส่งตรวจไว้ก่อนค่ะ', 'รอทำใบรับรองทีหลังครับ', 'พักการลบร่างก่อนจ้ะ'])
+  for (const text of ['พักใบเตรียมจ่ายนี้ก่อนนะ', 'พักเรื่องส่งตรวจไว้ก่อนค่ะ', 'รอทำใบรับรองทีหลังครับ', 'พักการลบร่างก่อนจ้ะ',
+    'พักเรื่องนี้ไว้แป๊บนะ', 'รอทำต่อพรุ่งนี้ค่ะ', 'รอเรื่องเบิกนี้ไว้ก่อนจ้ะ', 'บิลนี้รอไว้ก่อนครับ'])
     assert.equal(isLineWorkflowPutOff(text), true, text);
-  for (const text of ['พักร้อนเดือนนี้เบิกได้ไหม', 'รอบ 2 ส่งก่อนได้ไหม', 'ค่าที่พักก่อนหน้านี้ 500 บาท'])
+  for (const text of ['พักร้อนเดือนนี้เบิกได้ไหม', 'รอบ 2 ส่งก่อนได้ไหม', 'ค่าที่พักก่อนหน้านี้ 500 บาท', 'ยังไม่ทำใบเบิกค่าน้ำมันใช่ไหม', 'รอบ 3 ไว้ก่อนได้ไหม'])
     assert.equal(isLineWorkflowPutOff(text), false, text);
   for (const text of ['ช่องวันที่ต้องใส่วันจ่ายหรือวันในบิลจ้ะ', 'ต้องเลือกบริษัทจ่ายหรือพนักงานจ่ายครับ'])
     assert.equal(lineWorkflowPickerText(text).question, true, text);

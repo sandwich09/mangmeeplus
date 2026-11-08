@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "47cbe1b770e0476bc3e2f9bced39ecbbaad2118b",
+  "sourceRevision": "6d1c90d1c94701d133fb94f380ffa024b77ebba8",
   "checkoutBranch": null,
   "checkoutDirty": true,
   "sourceHashes": [
@@ -249,7 +249,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "4adea35078b737449859429ed2e006dc783472ca6108fb2bf3ce73458a9c7592"
+      "sha256": "18244c2299ead5ea06ed155f2d062de01cde941ede152d2f73f749f7ae577e4c"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -10295,6 +10295,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-08T14:11:16.776Z",
-  "manifestDigest": "c2a1bb89acd1472ba104a321923a2118a67483c1c3750a2549c53b336329da8b"
+  "generatedAt": "2026-11-08T14:49:33.832Z",
+  "manifestDigest": "b3176354ca3758715ad4fea5473ca76ece3a659271192f015e4c1ee6b148cd32"
 }
