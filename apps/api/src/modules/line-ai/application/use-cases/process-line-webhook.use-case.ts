@@ -9360,8 +9360,14 @@ View expenses: ${listLink}` : `ยังไม่พบรายการจา�
         !openWaiting.some(item => item.id === id && item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION')) };
       if (routePlan.intent === 'SUBSTITUTE_RECEIPT_CONTINUATION'
         || routePlan.semanticSubrequests?.some(item => item.writeIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION')) {
+        // Keep each clause's quoted evidence: a rebuilt clause without it fails the gateway's v2 contract,
+        // and the customer got "เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่" instead of an answer.
+        const quoted = routePlan.semanticSubrequests?.map(item => {
+          const { writeIntent: _writeIntent, taskRef: _taskRef, ...source } = item;
+          return { ...source, kind: 'general' as const, goal: normalizedText, requestedFilters: {} };
+        });
         routePlan = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', language: routePlan.language, confidence: routePlan.confidence,
-          usage: routePlan.usage, semanticSubrequests: [{ index: 0, kind: 'general', goal: normalizedText,
+          usage: routePlan.usage, semanticSubrequests: quoted?.length ? quoted : [{ index: 0, kind: 'general', goal: normalizedText,
             requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
       }
     }

@@ -6207,7 +6207,7 @@ it('R20 a substitute side question is answered and re-asked without collecting o
       const captureLedger: any[] = [];
       const h = makeHarness({ permissions: ['expense.review', 'line.ai.query', 'ai.tool.invoke'], captureLedger,
         routePlan: { status: 'ROUTED', intent, language: 'th', confidence: 1, resolvedClarificationIds: ['sub-question'],
-          semanticSubrequests: [{ index: 0, kind: 'write', writeIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', goal: 'ทำใบรับรอง', dependsOn: [], requestedFilters: {}, requiredEvidence: [] }] },
+          semanticSubrequests: [{ index: 0, kind: 'write', writeIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', goal: 'ทำใบรับรอง', dependsOn: [], requestedFilters: {}, requiredEvidence: [], evidenceRefs: [{ marker: 'quoted' }] as any }] },
         openWaiting: [{ id: 'sub-question', question: 'ใช้เงินของบริษัทหรือเงินส่วนตัวคะ', text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ',
           askedAt: new Date().toISOString(), clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
           entry: { id: 'sub-question', companyId: 'company-1', userId: 'user-1', key: 'lineai:ledger:company-1:line-user-secret', turnId: 'previous', kind: 'sub_request' } }],
@@ -6223,6 +6223,8 @@ it('R20 a substitute side question is answered and re-asked without collecting o
       assert.deepEqual(h.ledgerAcks, []); assert.deepEqual(captureLedger, []);
       assert.deepEqual(h.createExpenseCalls, []); assert.deepEqual(h.updateExpenseCalls, []);
       assert.ok(h.turnRequests.every(request => !request.semanticSubrequests?.some((item: any) => item.kind === 'write')));
+      // R23: the rebuilt general clause keeps its quoted evidence, or the gateway rejects the v2 turn.
+      assert.ok(h.turnRequests.every(request => !request.semanticSubrequests || request.semanticSubrequests.every((item: any) => item.evidenceRefs?.[0]?.marker === 'quoted' || !item.evidenceRefs)));
     }
   }
 });
