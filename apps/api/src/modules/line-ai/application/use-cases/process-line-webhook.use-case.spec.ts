@@ -19175,7 +19175,8 @@ it('R13 big-shop substitute starts search the named permitted expense before col
   }
 });
 
-it('R13 a big-shop claim amount alone does not become an unqualified target lookup', async () => {
+// R19: the too-long claim picker asks for "เลขที่ใบเบิก ยอด หรือผู้เบิก", so a lone amount is one scoped search (R13 refused it).
+it('R19 a big-shop claim amount alone runs one scoped search and keeps only that amount', async () => {
   const h = await m4ClaimAmountHarness(), searches: string[] = [];
   h.actions.prisma.client.branch = { findMany: async () => [] };
   h.actions.workflowTargets = { pick: async (_ctx: any, _chat: any, _wf: any, slots: any) => {
@@ -19184,7 +19185,8 @@ it('R13 a big-shop claim amount alone does not become an unqualified target look
   } };
   const evidence = (await createLineAiInputEvidence({ turnKey: 'r13-amount-only', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: 'ยอด 1,877 บาท' }] }))!.inputEvidence;
   const selected = await h.actions.resolveNamedTargets(h.ctx, 'amount-chat', 'REIMBURSEMENT_APPROVE', 'approvals', evidence, {}, true);
-  assert.deepEqual(selected.targets, []); assert.deepEqual(searches, []);
+  assert.deepEqual(searches, ['1877']); assert.deepEqual(selected.targets.map((claim: any) => claim.id), ['right']); assert.equal(selected.exhaustive, true);
+  assert.deepEqual(h.writes, []);
 });
 
 it('R13 a named record eligible for submit and substitute keeps both workflow choices', async t => {
@@ -20200,6 +20202,19 @@ it('R18 controller: a named bill whose verb the lexicon misses goes to the class
   }
 });
 
+it('R18 controller: a typed workflow command passes the credit gate before it opens a preview (R13)', async t => {
+  for (const text of ['ลบร่าง ทดสอบ-0003', 'ส่งตรวจบิล ทดสอบ-0003']) {
+    const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+    let reads = 0;
+    h.flow.aiGateway.creditState = async () => { reads++; return { ok: false, reason: 'exceeded', budgetScope: 'CHAT' }; };
+    await h.execute(text);
+    assert.equal(reads, 1, text);
+    assert.equal(await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`), null, text);
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/, text);
+    assert.equal(h.classifyCalls(), 0); assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+  }
+});
+
 it('R18 controller: the record chooser opens the one allowed action the words name, never on a negation', async t => {
   for (const [text, opened] of [['บิล ทดสอบ-0003 ของร้านนอกหน้า ส่งตรวจได้เลยนะ', true], ['บิล ทดสอบ-0003 ไม่ต้องส่งตรวจนะ', false]] as const) {
     const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets; h.flow.editableExpenses = h.source.targets.expenses;
@@ -20247,4 +20262,45 @@ it('R17 controller: a claim opener followed by "then submit" starts the claim, n
     assert.deepEqual(started, expected ? [expected] : [], messageText);
     assert.equal(h.calls.length, 1); assert.equal(h.intakeRequests.length, 0);
   }
+});
+
+it('R19 controller: a typed ending at an incomplete picker searches the permitted list and opens the one match', async t => {
+  const h = await r7OffPagePicker(t), searches: string[] = [];
+  const pick = h.source.targets.pick.bind(h.source.targets);
+  h.source.targets.pick = async (ctx: any, chat: string, workflow: string, slots: any, page: number) => {
+    const result = await pick(ctx, chat, workflow, slots, page);
+    if (slots.search) {
+      searches.push(slots.search);
+      const rows = result.targets.filter((row: any) => row.documentNumbers.some((number: string) => number.endsWith(slots.search)));
+      return { targets: rows, total: rows.length, exhaustive: true };
+    }
+    return { ...result, targets: result.targets.filter((row: any) => row.id !== 'workflow-expense-c-2'), total: 400, exhaustive: false };
+  };
+  await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
+  await h.execute('ตัวลงท้ายด้วย 0003 ค่ะ');
+  assert.deepEqual(searches, ['0003']);
+  assert.deepEqual(h.source.previewed, ['workflow-expense-c-2']);
+  assert.equal(h.creates(), 0); assert.equal(h.classifyCalls(), 0);
+});
+
+it('R19 controller: a list asked for one job opens that job picker without the classifier', async t => {
+  const h = await r7OffPagePicker(t);
+  await h.execute('ช่วยเปิดรายการที่จะส่งตรวจให้ดูหน่อย');
+  assert.equal(h.classifyCalls(), 0); assert.equal(h.intakeRequests.length, 0);
+  assert.match(JSON.stringify(h.delivered.at(-1)), /expense-company-c-4/);
+  assert.deepEqual(h.source.previewed, []); assert.equal(h.creates(), 0);
+});
+
+it('R19 controller: the payment method question offers the four methods and reads สด as cash', async t => {
+  const h = await r7OffPagePicker(t);
+  for (const row of h.source.records) Object.assign(row, { status: 'CONFIRMED', grandTotalAmount: '1000', netPayableAmount: '1000', outstandingAmount: '1000', paidAmount: '0', paymentStatus: 'UNPAID' });
+  await h.execute('บันทึกจ่าย', 'action=chat-action&id=expense_pay');
+  await h.execute('ใบเลขที่ ทดสอบ-0006');
+  const question = JSON.stringify(h.delivered.at(-1));
+  for (const label of ['เงินสด', 'โอนเงิน', 'บัตร', 'เช็ค']) assert.match(question, new RegExp(`"label":"${label}"`), label);
+  await h.execute('จ่ายสดไปแล้วค่ะ');
+  const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+  assert.equal(pending.preview.payment.paymentMethod, 'CASH');
+  assert.match(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+  assert.equal(h.creates(), 0); assert.equal(h.classifyCalls(), 0);
 });

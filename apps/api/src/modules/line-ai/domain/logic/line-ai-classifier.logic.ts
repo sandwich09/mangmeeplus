@@ -126,11 +126,13 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   const ordinal = /(?:อัน|ใบ|รายการ)แรก/u.test(text) ? 1 : ordinalNumber ? Number(ordinalNumber) : undefined;
   const namedRequester = claim ? stripLineFieldParticles(/(?:^|\s|ใบเบิก)ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ(?:ฉัน|คุณ)|ให้|หน่อย|\d|[?？]|$)/u.exec(text)?.[1] ?? '') || undefined : undefined;
   const self = claim && /ของ(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ|\d|[?？]|นะคะ|นะครับ|ค่ะ|ครับ|คะ|$)/u.test(text);
-  const requester = self || namedRequester && /^(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)$/u.test(namedRequester) ? 'ฉัน' : namedRequester;
-  const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?(?:เลขที่|เลขท้าย|ลงท้าย|เลข)\s*([A-Za-zก-๙]+[-/]\d[\d/-]*|[A-Za-z0-9][A-Za-z0-9/-]*)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0])
+  // "ของพนักงาน", "ของลูกน้อง" name a role, not a person; the round or amount picks the claim.
+  const requester = self || namedRequester && /^(?:ฉัน|ผม(?:เอง)?|เรา|ตัวเอง|หนู|เค้า)$/u.test(namedRequester) ? 'ฉัน'
+    : namedRequester && /^(?:พนักงาน|ลูกน้อง|น้องๆ?|ทีม|staff|employee)$/iu.test(namedRequester) ? undefined : namedRequester;
+  const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?(?:เลขที่|เลขท้าย|ลงท้าย|เลข)(?:ด้วย)?\s*([A-Za-zก-๙]+[-/]\d[\d/-]*|[A-Za-z0-9][A-Za-z0-9/-]*)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0])
     // Thai runs words together: "…ที่มีบิลทดสอบ-0012" names ทดสอบ-0012.
     .map(document => document.replace(/^(?:ใบเตรียมจ่าย|ใบเบิก|ใบ|บิล|ร่าง|ที่มี|ที่|ของ|รายจ่าย|ค่าใช้จ่าย|เอกสาร)+(?=[A-Za-zก-๙]+[-/]\d)/u, ''));
-  const questionText = text.replace(/(?:อะไร|ใคร|ที่ไหน)ก็ได้|เดี๋ยวบอก(?:ว่า)?ใบไหน|เดี๋ยวบอกใบที่จะทำ|บอกทีหลัง/gu, '');
+  const questionText = text.replace(/(?:อะไร|ใคร|ที่ไหน)ก็ได้|ไม่ต้อง(?:ถาม)?อะไร|เดี๋ยวบอก(?:ว่า)?ใบไหน|เดี๋ยวบอกใบที่จะทำ|บอกทีหลัง/gu, '');
   const questionTail = text.replace(/[.!?,…ๆ]+$/u, '').trim();
   // "A หรือ B" ending in a question particle asks; amount alternatives and "…ก็ได้" are statements.
   const alternativeQuestion = /หรือ/u.test(text) && /(?:คะ|จ๊ะ|ครับ|คับ|ฮะ|งับ)[าะ]*$/u.test(questionTail)
@@ -148,6 +150,27 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   return { question, ordinal, requester, documents, rounds, explicit, categoryWords };
 }
 
+/**
+ * "ช่วยเอาบิลรอยืนยันมาให้เลือก", "เปิดใบเบิกที่จะ reject", "ดูบิลที่ฉันยืนยันได้": a list asked for one job.
+ * "ที่จะ/รอ/ค้าง + verb" or "ที่ … verb ได้" names the job; a bare "ที่ + verb" ("ใบเบิกที่ไม่อนุมัติ") is a state read.
+ */
+export function lineWorkflowListOpener(rawText: string): import('@watchdog-bms/contracts').LineWorkflowId | undefined {
+  const text = mapThaiDigits(rawText.trim()).replace(/ใบเบก/gu, 'ใบเบิก');
+  if (/[?？]|(?<!เ)กี่|เท่าไร|เท่าไหร่|ไหม|มั้ย|อะไร|ใคร|ทำไม|ยังไง|อย่างไร|รึยัง|หรือยัง|เปล่า|สรุป|ยอดรวม/u.test(text)) return;
+  if (!/^(?:(?:ช่วย|ขอ|รบกวน)\s*)*(?:เลือก|เปิด|ดู|แสดง|เอา|โชว์)|มาให้(?:ดู|เลือก)/u.test(text)) return;
+  const match = /(ใบเบิก|บิล|รายจ่าย|ค่าใช้จ่าย|รายการ|ร่าง)\S*?\s*(ที่\s*จะ|ที่\s*รอ|ที่\s*ค้าง|รอ|ค้าง|ที่)\s*(?:(?:ฉัน|ผม|หนู|เรา|เค้า)\s*)?(ไม่อนุมัติ|อนุมัติ|approve|reject|cancel|submit|void|ยืนยัน|ส่งตรวจ|ส่งอนุมัติ|ส่ง|ลบ|ยกเลิก|ตีกลับ|บันทึกจ่าย|จ่ายคืน|จ่าย)(\S*)/iu.exec(text);
+  // A state word ("รอจ่าย", "ค้างจ่าย", "ยัง…") describes a list; it names the job only when the person asks to choose or to be
+  // brought the records ("…มาให้เลือก", "…มาให้ดู"). "อันแรก…" picks from a list already shown.
+  const picked = lineWorkflowPickerText(text);
+  if (!match || match[2] === 'ที่' && !/^ได้/u.test(match[4]!) || /ยัง/u.test(match[0]) || /รอ|ค้าง/u.test(match[2]!) && !/เลือก|มาให้ดู/u.test(text)
+    || picked.ordinal !== undefined || picked.documents.length) return;
+  const verb = match[3]!.toLowerCase(), claim = match[1] === 'ใบเบิก';
+  if (claim) return /ไม่อนุมัติ|reject|ตีกลับ/u.test(verb) ? 'reimbursement_reject' : /อนุมัติ|approve/u.test(verb) ? 'approvals'
+    : /ยกเลิก|cancel/u.test(verb) ? 'reimbursement_cancel' : /ส่ง|submit/u.test(verb) ? 'reimbursement_submit' : /จ่าย/u.test(verb) ? 'reimbursement_pay' : undefined;
+  return verb === 'ยืนยัน' ? 'expense_confirm' : /ส่ง|submit/u.test(verb) ? 'expense_submit' : verb === 'ลบ' ? 'expense_delete'
+    : /ยกเลิก|cancel|void/u.test(verb) ? 'expense_void' : /จ่าย/u.test(verb) ? 'expense_pay' : undefined;
+}
+
 /** Explicit action language is also used before admission and when a person changes jobs. */
 export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/contracts').LineWorkflowId | undefined {
   if (lineWorkflowPickerText(rawText).question || /^(?:(?:ขอ|ช่วย|รบกวน)\s*)*(?:วิธี|อธิบาย|สอน)|^explain\b/iu.test(rawText.trim())) return;
@@ -156,7 +179,9 @@ export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/cont
     .replace(/\s*(?:คอนเฟิร์ม|คอนเฟิม|คอนเฟริ์ม|\bconfirm\b)\s*/giu, 'ยืนยัน').replace(/\s*คชจ\.?/gu, 'ค่าใช้จ่าย')
     .replace(/\bapprove\s*(?:claim|ใบเบิก)/giu, 'อนุมัติใบเบิก').replace(/\bcancel\s*(?:claim|ใบเบิก)/giu, 'ยกเลิกใบเบิก')
     .replace(/\breject\s*(?:claim|ใบเบิก)/giu, 'ไม่อนุมัติใบเบิก').replace(/\bsubmit\s*(?:claim|ใบเบิก)/giu, 'ส่งใบเบิกอนุมัติ')
-    .replace(/\bpay\s*(?:claim|ใบเบิก)/giu, 'จ่ายคืนใบเบิก').replace(/\s+(?=ใบเบิก)/gu, '').trim().replace(/^(?:หมายถึง|ขอทำอย่างเดียวก่อน)[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ)\s*)+/u, '');
+    .replace(/\bpay\s*(?:claim|ใบเบิก)/giu, 'จ่ายคืนใบเบิก').replace(/\s+(?=ใบเบิก)/gu, '').trim().replace(/^(?:หมายถึง|ขอทำอย่างเดียวก่อน)[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ|อยาก(?:จะ)?|จะ|ต้องการ)\s*)+/u, '');
+  // "เบิกค่า… แล้วส่งใบเบิกอนุมัติ" opens a new claim ("เบิก" first, not "ใบเบิก"); the classifier routes it, not the later submit verb.
+  if (/^เบิก/u.test(text) && /แล้ว|จากนั้น/u.test(text)) return;
   // "อย่าลบร่าง", "ไม่ต้องยกเลิกใบเบิก": a negated verb never starts that job.
   if (/(?:อย่า|ไม่ต้อง|ห้าม)\s*(?:เอาร่าง|(?:ขอ)?การ์ดลบ|ลบ|ยกเลิก|ยืนยัน|อนุมัติ|ให้ผ่าน|ผ่าน|ตีกลับ|ปัดตก|ส่ง|จ่าย|บันทึก|สร้าง|ทำ)/u.test(text)) return;
   if (/ใบเบิก/u.test(text)) {
@@ -169,11 +194,11 @@ export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/cont
   if (/ใบเตรียมจ่าย/u.test(text) && (/^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u.test(text) || lineVoucherWorkflowAction(text) || /ใบเตรียมจ่ายที่มีบิล/u.test(text))) return 'payment_voucher';
   if (/^(?:ออก|ทำ)(?:(?:หนังสือรับรอง)?(?:หัก\s*ณ\s*ที่จ่าย)?\s*50\s*ทวิ|หนังสือรับรองหัก\s*ณ\s*ที่จ่าย)/u.test(text)) return 'wht_certificate';
   return ([
-    ['reimbursement_reject', /ไม่อนุมัติใบเบิก|ใบเบิก.*(?<!ที่|ถูก|โดน)ไม่อนุมัติ(?!แล้ว)/u], ['approvals', /(?<!ไม่)อนุมัติใบเบิก|ใบเบิก.*(?<!ไม่|รอ|ที่|ผ่าน|ได้รับ|ถูก)อนุมัติ(?!แล้ว)/u],
+    ['reimbursement_reject', /ไม่อนุมัติใบเบิก|ใบเบิก.*(?<!ที่|ถูก|โดน)ไม่อนุมัติ(?!แล้ว)/u], ['approvals', /(?<!ไม่|หลัง|หลังจาก)อนุมัติใบเบิก|ใบเบิก.*(?<!ไม่|รอ|ที่|ผ่าน|ได้รับ|ถูก|หลัง|หลังจาก)อนุมัติ(?!แล้ว)/u],
     ['reimbursement_submit', /ส่งใบเบิก.*อนุมัติ/u], ['reimbursement_cancel', /(?:ยกเลิก|ถอน|ดึงกลับ)ใบเบิก|ใบเบิก.*(?<!ที่|ถูก|โดน)(?:ยกเลิก|ถอน|ดึงกลับ)(?!แล้ว|ไป)/u],
     ['expense_confirm', /ยืนยัน(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_submit', /^(?:(?:อยาก|ขอ|ช่วย)\s*)*(?:ส่งตรวจ|ให้คนตรวจ|ส่งให้ตรวจ)|ส่ง(?:ตรวจ(?:บิล|รายจ่าย|ค่าใช้จ่าย)|(?:บิล|รายจ่าย|ค่าใช้จ่าย).*ให้ตรวจ)/u],
     ['expense_delete', /ลบ(?:ทิ้ง|ร่าง|บิล|รายจ่าย|ค่าใช้จ่าย)|เอาร่าง.*ออก|การ์ดลบ/u], ['expense_void', /^ยกเลิก(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u],
-    ['reimbursement_pay', /^(?:บันทึกจ่ายคืน|จ่ายคืนใบเบิก|โอนคืน(?:ผู้เบิก|ใบเบิก))|ใบเบิก.*(?<!ที่|ถูก|ได้รับเงิน)(?:จ่ายคืน|โอนคืน)(?!แล้ว)/u], ['expense_pay', /^(?:บันทึกจ่าย|จ่ายเงิน)/u],
+    ['reimbursement_pay', /^(?:บันทึกจ่ายคืน|จ่ายคืนใบเบิก|โอนคืน(?:ผู้เบิก|ใบเบิก))|ใบเบิก.*(?<!ที่|ถูก|ได้รับเงิน)(?:จ่ายคืน|โอนคืน)(?!แล้ว)/u], ['expense_pay', /^(?:บันทึกจ่าย|จ่ายเงิน)|\sบันทึกจ่าย(?:รายจ่าย|ค่าใช้จ่าย|บิล)/u],
     ['payment_voucher', /^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u], ['substitute_receipt', /^(?:ทำ|สร้าง|เตรียม)?ใบรับรองแทนใบเสร็จ/u],
   ] as Array<[import('@watchdog-bms/contracts').LineWorkflowId, RegExp]>).find(([, pattern]) => pattern.test(text))?.[0];
 }
@@ -248,8 +273,8 @@ export async function parseManualClaimLine(
 export function lineClaimTargetSearch(text: string, amounts: Array<{ value: string }>): string | undefined {
   const parsed = lineWorkflowPickerText(text, true);
   if (parsed.documents.length === 1) return parsed.documents[0];
-  if (!(parsed.rounds.length && (parsed.categoryWords.length || parsed.requester || amounts.length === 1)
-    || amounts.length === 1 && parsed.requester)) return;
+  // One amount alone narrows the claim search ("ใบเบิก 1455 บาท"); the hub search matches the claim amount.
+  if (!(parsed.rounds.length && (parsed.categoryWords.length || parsed.requester || amounts.length === 1) || amounts.length === 1)) return;
   return [amounts.length === 1 ? amounts[0]!.value : '', parsed.requester && parsed.requester !== 'ฉัน' ? parsed.requester : '',
     ...parsed.categoryWords, ...parsed.rounds.map(round => `รอบ ${round}`)].filter(Boolean).join(' ');
 }

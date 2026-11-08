@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeLineText, classifyIntent, chooseAgent, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand, isPendingFieldAnswer, lineWorkflowPickerText, isLineWorkflowCountRead, lineDocumentNumberMatches } from './line-ai-classifier.logic';
+import { normalizeLineText, classifyIntent, chooseAgent, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand, isPendingFieldAnswer, lineWorkflowPickerText, isLineWorkflowCountRead, lineDocumentNumberMatches, lineWorkflowListOpener } from './line-ai-classifier.logic';
 
 describe('normalizeLineText', () => {
   it('trims and collapses whitespace', () => {
@@ -438,4 +438,26 @@ it('R18 controller: คอนเฟิร์ม, confirm and คชจ. read as 
   // "ของสมหญิงให้หน่อย": the requester's name ends before ให้/หน่อย.
   assert.equal(lineWorkflowPickerText('อนุมัติใบเบิก รอบ 2 ของสมหญิงให้หน่อยครับ', true).requester, 'สมหญิง');
   assert.equal(lineWorkflowPickerText('ใบเบิกของวิภาหน่อยค่ะ', true).requester, 'วิภา');
+  // A new claim followed by its submit goes to the classifier; an existing claim's submit stays lexical.
+  assert.equal(lineWorkflowCommand('ขอเบิกค่าน้ำดื่ม 120 บาท แล้วส่งใบเบิกให้หัวหน้าอนุมัติ'), undefined);
+  assert.equal(lineWorkflowCommand('ส่งใบเบิกรอบ 3 ไปอนุมัติ'), 'reimbursement_submit');
+});
+
+it('R19 controller: a list asked for one job names that job, a state read stays a read', async () => {
+  const { lineWorkflowCommand, lineClaimTargetSearch } = await import('./line-ai-classifier.logic');
+  for (const [text, id] of [['ช่วยเปิดบิลที่จะยืนยันให้ดูหน่อย', 'expense_confirm'], ['เอาร่างที่จะลบมาให้เลือกที', 'expense_delete'],
+    ['เปิดบิลค้างจ่ายให้เลือกหน่อย', 'expense_pay'], ['ขอดูใบเบิกที่ฉันอนุมัติได้', 'approvals'], ['เอาใบเบิกที่จะยกเลิกมาให้เลือก', 'reimbursement_cancel'],
+    ['เอาบิลรอส่งตรวจมาให้ดูหน่อย', 'expense_submit']] as const) assert.equal(lineWorkflowListOpener(text), id, text);
+  for (const text of ['ดูใบเบิกที่ไม่อนุมัติเดือนนี้', 'บิลรอยืนยันมีกี่ใบ', 'ขอดูบิลที่ยืนยันแล้ว', 'เปิดเมนู', 'ดูใบเบิกที่ค้างหลังอนุมัติรอบก่อน',
+    'เปิดรายการรอจ่ายเดือนนี้หน่อย', 'ขอดูบิลที่ยังค้างจ่ายอยู่', 'เอาใบที่สองในบิลรอยืนยัน'])
+    assert.equal(lineWorkflowListOpener(text), undefined, text);
+  // A leading "อยาก/จะ" keeps the verb; a temporal "หลังอนุมัติ" is not an approval; "ไม่ต้องถามอะไร" is not a question.
+  assert.equal(lineWorkflowCommand('อยากยกเลิกรายจ่ายใบหนึ่ง ยังหาเลขไม่เจอ'), 'expense_void');
+  assert.equal(lineWorkflowCommand('ฝากเรื่องนี้ บันทึกจ่ายบิล ทดสอบ-0099 ด้วย ไม่ต้องถามอะไรแล้ว'), 'expense_pay');
+  assert.equal(lineWorkflowCommand('ดูใบเบิกที่ค้างหลังอนุมัติรอบก่อน'), undefined);
+  // "ของพนักงาน" names a role, not a requester; an ending after "ลงท้ายด้วย" is a document.
+  assert.equal(lineWorkflowPickerText('ของพนักงาน รอบสาม', true).requester, undefined);
+  assert.deepEqual(lineWorkflowPickerText('ของพนักงาน รอบสาม', true).rounds, ['3']);
+  assert.deepEqual(lineWorkflowPickerText('ตัวลงท้ายด้วย 0003 ค่ะ').documents, ['0003']);
+  assert.equal(lineClaimTargetSearch('ใบเบิก 820 บาท', [{ value: '820' }]), '820');
 });

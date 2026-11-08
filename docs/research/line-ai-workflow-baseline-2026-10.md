@@ -516,3 +516,51 @@ Blind set v6 is ready: 219 conversations, 644 turns, overlap 0 with every earlie
   - The seed gives pending and approved vouchers their source fingerprint.
 - **Next:** a recheck of the v9 failures (no longer blind), then blind set v10 as the gate.
 
+
+## Blind set v10 and round 19, measured 2026-11-08
+**Blind set v10** ran on main `5ac13eae3` (rounds 18 and 18b) and cost 141.48 THB. It covered 214 conversations, 596 turns and 285 tasks. MA3/MA6 is **not met**.
+
+| Measure | Result |
+|---|---|
+| W3 workflow | 171/204 (83.8%) as run; 173/204 (84.8%) after the harness fix below |
+| Advisor | 78/81 (96.3%) |
+| All tasks | 249/285 (87.4%) as run; 251/285 (88.1%) after the harness fix |
+| W6 | wrongApplied 0 |
+| W9, W14, W15 | 0 invalid of 98 classifier calls, 0 timeouts, 0 rejected-and-charged |
+| W1 | 157/173 (90.8%): 39 classifier hits and 118 rule-routed hits |
+| Plain-text replies outside the locked card | 0 |
+| Reply length | p50 166, p95 382, max 1,054 visible characters (one substitute-receipt summary); 19 over 400 |
+
+- **Reply time:**
+
+  | Tier | p50 | p95 | Max |
+  |---|---|---|---|
+  | T0 | 1.2 s | 1.5 s | 7.3 s |
+  | T1 | 2.8 s | 3.0 s | 4.2 s |
+  | T2 | 6.1 s | 13.2 s | 15.2 s |
+
+  38 turns took over 8 s. Each ran the classifier, the intake route and the turn in sequence, usually after an earlier dead end had sent a field answer to the model.
+- **Causes, by failed workflow tasks (33):**
+
+  | Cause | Tasks |
+  |---|---|
+  | **A list asked for one job** ("…ที่จะยืนยัน", "…มาให้เลือก", "…ที่ … ได้") was read as a state read or went to the model. The next turn named a bill and got the record chooser, so the reason or payment method typed after it was lost. | 13 |
+  | **A too-long picker asked for a document number and then refused it.** "มีรายการมากเกินจะค้นในแชตค่ะ พิมพ์เลขที่เอกสารหรือยอด…" compared the typed ending ("…0004") with whole numbers, and read "0004" as a 4-baht amount. A claim amount alone was never searched. The same picker came back with "เลือกรายการจากการ์ดนี้": a dead end. | 6 |
+  | The payment-method question had no buttons and did not read "สด" as cash. | 4 |
+  | Word list: a leading "จะ…" hid the verb, and "ไม่ต้องถามอะไร" was read as a question. | 2 |
+  | "ของพนักงาน" was taken as a requester's name. | 1 |
+  | A claim edit naming "รอบแรก" went to the model's draft picker, which had no "ไม่ทำ". | 1 |
+  | A substitute-receipt start that asks its first field was recorded as refused. A pause typed with a reason went to the model. | 2 |
+  | **Harness, not product.** A card pressed from another company was refused correctly, but a later evidence row for the same turn marked that delivery `INCOMPLETE` and replaced the accepted one, so no terminal was scored. `readWorkflowTurnEvidence` now keeps an accepted row; rescoring v10 with it flips exactly these 2 tasks. | 2 |
+  | Gold unclear: a claim draft summary where gold expected a further question, and an opener whose requester wording names no one. | 2 |
+
+  Advisor misses: a temporal "หลังอนุมัติ" opened the approval picker; an unsold bank-deposit read was answered in words but recorded as an answer; a follow-up after the claim-edit dead end.
+- **Round 19** (controller, this commit):
+  - `lineWorkflowListOpener` opens the job's picker for a list asked for one job, when the person may do it. A state word ("รอ…", "ค้าง…", "ยัง…") counts only when the person asks to choose or to be brought the records. A position or document number is a pick, not a new list. A check of 3,927 corpus texts from v1–v10 changed only the intended v10 openers.
+  - A picker matches a typed ending against record numbers (`lineDocumentNumberMatches`). An ending matched only on a shown row goes through the permitted search. A searched exact spelling still auto-opens on its own. "เลข/เลขท้าย/ลงท้าย(ด้วย) …" is a locator, not an amount, and a count before บิล is not money. One claim amount alone is searched through the hub search.
+  - The plain payment-method question offers เงินสด, โอนเงิน, บัตร and เช็ค, and "สด" reads as cash.
+  - The word list strips a leading อยาก/จะ/ต้องการ. "ไม่ต้อง(ถาม)อะไร" is not a question. "หลัง(จาก)อนุมัติ" is not an approval. "บันทึกจ่ายบิล/รายจ่าย…" counts mid-sentence. "ของพนักงาน" and other role nouns are not requesters.
+  - Bank deposits and statements count as the unsold bank-reconciliation feature.
+  - A substitute-receipt start that is waiting on a question is recorded as open.
+  - Round 18c is included: a typed command passes the credit gate first, and "เบิกค่า… แล้วส่งใบเบิก…" opens a new claim.
+- **Next:** a recheck of the v10 failures (no longer blind), then blind set v11 as the gate.

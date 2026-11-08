@@ -147,7 +147,10 @@ export async function readWorkflowTurnEvidence(path: string, corpus: WorkflowCor
       const attempt = `${row.scenarioId}\u0000${row.attemptId}`;
       if (!created.has(attempt)) created.set(attempt, new Set());
       const compact = compactRuntimeTurnEvidence(row, conversation.tasks.flatMap(task => task.goldTerminal.records), created.get(attempt));
-      rows.set(`${attempt}\u0000${row.turnIndex}`, compact);
+      // A later read of the same turn can see another chat's plan as INCOMPLETE; a reply already accepted stays the evidence.
+      const key = `${attempt}\u0000${row.turnIndex}`, previous = rows.get(key);
+      if (previous?.delivery?.status === 'ACCEPTED' && compact.delivery?.status !== 'ACCEPTED') continue;
+      rows.set(key, compact);
       if (rewrite) appendJsonLine(temporary, compact);
     }
     if (rewrite) renameSync(temporary, path);

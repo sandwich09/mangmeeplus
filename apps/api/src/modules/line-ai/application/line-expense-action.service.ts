@@ -463,7 +463,7 @@ export class LineExpenseActionService {
       || !isBranchInScope(ctx.scopes ?? {}, slip.branchId)) throw new ConflictException('expense_source_version_changed');
   }
   async paymentIntentFromText(text: string, evidence?: LineAiInputEvidenceV2): Promise<Partial<RecordExpensePaymentInput>> {
-    const paymentMethod = /เงินสด|^CASH$/iu.test(text) ? 'CASH' : /โอน|^BANK_TRANSFER$/iu.test(text) ? 'BANK_TRANSFER' : /บัตร|^CARD$/iu.test(text) ? 'CARD' : /เช็ค|เช็ก|^CHEQUE$/iu.test(text) ? 'CHEQUE' : /อื่น|^OTHER$/iu.test(text) ? 'OTHER' : undefined;
+    const paymentMethod = /เงินสด|(?:^|จ่าย|ด้วย|เป็น)\s*สด|^CASH$/iu.test(text) ? 'CASH' : /โอน|^BANK_TRANSFER$/iu.test(text) ? 'BANK_TRANSFER' : /บัตร|^CARD$/iu.test(text) ? 'CARD' : /เช็ค|เช็ก|^CHEQUE$/iu.test(text) ? 'CHEQUE' : /อื่น|^OTHER$/iu.test(text) ? 'OTHER' : undefined;
     const input = evidence?.parts.map(part => part.rawText).join('\n') === text ? evidence : (await createLineAiInputEvidence({ turnKey: deliveryHash(text), parts: [{ partId: 'part-0', eventIdHash: deliveryHash(text), acceptedAtMs: Date.now(), rawText: text }] }))?.inputEvidence;
     const today = input?.parts[0] ? new Date(input.parts[0].acceptedAtMs).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }) : todayCivilDate('Asia/Bangkok');
     const candidates = input ? await extractValueCandidatesV2(input, today) : undefined;
@@ -579,13 +579,14 @@ export class LineExpenseActionService {
       return rounds.every(round => [...mapThaiDigits(label).matchAll(/รอบ\s*(\d+)/gu)].some(match => match[1] === round));
     };
     const eligible = namedClaims ? namedClaims.filter(target => !/สาขา/u.test(text) || namedBranches.some(branch => branch.id === target.branchId)) : result.targets.filter(matches);
-    const byDocument = documents.map(document => eligible.filter(target => numbers(target).some(number => searchedDocument
-      ? normalize(number) === normalize(searchedDocument) : lineDocumentNumberMatches(number, document))));
+    // A searched ending ("เลข 0004") still names ทดสอบ-0004; searchedExact below stays the exact spelling only.
+    const byDocument = documents.map(document => eligible.filter(target => numbers(target).some(number => lineDocumentNumberMatches(number, searchedDocument ?? document))));
     const targets = documents.length ? [...new Map(byDocument.flat().map(target => [target.id, target])).values()] : eligible;
     const unique = result.exhaustive && (documents.length ? byDocument.every(rows => rows.length === 1) : targets.length === 1)
       && (action === 'VOUCHER_CREATE' || targets.length === 1);
     if (pickerAnswer) return { targets: byDocument.some(rows => !rows.length) ? [] : targets, exhaustive: result.exhaustive, hasIdentifier,
-      searchedExact: !!searchedDocument && targets.length === 1 && byDocument.every(rows => rows.length === 1) };
+      searchedExact: !!searchedDocument && targets.length === 1 && byDocument.every(rows => rows.length === 1)
+        && numbers(targets[0]!).some(number => normalize(number) === normalize(searchedDocument!)) };
     if (named && unique) return { targets };
     const previous = await this.store.load(ctx.companyId, this.key(chat));
     if (previous) await this.store.discardIfCurrent(ctx.companyId, this.key(chat), previous.previewId);
@@ -880,6 +881,10 @@ export class LineExpenseActionService {
       }
       return choices;
     }
+    // The plain method question ("จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ") answers with one press.
+    if (pending?.awaitingField === 'paymentMethod' && !pending.allowedPaymentMethods && (!requestId || pending.requestId === requestId) && await this.bound(ctx, chat, pending))
+      return (['CASH', 'BANK_TRANSFER', 'CARD', 'CHEQUE'] as const).map((method, index) => ({ label: (language === 'en' ? ['Cash', 'Bank transfer', 'Card', 'Cheque'] : ['เงินสด', 'โอนเงิน', 'บัตร', 'เช็ค'])[index]!,
+        text: language === 'en' ? method : ['เงินสด', 'โอนเงิน', 'บัตร', 'เช็ค'][index]! }));
     if (pending?.awaitingField === 'payeeName' && (!requestId || pending.requestId === requestId) && await this.bound(ctx, chat, pending))
       return this.vouchers!.payeeChoices(ctx, language);
     if (pending?.awaitingField === 'claimSlip' && (!requestId || pending.requestId === requestId) && await this.bound(ctx, chat, pending))
