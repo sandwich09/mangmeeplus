@@ -911,7 +911,7 @@ describe('SetPartnerAiModelUseCase — split budget policy', () => {
     // Clearing hands the shop back to the default (or its sales deal).
     const cleared = await run(state, { budgetPolicy: { mode: 'SHARED', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: null, effectiveMonthKey: THIS_MONTH },
       expectedBudgetRevision: `1:${THIS_MONTH}:ACTIVE` });
-    assert.deepEqual([cleared.budgetPolicy.chatCapSatang, cleared.budgetPolicy.chatSource], [8_000, 'DEFAULT']);
+    assert.deepEqual([cleared.budgetPolicy.chatCapSatang, cleared.budgetPolicy.chatSource], [5_000, 'DEFAULT']);
   });
 
   it('keeps the canonical lock order and refuses a locked company before any policy write', async () => {

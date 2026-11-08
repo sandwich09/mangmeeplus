@@ -441,7 +441,7 @@ export default function SalesDealFormPage({ dealId, companyId, canApprove }: { d
                 onChange={(event) => set('monthlySlipLimit', event.target.value)} error={errors.monthlySlipLimit} />
             </div>
             <TextField label="เครดิตแชตต่อเดือน (credit)" name="aiBudgetBaht" inputMode="decimal"
-              hint="เว้นว่าง = 80 credit · ค่า AI พิเศษที่ผู้ดูแลตั้งไว้ยังมีผล · ใบเสร็จคิดตามจำนวนที่อ่านสำเร็จ · ปิด AI = เอาเมนู AI ออกด้านล่าง"
+              hint="เว้นว่าง = 50 credit · ค่า AI พิเศษที่ผู้ดูแลตั้งไว้ยังมีผล · ใบเสร็จคิดตามจำนวนที่อ่านสำเร็จ · ปิด AI = เอาเมนู AI ออกด้านล่าง"
               value={values.aiBudgetBaht} onChange={(event) => set('aiBudgetBaht', event.target.value)} error={errors.aiBudgetBaht} />
           </MangmeeCard>
 

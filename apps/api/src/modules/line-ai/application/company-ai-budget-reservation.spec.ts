@@ -831,15 +831,15 @@ describe('AI credit funding order and use (add-on spec §5.2–§5.3, plan PR C3
   it('snapshots the per-cycle allowance from the one resolver, with where it came from (Q5)', () => {
     const at = new Date('2026-10-01T00:00:00Z');
     const base = { totalSatang: 200_000, override: false, monthKey: '2026-10', at };
-    assert.deepEqual(aiCreditCycleAllowance({ ...base, row: {} }), { units: 8_000, source: 'DEFAULT' });
+    assert.deepEqual(aiCreditCycleAllowance({ ...base, row: {} }), { units: 5_000, source: 'DEFAULT' });
     assert.deepEqual(aiCreditCycleAllowance({ ...base, row: { salesDealChatCreditSatang: 20_000, salesDealChatCreditEndsAt: new Date('2026-12-01T00:00:00Z') } }),
       { units: 20_000, source: 'SALES_DEAL' });
     assert.deepEqual(aiCreditCycleAllowance({ ...base, row: { salesDealChatCreditSatang: 20_000, salesDealChatCreditEndsAt: new Date('2026-09-15T00:00:00Z') } }),
-      { units: 8_000, source: 'DEFAULT' }, 'a deal that ended before the cycle start gives the default');
+      { units: 5_000, source: 'DEFAULT' }, 'a deal that ended before the cycle start gives the default');
     assert.deepEqual(aiCreditCycleAllowance({ ...base, override: true, totalSatang: 50_000, row: { monthlyBudgetSatang: 50_000, chatMonthlyBudgetSatang: 50_000 } }),
       { units: 50_000, source: 'ADMIN_CHAT_CREDIT' });
     assert.deepEqual(aiCreditCycleAllowance({ ...base, override: true, totalSatang: 50_000, row: { monthlyBudgetSatang: 50_000 } }),
-      { units: 8_000, source: 'DEFAULT' }, 'a TOTAL override is only the safety ceiling (admin tab rework)');
+      { units: 5_000, source: 'DEFAULT' }, 'a TOTAL override is only the safety ceiling (admin tab rework)');
     assert.deepEqual(aiCreditCycleAllowance({ ...base, row: { budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30_000, ocrMonthlyBudgetSatang: 10_000 } }),
       { units: 30_000, source: 'SPLIT_CHAT_CAP' });
   });

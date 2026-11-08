@@ -288,7 +288,7 @@ export type AiBudgetSavedPolicy = {
 export function aiBudgetDraftFromPolicy(policy: AiBudgetSavedPolicy, currentMonthKey: string): AiBudgetDraft {
   return {
     mode: policy.mode === 'SPLIT' ? 'SPLIT' : 'SHARED',
-    // In SHARED the displayed 80-credit stop is not an editable split allocation.
+    // In SHARED the displayed 50-credit stop is not an editable split allocation.
     chat: policy.mode !== 'SPLIT' || policy.chatCapSatang === null ? '' : satangToBahtInput(policy.chatCapSatang),
     ocr: policy.ocrCapSatang === null ? '' : satangToBahtInput(policy.ocrCapSatang),
     effectiveMonthKey: currentMonthKey,

@@ -19,7 +19,7 @@ export function parseLineAiTurnValueCandidates(value: unknown, messageText: stri
 }
 
 /** 1 chat credit = 1 baht of metered CHAT cost; OCR/receipt reads are accounted separately. */
-export const DEFAULT_CHAT_CREDIT_SATANG = 8_000;
+export const DEFAULT_CHAT_CREDIT_SATANG = 5_000;
 
 export type LineAiAgent = 'general' | 'inventory' | 'notifications' | 'cfo' | 'sales' | 'crm' | 'accounting' | 'tax' | 'marketing';
 

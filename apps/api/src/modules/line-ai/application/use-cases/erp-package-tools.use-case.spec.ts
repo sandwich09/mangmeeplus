@@ -149,7 +149,7 @@ describe('billing.get_package_catalog (advisor spec §5.1a, owner 2026-09-30)', 
     assert.deepEqual(enterprise.menus.filter((menu: string) => !data.packages[0].menus.includes(menu)), ['ออก ภ.ง.ด.3 และ ภ.ง.ด.53 ในระบบ', 'ออกหนังสือรับรอง 50 ทวิในระบบ']);
     assert.equal(enterprise.monthly.notOnSale, 'เร็ว ๆ นี้ ยังไม่เปิดให้ซื้อ');
     assert.equal(data.vatNote, 'ราคานี้ไม่มี VAT บวกเพิ่ม ยอดที่ชำระเท่ากับราคา');
-    assert.equal(data.aiCreditPerMonth, 80);
+    assert.equal(data.aiCreditPerMonth, 50);
     assert.deepEqual(result.sourceRefs.map((ref) => ref.webPath), [undefined], 'no package page link for someone who cannot buy');
     assert.equal((await catalogTool(() => catalog(null)).execute(MANAGER)).sourceRefs[0]!.webPath, '/companies/c1/billing');
   });

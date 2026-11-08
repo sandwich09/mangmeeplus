@@ -71,8 +71,8 @@ describe('sales demo links on real PostgreSQL', { skip: !databaseUrl }, () => {
     assert.equal(row.expiresAt.toISOString(), minted.expiresAt); assert.equal(row.companyId, null);
     const audit = await client.auditLog.findFirstOrThrow({ where: { action: 'sales.demo_link.create', targetId: row.id } });
     assert.equal(audit.actorUserId, actor);
-    assert.deepEqual(audit.metadataJson, { expiresAt: minted.expiresAt, aiCredit: 80 });
-    assert.equal(row.aiCreditUnits, 80);
+    assert.deepEqual(audit.metadataJson, { expiresAt: minted.expiresAt, aiCredit: 50 });
+    assert.equal(row.aiCreditUnits, 50);
   });
   it('opens once, reopens the same company and caps every owner session at link expiry', async () => {
     const link = await demo.mint(context), first = await demo.open(tokenOf(link), 'first'), second = await demo.open(tokenOf(link), 'second');

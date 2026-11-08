@@ -1549,8 +1549,8 @@ describe('resolveAiBudgetPolicy', () => {
     assert.deepEqual([policy.chatCapSatang, policy.ocrCapSatang, policy.chatSource], [30, 70, 'ADMIN']);
     // Admin tab rework 2026-09-29: a TOTAL override is the safety ceiling only, never the chat credit.
     const ceilingOnly = resolveAiBudgetPolicy({ row: policyRow({ monthlyBudgetSatang: 50_000 }), totalSatang: 50_000, override: true, monthKey: '2026-09' });
-    assert.deepEqual([ceilingOnly.chatCapSatang, ceilingOnly.chatSource], [8000, 'DEFAULT']);
-    assert.deepEqual([resolve(policyRow()).chatCapSatang, resolve(policyRow()).chatSource], [8000, 'DEFAULT']);
+    assert.deepEqual([ceilingOnly.chatCapSatang, ceilingOnly.chatSource], [5000, 'DEFAULT']);
+    assert.deepEqual([resolve(policyRow()).chatCapSatang, resolve(policyRow()).chatSource], [5000, 'DEFAULT']);
   });
 
   it('expires a one-time sales credit with its paid deal term', () => {
@@ -1559,7 +1559,7 @@ describe('resolveAiBudgetPolicy', () => {
     assert.equal(resolveAiBudgetPolicy({ row, totalSatang: 30_000, override: false, monthKey: '2026-10',
       at: new Date('2026-10-23T02:59:59.000Z') }).chatCapSatang, 12_000);
     assert.equal(resolveAiBudgetPolicy({ row, totalSatang: 30_000, override: false, monthKey: '2026-10',
-      at: new Date('2026-10-23T03:00:00.000Z') }).chatCapSatang, 8_000);
+      at: new Date('2026-10-23T03:00:00.000Z') }).chatCapSatang, 5_000);
   });
 
   it('spec §12.1 example T=100 C=30 O=70: an active SPLIT exposes both caps and stays valid at exactly T', () => {
@@ -1630,7 +1630,7 @@ describe('assertCompanyAiBudget split policy gate', () => {
     },
   } as any);
 
-  it('stops CHAT at 80 credit without blocking OCR under the shared total', async () => {
+  it('stops CHAT at 50 credit without blocking OCR under the shared total', async () => {
     const prisma = { client: {
       companyAiConfiguration: { findUnique: async () => null },
       companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 8_000 }) },
@@ -1639,7 +1639,7 @@ describe('assertCompanyAiBudget split policy gate', () => {
     const chat = await assertCompanyAiBudget(prisma, budgetConfig, 'co-chat', bangkokMonthKey(),
       { budgetBucket: 'CHAT' } as any);
     assert.deepEqual(chat, { allowed: false, reason: 'exceeded', spendSatang: 8_000,
-      budgetSatang: 8_000, override: false, budgetScope: 'CHAT' });
+      budgetSatang: 5_000, override: false, budgetScope: 'CHAT' });
     assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-chat', bangkokMonthKey(),
       { budgetBucket: 'OCR' } as any), { allowed: true });
   });
@@ -1894,7 +1894,7 @@ describe('readAiBudgetReadiness — the truth table admin surfaces must agree wi
     readAiBudgetReadiness(client, { companyId: 'co-1', monthKey: '2026-09', row, totalSatang,
       ...(boundSatang === undefined ? {} : { boundSatang }) });
 
-  it('SHARED keeps OCR under the total and reports the separate 80-credit CHAT stop', async () => {
+  it('SHARED keeps OCR under the total and reports the separate 50-credit CHAT stop', async () => {
     // Open: 3000 of 10000 spent.
     assert.deepEqual(await readiness(tx({ total: 3000 }), null, 10_000), {
       mode: 'SHARED', total: 'OK', chat: 'OK', ocr: 'OK', unresolvedHolds: 0, breach: false,

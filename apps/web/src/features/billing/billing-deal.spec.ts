@@ -64,7 +64,7 @@ it('names the menus and the AI credit the customer is buying', () => {
   assert.equal(dealAiCreditText(undefined), 'ใช้เพดาน AI รวมของระบบ');
   assert.equal(dealAiCreditText(0), 'ปิดการใช้งาน AI');
   assert.equal(dealAiCreditText(80_000), '800.00 บาท / เดือน');
-  assert.equal(dealAiCreditText(null, 'CHAT'), '80 เครดิต/เดือน');
+  assert.equal(dealAiCreditText(null, 'CHAT'), '50 เครดิต/เดือน');
   assert.equal(dealAiCreditText(12_000, 'CHAT'), '120 เครดิต/เดือน');
 });
 

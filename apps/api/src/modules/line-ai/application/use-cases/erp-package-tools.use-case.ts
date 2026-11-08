@@ -170,7 +170,7 @@ export class BillingGetPackageCatalogTool implements ErpReadToolPort {
         vatNote: VAT_NOTES[catalog.taxTreatment ?? 'UNKNOWN'],
         usersNote: `จำนวนผู้ใช้รวม${THAI_SYSTEM_ROLE_NAMES.OWNER}`,
         yearlyReceiptsNote: 'แบบรายปีได้สิทธิ์อ่านใบเสร็จของทั้งปีทันทีเมื่อชำระสำเร็จ',
-        // The package page's own line on every package card ("เครดิต AI 80 เครดิต/เดือน").
+        // The package page's own line on every package card ("เครดิต AI 50 เครดิต/เดือน").
         aiCreditPerMonth: DEFAULT_CHAT_CREDIT_SATANG / 100,
       },
       sourceRefs,

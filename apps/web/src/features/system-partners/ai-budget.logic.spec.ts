@@ -576,7 +576,7 @@ describe('admin tab rework: chat credit, receipt images and the safety ceiling',
   });
 
   it('names where the chat credit comes from, in plain Thai', () => {
-    assert.equal(aiChatCreditSourceText(usageFixture(), date), 'ค่าเริ่มต้น 80 บาท');
+    assert.equal(aiChatCreditSourceText(usageFixture(), date), 'ค่าเริ่มต้น 50 บาท');
     assert.equal(aiChatCreditSourceText(usageFixture({ policy: { chatSource: 'ADMIN', chatCapSatang: 15_000 } }), date), 'ผู้ดูแลตั้งให้ร้านนี้ 150 บาท');
     assert.equal(aiChatCreditSourceText(usageFixture({ policy: { chatSource: 'SALES_DEAL', chatCapSatang: 30_000 },
       budget: { chatCredit: { deal: { satang: 30_000, endsAt: '2026-10-29T00:00:00.000Z' }, cutoverAt: null } } }), date), 'ดีลขาย 300 บาท ถึง วันที่ 2026-10-29');
@@ -659,7 +659,7 @@ describe('admin tab rework: chat credit, receipt images and the safety ceiling',
 
   it('confirms a chat credit and a ceiling change with what happens, and never ties the two', () => {
     const chat = chatCreditConfirmMessage(usageFixture(), 1_000, 'ทดสอบ', date);
-    assert.match(chat, /ค่าเริ่มต้น 80 บาท → ผู้ดูแลตั้งให้ร้านนี้ 10 บาท/);
+    assert.match(chat, /ค่าเริ่มต้น 50 บาท → ผู้ดูแลตั้งให้ร้านนี้ 10 บาท/);
     assert.match(chat, /หลังบันทึกแชต AI จะหยุดจนขึ้นเดือนใหม่/);
     assert.match(chatCreditConfirmMessage(usageFixture(), 500_000, 'ทดสอบ', date), /สูงกว่าเพดานความปลอดภัย 2,000 บาท/);
     const ceiling = safetyCeilingConfirmMessage(usageFixture(), 500_000, 'ทดสอบ');

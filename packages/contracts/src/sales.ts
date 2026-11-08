@@ -82,7 +82,7 @@ export type SalesDealSnapshot = {
   branchLimit: number; employeeLimit: number; monthlySlipLimit: number;
   featureKeys: string[];
   /**
-   * In v2/v3 this is a TOTAL budget override. In v4 it is CHAT credit; null = 80 credit.
+   * In v2/v3 this is a TOTAL budget override. In v4 it is CHAT credit; null = 50 credit.
    * D-P3-2: zero is refused — closing AI is done by dropping
    * the `ai_line_assistant` menu from `featureKeys`, which is the only writer the platform has.
    */

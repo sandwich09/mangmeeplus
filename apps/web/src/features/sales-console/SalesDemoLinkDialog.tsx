@@ -9,7 +9,7 @@ import { createSalesDemoLink, type SalesDemoLink } from './sales.api';
 
 export function SalesDemoLinkDialog({ link: initialLink, onClose }: { link?: SalesDemoLink; onClose: () => void }) {
   const [link, setLink] = useState<SalesDemoLink | null>(initialLink ?? null);
-  const [credit, setCredit] = useState('80');
+  const [credit, setCredit] = useState('50');
   const [busy, setBusy] = useState(false);
   const [validation, setValidation] = useState<string | undefined>();
   const [copied, setCopied] = useState(false);

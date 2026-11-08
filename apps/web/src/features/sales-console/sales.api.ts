@@ -68,7 +68,7 @@ export function createSalesDeal(body: SalesDealSaveBody): Promise<SalesDealView>
 
 export type SalesDemoLink = { url: string; expiresAt: string; aiCredit: number };
 
-export function createSalesDemoLink(aiCredit = 80): Promise<SalesDemoLink> {
+export function createSalesDemoLink(aiCredit = 50): Promise<SalesDemoLink> {
   return apiFetch<SalesDemoLink>('/v1/sales/demo-links', {
     method: 'POST', body: JSON.stringify({ aiCredit }), suppressErrorToast: true,
   });

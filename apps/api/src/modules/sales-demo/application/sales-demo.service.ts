@@ -29,7 +29,7 @@ export class SalesDemoService {
     private readonly issueToken: IssueTokenUseCase,
   ) {}
 
-  async mint(context: RequestContext, aiCredit = 80): Promise<{ url: string; expiresAt: string; aiCredit: number }> {
+  async mint(context: RequestContext, aiCredit = 50): Promise<{ url: string; expiresAt: string; aiCredit: number }> {
     if (!Number.isInteger(aiCredit) || aiCredit < 1 || aiCredit > 300) throw new BadRequestException('เครดิตทดลองต้องเป็นจำนวนเต็มตั้งแต่ 1 ถึง 300 ลองใส่ใหม่อีกครั้ง');
     assertPlatformTenant(context);
     await this.quota('demo-link-mint-user', context.userId, 30);

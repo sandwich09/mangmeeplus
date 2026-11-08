@@ -636,7 +636,7 @@ function dealFieldMessageTh(field: string): string {
     case 'description': return 'โน้ตถึงลูกค้าต้องไม่ว่างและไม่เกิน 200 ตัวอักษร';
     case 'description_plus': return 'โน้ตถึงลูกค้าห้ามใช้เครื่องหมาย + ให้เขียนว่า "และ"';
     // "เครดิต AI" is the product term (W-01); never the retired AI-money wording.
-    case 'aiMonthlyBudgetSatang': return 'เครดิตแชตต่อเดือนต้องมากกว่า 0 credit หรือเว้นว่างเพื่อใช้ 80 credit (ปิด AI = เอาเมนู AI ออก)';
+    case 'aiMonthlyBudgetSatang': return 'เครดิตแชตต่อเดือนต้องมากกว่า 0 credit หรือเว้นว่างเพื่อใช้ 50 credit (ปิด AI = เอาเมนู AI ออก)';
     case 'featureKeys': return 'รายการเมนูไม่ถูกต้อง';
     // D-P5-1: the auto-renew switch. The cadence message doubles as the "switch off but cadence
     // left behind" answer, because both mean the same thing to the person filling the form.
