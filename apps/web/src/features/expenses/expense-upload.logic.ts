@@ -231,7 +231,8 @@ export class HeicDecodeError extends Error {
 const HEIF_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1']);
 
 export function detectReceiptImageByteKind(bytes: Uint8Array): 'jpeg' | 'png' | 'heic' | 'unknown' {
-  if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9) return 'jpeg';
+  // Same rule as the API: Samsung cameras write a trailer after the end marker, so it need not be last.
+  if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes.some((value, index) => index >= 2 && value === 0xff && bytes[index + 1] === 0xd9)) return 'jpeg';
   if ([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((value, index) => bytes[index] === value)) return 'png';
   if (bytes.length >= 12 && String.fromCharCode(...bytes.subarray(4, 8)) === 'ftyp') {
     const boxSize = Math.min(bytes.length, ((bytes[0] ?? 0) * 0x1000000) + ((bytes[1] ?? 0) * 0x10000) + ((bytes[2] ?? 0) * 0x100) + (bytes[3] ?? 0));

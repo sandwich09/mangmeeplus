@@ -250,6 +250,9 @@ describe('signature image uploads', () => {
 describe('detectReceiptImageByteKind', () => {
   it('recognizes verified JPEG and PNG containers', () => {
     assert.equal(detectReceiptImageByteKind(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9])), 'jpeg');
+    // Owner 2026-11-08: a Galaxy S23 photo has a "SEFT" trailer after the end marker; keep it as the original JPEG.
+    assert.equal(detectReceiptImageByteKind(Uint8Array.from([0xff, 0xd8, 0xff, 0xe1, 0xff, 0xd9, 0x53, 0x45, 0x46, 0x54])), 'jpeg');
+    assert.equal(detectReceiptImageByteKind(Uint8Array.from([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x02])), 'unknown');
     assert.equal(detectReceiptImageByteKind(Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), 'png');
   });
 
