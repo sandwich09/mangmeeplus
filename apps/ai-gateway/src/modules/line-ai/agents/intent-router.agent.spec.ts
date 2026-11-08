@@ -2100,3 +2100,214 @@ it('R6 planner and compose acceptance reuses shape, source and number grounding 
     assert.deepEqual(checks, [['line.loop', true], ['line.compose', expected]], text);
   }
 });
+
+// Round 22 lane A: deterministic providers only, no model calls.
+import { parseLineIntakeCompactDecision } from './line-intake-compact-decision';
+
+describe('R22 claim read binding', () => {
+  async function claimRead(text: string, filters: Record<string, any>, tool = 'reimbursement.list_pending_approvals', permissions = ['reimbursement.read'], memory?: any[]) {
+    const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+    const req: LineAiTurnRequest = { requestId: 'r22', webhookEventId: 'r22', messageText: text, messagePreviewHash: 'a'.repeat(16),
+      valueCandidates: extractValueCandidates(text, '2026-11-08'),
+      userContext: { lineUserId: 'line', internalUserId: 'reader', companyId: 'co', membershipId: 'member', permissions, roles: [], branchIds: [], locationIds: [], locale: 'th-TH' },
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: text, requestedFilters: filters, requiredEvidence: [], dependsOn: [] }],
+      ...(memory ? { conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: memory } } : {}) };
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: tool, input: {} }] }) }) },
+      invoke: async (meta, _ctx, input) => { calls.push({ tool: meta.name, input }); return { toolName: meta.name, status: 'ok', asOf: '2026-11-08T00:00:00Z',
+        sourceRefs: [{ id: 'claims', label: 'ใบเบิก', module: 'reimbursements', entityType: 'reimbursement_summary', permissionChecked: true, asOf: '2026-11-08T00:00:00Z' }],
+        data: { matchedCount: 0, matchedItems: [], matchedTotalsByCurrency: [], appliedFilters: input } }; } });
+    return { calls, result };
+  }
+  it('R22.1 replaces an incompatible claim tool without losing category, person or status', async () => {
+    for (const [text, filters] of [
+      ['ใบเบิกหมวดค่าเดินทางรออนุมัติกี่ใบ', { categoryName: 'ค่าเดินทาง', status: 'PENDING_APPROVAL' }],
+      ['ใบเบิกของสมชายอนุมัติแล้วรวมเท่าไร', { requesterName: 'สมชาย', status: 'APPROVED' }],
+      ['สมชายมีใบเบิกร่างไหม', { requesterName: 'สมชาย', status: 'DRAFT' }],
+    ] as const) {
+      const { calls } = await claimRead(text, filters);
+      assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: filters }]);
+    }
+  });
+  it('R22.2 preserves my paid claims for own, related and company readers', async () => {
+    for (const permission of ['reimbursement.read_own', 'reimbursement.read_related', 'reimbursement.read']) {
+      const { calls } = await claimRead('ใบเบิกของฉันจ่ายแล้วไหม', { requester: 'me', paymentStatus: 'PAID' }, 'reimbursement.get_summary', [permission]);
+      assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: { requester: 'me', paymentStatus: 'PAID' } }]);
+    }
+  });
+  it('R22.3 preserves a deterministic Thai amount threshold even if the planner omits it', async () => {
+    for (const [phrase, key, amount] of [['เกินพัน', 'amountGt', '1000'], ['ไม่เกินหมื่น', 'amountLte', '10000'], ['ไม่ถึงพัน', 'amountLt', '1000'], ['ต่ำกว่าพัน', 'amountLt', '1000'], ['อย่างน้อยพัน', 'amountGte', '1000']] as const) {
+      const { calls } = await claimRead(`ใบเบิกของสมชาย${phrase}บาทกี่ใบ`, { requesterName: 'สมชาย' });
+      assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: { requesterName: 'สมชาย', [key]: amount } }]);
+    }
+  });
+  it('R22.3 rejects invented amounts and names an unsupported amount filter in the answer', async () => {
+    const { calls, result } = await claimRead('ใบเบิกเกินพันบาทกี่ใบ', { amountGt: '9999' }, 'reimbursement.get_summary');
+    assert.deepEqual(calls, []);
+    assert.match(result.replyText, /กรอง.*ยอดเงิน/);
+  });
+  it('R22.4 totals inherit the exact latest claim group, including an empty own result', async () => {
+    const filters = { requester: 'me', requesterName: 'สมชาย', status: 'DRAFT', categoryName: 'ค่าเดินทาง', amountGt: '1000' };
+    const { calls } = await claimRead('กลุ่มที่แสดงเมื่อกี้รวมเท่าไร', {}, 'reimbursement.get_summary', ['reimbursement.read'],
+      [{ tool: 'reimbursement.get_summary', answerShape: 'single_metric', asOf: '2026-11-08T00:00:00Z', claimFilters: filters }]);
+    assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: filters }]);
+  });
+  it('R22.5 normalizes a numeric standalone round before the API string validator', async () => {
+    const { calls } = await claimRead('ใบเบิกรอบ 2 ถึงไหนแล้ว', { round: 2 }, 'reimbursement.get_summary');
+    assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: { round: '2' } }]);
+  });
+  it('R22.1 free source-drafts permissions cannot acquire a claim read through fallback', async () => {
+    const { calls } = await claimRead('ใบเบิกของสมชายร่างไหม', { requesterName: 'สมชาย', status: 'DRAFT' }, 'reimbursement.list_pending_approvals', ['expense.read', 'expense.read_own']);
+    assert.deepEqual(calls, []);
+  });
+  it('R22.3 compact routing accepts a person plus amount threshold without schema rejection', async () => {
+    const text = 'ใบเบิกของสมชายเกินพันบาทกี่ใบ';
+    const { createLineAiInputEvidence } = await import('@watchdog-bms/contracts');
+    const evidence = await createLineAiInputEvidence({ turnKey: 'r22', parts: [{ partId: 'p0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] });
+    assert.ok(evidence);
+    const parsed = parseLineIntakeCompactDecision({ raw: { subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: { requesterName: 'สมชาย', amountGt: '1000' } }] },
+      messageText: text, inputEvidence: evidence.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: new Set(), language: 'th', valueCandidates: extractValueCandidates(text) });
+    assert.ok(parsed);
+    assert.deepEqual({ ...parsed.semanticSubrequests[0]!.requestedFilters }, { requesterName: 'สมชาย', amountGt: '1000' });
+  });
+});
+
+it('R22.4 compact total follow-up carries the prior claim group into a prepared read', async () => {
+  const text = 'รวมทั้งหมดเท่าไหร่';
+  const { createLineAiInputEvidence } = await import('@watchdog-bms/contracts');
+  const evidence = await createLineAiInputEvidence({ turnKey: 'r22-total', parts: [{ partId: 'p0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] });
+  assert.ok(evidence);
+  const filters = { requester: 'me' as const, status: 'DRAFT' as const, categoryName: 'ค่าเดินทาง', amountGt: '1000' };
+  const parsed = parseLineIntakeCompactDecision({ raw: { subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {} }],
+    simpleRead: { subrequest: 0, tool: 'reimbursement.get_summary', answerShape: 'single_metric', confidence: 0.99 } },
+    messageText: text, inputEvidence: evidence.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+    enabledPreparedFamilies: new Set(['reimbursement.get_summary::single_metric']), language: 'th',
+    recentReads: [{ tool: 'reimbursement.get_summary', answerShape: 'single_metric', asOf: '2026-11-08T00:00:00Z', claimFilters: filters }] });
+  assert.ok(parsed?.preparedPlan);
+  assert.deepEqual(parsed.preparedPlan.proposedCalls[0]?.input, filters);
+});
+
+it('R22.4 legacy claim memory without applied filters never widens a follow-up total', async () => {
+  const result = await runSemanticTurnV2({ req: { requestId: 'legacy-group', webhookEventId: 'legacy-group', messageText: 'รวมทั้งหมดเท่าไหร่', messagePreviewHash: 'a'.repeat(16),
+    userContext: { lineUserId: 'line', internalUserId: 'reader', companyId: 'co', membershipId: 'member', permissions: ['reimbursement.read'], roles: [], branchIds: [], locationIds: [], locale: 'th-TH' },
+    semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ยอดรวมกลุ่มเดิม', requestedFilters: {}, requiredEvidence: [], dependsOn: [] }],
+    conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: [{ tool: 'reimbursement.get_summary', answerShape: 'single_metric', asOf: '2026-11-08T00:00:00Z' }] } },
+    draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+    provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'reimbursement.get_summary', input: {} }] }) }) },
+    invoke: async () => { assert.fail('an unproved previous group must never read every claim'); } });
+  assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
+  assert.match(result.replyText, /ของใคร/);
+});
+
+// Round 22 part 2 uses only stubbed composition and current access metadata.
+describe('R22P2 help without a reviewed card', () => {
+  async function help(text: string, permissions: string[], features: string[], answer?: string) {
+    const calls: string[] = [];
+    const result = await runSemanticTurnV2({ req: { requestId: 'help-r22p2', webhookEventId: 'help-r22p2', messageText: text,
+      messagePreviewHash: 'a'.repeat(16), approvedKnowledge: true,
+      userContext: { lineUserId: 'line', internalUserId: 'reader', companyId: 'co', membershipId: 'member', permissions, roles: [], branchIds: [], locationIds: [], locale: 'th-TH', entitledFeatureKeys: features },
+      semanticSubrequests: [{ index: 0, kind: 'help', goal: 'อธิบายวิธีใช้', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] },
+      draftEditEnabled: false, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      provider: { generateText: async input => {
+        calls.push(input.usageTag ?? '');
+        assert.ok(answer, 'capability and first-use help must not compose product prose');
+        assert.equal(input.usageTag, 'line.compose');
+        const payload = JSON.parse(input.messages[0]!.text);
+        if (/ซีด|ตัวหนังสือชัด/u.test(text)) assert.equal(payload.semanticSubrequests[0].kind, 'general');
+        return { ok: true, text: JSON.stringify({ helpActions: [{ index: 0, actionId: /ซีด|ตัวหนังสือชัด/u.test(text) ? 'expense_capture' : null }], answers: [{ index: 0, status: 'handled', topic: 'business', text: answer, sourceRefIds: [] }] }) };
+      } },
+      invoke: async () => { assert.fail('help must not read or change shop data'); } });
+    return { result, calls };
+  }
+  it('R22P2.1 scoped claim capabilities describe permitted reads and existing actions for auditors and managers', async () => {
+    const auditor = await help('น้องมั่งมีช่วยเรื่องใบเบิกอะไรได้บ้าง', ['reimbursement.read'], ['expenses']);
+    assert.equal(auditor.result.semanticCoverage?.[0]?.status, 'handled');
+    assert.match(auditor.result.replyText, /การเบิกจ่าย|ใบเบิก/u);
+    assert.doesNotMatch(auditor.result.replyText, /สร้างใบเบิก|อนุมัติใบเบิก|ค่าใช้จ่ายเดือนนี้|คู่มือ/u);
+    assert.ok(auditor.result.presentation?.cards.some(card => card.webLink?.path === '/companies/co/reimbursements'));
+    assert.equal(auditor.result.presentation?.cards.find(card => card.webLink)?.webLink?.label, 'เปิดในเว็บ');
+    assert.deepEqual(auditor.calls, []);
+    for (const text of ['ใบเบิกน้องช่วยอะไรได้บ้าง', 'น้องมั่งมีช่วยเรื่องใบเบิกได้อะไรบ้าง', 'What can you help with claims?']) {
+      const variant = await help(text, ['reimbursement.read'], ['expenses']);
+      assert.equal(variant.result.semanticCoverage?.[0]?.status, 'handled');
+      assert.deepEqual(variant.calls, []);
+      assert.ok(variant.result.presentation?.cards.some(card => card.webLink?.path === '/companies/co/reimbursements'));
+    }
+    const manager = await help('น้องมั่งมีช่วยเรื่องใบเบิกอะไรได้บ้าง', ['reimbursement.read', 'reimbursement.approve', 'reimbursement.create'], ['expenses']);
+    assert.equal(manager.result.semanticCoverage?.[0]?.status, 'handled');
+    const ids = manager.result.presentation?.cards.flatMap(card => card.chatActionIds ?? (card.chatActionId ? [card.chatActionId] : []));
+    assert.ok(ids?.includes('approvals'));
+    assert.ok(ids?.includes('reimbursement_claim'));
+    assert.ok(ids?.every(id => id === 'approvals' || id.startsWith('reimbursement_')));
+    assert.deepEqual(manager.calls, []);
+    const free = await help('น้องมั่งมีช่วยเรื่องใบเบิกอะไรได้บ้าง', ['expense.read', 'expense.receipt.line_upload'], ['expenses', 'expenses.upload']);
+    assert.doesNotMatch(free.result.replyText, /เลือกงานที่ทำได้|สร้างใบเบิก|อนุมัติใบเบิก/u);
+    assert.equal(free.result.presentation?.cards.length, 1);
+    assert.deepEqual(free.calls, []);
+    const readOnlyFeature = await help('น้องมั่งมีช่วยเรื่องใบเบิกอะไรได้บ้าง', ['reimbursement.read', 'reimbursement.approve', 'reimbursement.create'], []);
+    assert.equal(readOnlyFeature.result.presentation?.cards.length, 1, 'closed workflows must leave only the still-offered claim read');
+    assert.deepEqual(readOnlyFeature.calls, []);
+    const closedCreate = await help('น้องมั่งมีช่วยเรื่องใบเบิกอะไรได้บ้าง', ['reimbursement.create'], []);
+    assert.doesNotMatch(closedCreate.result.replyText, /ค้นและสรุป|ค่าใช้จ่ายและใบเสร็จ|สร้างใบเบิก/u);
+    assert.deepEqual(closedCreate.calls, []);
+  });
+  it('R22P2.2 first-use help offers existing permitted tasks without a model for paid and free source-drafts access', async () => {
+    for (const permissions of [['expense.read', 'expense.create'], ['expense.read', 'expense.receipt.line_upload']]) {
+      const { result, calls } = await help('เพิ่งเข้ามาใช้วันแรก ควรทำอะไรก่อนดี', permissions, ['expenses', 'expenses.list', 'expenses.upload']);
+      assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+      const ids = result.presentation?.cards.flatMap(card => card.chatActionIds ?? (card.chatActionId ? [card.chatActionId] : []));
+      assert.ok(ids?.includes('expense_capture'));
+      assert.ok(ids?.includes('expense_search'));
+      assert.doesNotMatch(result.replyText, /อนุมัติใบเบิก|สร้างใบเบิก|คู่มือ/u);
+      assert.deepEqual(calls, []);
+    }
+    for (const text of ['เริ่มตรงไหนดี', 'มือใหม่ เริ่มใช้งานยังไง', 'เพิ่งใช้ครั้งแรก ควรทำอะไรก่อนดี', 'Where do I start?']) {
+      const variant = await help(text, ['expense.read', 'expense.receipt.line_upload'], ['expenses', 'expenses.list', 'expenses.upload']);
+      assert.equal(variant.result.semanticCoverage?.[0]?.status, 'handled');
+      assert.deepEqual(variant.calls, []);
+      assert.ok(variant.result.presentation?.cards.some(card => (card.chatActionIds ?? (card.chatActionId ? [card.chatActionId] : [])).includes('expense_capture')));
+    }
+    const readOnlyStarter = await help('เริ่มตรงไหนดี', ['ai.tool.invoke', 'reimbursement.read', 'reimbursement.approve'], ['expenses']);
+    assert.doesNotMatch(readOnlyStarter.result.replyText, /ใบเสร็จคงเหลือ|ซื้อแพ็กเกจ|your package, receipts left/u);
+    assert.ok(readOnlyStarter.result.presentation?.cards.some(card => card.webLink?.path === '/companies/co/reimbursements'));
+    assert.deepEqual(readOnlyStarter.calls, []);
+    const fullAccess = await help('Where do I start?', [...new Set(LINE_TOOL_REGISTRY.flatMap(tool => [...(tool.requiredPermissions ?? []), ...(tool.anyOfPermissions ?? [])]))], [...TIER_FEATURE_PRESETS.ENTERPRISE_1999]);
+    assert.ok(fullAccess.result.presentation!.cards.length <= 12, 'the existing LINE answer card limit still applies');
+    assert.ok(fullAccess.result.presentation!.cards.every(card => card.text.length <= 1200), 'every answer card must fit the existing renderer');
+  });
+  it('R22P2.3 receipt preservation and photo practice use general business knowledge without product steps', async () => {
+    const answer = 'เก็บต้นฉบับและรูปถ่ายคู่กันเพื่อให้อ่านย้อนหลังได้ค่ะ\n• เลี่ยงความร้อนและแสงแดด\n• ถ่ายบนพื้นเรียบให้เห็นทั้งใบ';
+    for (const text of ['ใบเสร็จกระดาษความร้อนซีดแล้ว จะเก็บยังไงให้อ่านได้นาน', 'ถ่ายรูปบิลยังไงให้ตัวหนังสือชัด']) {
+      const { result, calls } = await help(text, ['expense.read'], ['expenses'], answer);
+      assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+      assert.equal(result.replyText, answer);
+      assert.doesNotMatch(result.replyText, /คู่มือ|เมนู|ปุ่ม|เปิดเว็บ/u);
+      assert.deepEqual(calls, ['line.compose']);
+      assert.equal(result.presentation?.cards.some(card => card.chatActionId || card.chatActionIds?.length), undefined);
+    }
+  });
+  it('R22P2.4 unreviewed product category setup keeps the web-guide exit even if model prose invents steps', async () => {
+    for (const [text, permissions] of [['เพิ่มหมวดค่าใช้จ่ายใหม่บนเว็บยังไง', ['expense.read']], ['ถ่ายรูปบิลเข้าระบบอย่างไรให้ชัด', ['expense.read', 'expense.create']]] as const) {
+      const { result } = await help(text, [...permissions], ['expenses'], 'กดเมนูลับแล้วเพิ่มหมวดได้เลยค่ะ');
+      assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE');
+      assert.equal(result.replyText, 'ในแชตยังอธิบายขั้นตอนนี้ไม่ได้ เปิดคู่มือในเว็บเพื่อดูต่อค่ะ');
+      assert.ok(result.webLinks.some(link => link.path === '/companies/co/user-guide/expenses'));
+    }
+  });
+});
+
+it('R22P2 compound capability help keeps one bounded card per clause', async () => {
+  const texts = ['เพิ่งเข้ามาใช้วันแรก ควรทำอะไรก่อนดี', 'น้องมั่งมีช่วยเรื่องใบเบิกอะไรได้บ้าง'];
+  const created = await createLineAiInputEvidence({ turnKey: 'cap-compound', parts: texts.map((rawText, index) => ({ partId: `cap-${index}`, rawText, eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now() })) });
+  assert.ok(created);
+  const result = await runSemanticTurnV2({ req: { requestId: 'cap-compound', webhookEventId: 'cap-compound', messageText: texts.join('\n'), messagePreviewHash: 'a'.repeat(16), inputEvidence: created.inputEvidence,
+    userContext: { lineUserId: 'line', internalUserId: 'reader', companyId: 'co', membershipId: 'member', roles: [], branchIds: [], locationIds: [], locale: 'th-TH',
+      permissions: [...new Set(LINE_TOOL_REGISTRY.flatMap(tool => [...(tool.requiredPermissions ?? []), ...(tool.anyOfPermissions ?? [])]))], entitledFeatureKeys: [...TIER_FEATURE_PRESETS.ENTERPRISE_1999] },
+    semanticSubrequests: texts.map((goal, index) => ({ index, kind: 'help', goal, requiredEvidence: [], dependsOn: [], requestedFilters: {}, evidenceRefs: [{
+      partId: `cap-${index}`, startUtf16: 0, endUtf16: goal.length, rawSha256: created.inputEvidence.parts[index]!.rawSha256 }] })) },
+    draftEditEnabled: false, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+    provider: { generateText: async () => { assert.fail('capability clauses require no model'); } }, invoke: async () => { assert.fail('capability clauses require no ERP read'); } });
+  assert.deepEqual(result.semanticCoverage?.map(item => item.status), ['handled', 'handled']);
+  assert.equal(result.presentation?.cards.length, 2);
+  assert.ok(result.presentation?.cards.every(card => card.text.length <= 1200));
+});

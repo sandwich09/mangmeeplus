@@ -203,7 +203,7 @@ Path applicability (each requirement):
 การค้นตามชื่อ (slot) — ห้ามพูด "ไม่พบ" ถ้าค้นไม่ครบ:
 - ใบเบิก: `search` ฝั่ง DB (:553) แล้วกรองด้วย `approvalActions`/สิทธิ์ ไล่ ≤ 3 หน้า × 100 (pageSize สูงสุด 100, :538); `total` ≤ 300 แล้วไม่พบ → "ไม่พบ…"; > 300 → ปุ่มเว็บ
 - รายจ่าย (แก้ P11): `ListExpensesUseCase.execute(ctx, { status | paymentStatus, vendorCounterpartyId?, createdByUserId? (R21), page, pageSize: 100 })` — ต้องส่ง `pageSize` เอง (ค่าตั้งต้น 20 สูงสุด 200, `expense-draft.use-case.ts:315–316`); ผลมี `total` และเรียง `expenseDate desc, id desc` (`prisma-expense.repository.ts:1287–1289`); ไม่ใส่ช่วงวันที่ จึงรวมรายการค้างจ่ายเก่ากว่า 90 วัน; ไล่ ≤ 3 หน้า; `expense_pay` เรียกสองชุด (`UNPAID`, `PARTIALLY_PAID`) แล้วรวมเรียงวันที่; **exhaustive** = Σ `total` ≤ 300 และอ่านครบทุกหน้า แล้วจึงกรองด้วย `permitted`; > 300 → "มีรายการมากเกินจะค้นในแชตค่ะ" + `ค้นในเว็บ`; ไม่มีการค้นด้วยข้อความ (ตัวกรองไม่มี search — `packages/contracts/src/expenses.ts:1243–1265`) ชื่อผู้ขายจึงผ่าน `vendorCounterpartyId` ตามข้อถัดไป
-- รายจ่าย: ชื่อผู้ขาย → `ListCounterpartiesUseCase.execute(ctx, page, 100, { search })` (`apps/api/src/modules/accounting-documents/application/use-cases/counterparty.use-case.ts:266–272`) ≤ 3 หน้า (ไม่ใช้ tool เดิมที่ตัด 10 แถว `line-counterparty.service.ts:77`); 1 ราย → กรอง `vendorCounterpartyId`; 2–4 ราย → ปุ่มให้เลือกผู้ขาย; > 4 → ปุ่มเว็บ; 0 (ค้นครบ) → "ไม่พบผู้ขายชื่อ … ในรายชื่อคู่ค้าค่ะ"; **ไม่มี `accounting.counterparty.read`** (:75, use-case :270) → ไม่กรองตามชื่อ แสดงรายการล่าสุดด้วยคำ "เลือกจากรายการล่าสุดได้เลยค่ะ" (ไม่พูดว่าไม่พบ)
+- รายจ่าย: ชื่อผู้ขาย → `ListCounterpartiesUseCase.execute(ctx, page, 100, { search })` (`apps/api/src/modules/accounting-documents/application/use-cases/counterparty.use-case.ts:266–272`) ≤ 3 หน้า (ไม่ใช้ tool เดิมที่ตัด 10 แถว `line-counterparty.service.ts:77`); 1 ราย → กรอง `vendorCounterpartyId`; 2–4 ราย → ปุ่มให้เลือกผู้ขาย; > 4 → ปุ่มเว็บ; 0 (ค้นครบ) → "ไม่พบผู้ขายชื่อ … ในรายชื่อคู่ค้าค่ะ"; **ไม่มี `accounting.counterparty.read`** (:75, use-case :270) → ส่งตรวจ/ลบร่างกรองด้วยชื่อร้านที่บันทึกในรายการของผู้ใช้เองก่อน (รอบ 20); ถ้าไม่พบหรืองานอื่น ไม่กรองตามชื่อ แสดงรายการล่าสุดด้วยคำ "เลือกจากรายการล่าสุดได้เลยค่ะ" (ไม่พูดว่าไม่พบ — รอบ 22)
 - ใบเตรียมจ่าย: `q` ของ `listForLine`
 
 ### 6.2 ตาราง metric ของงาน (migration additive)
@@ -263,10 +263,10 @@ model LineWebhookEventLog {
 
 - **authority kind ใหม่** `'webhook_classify'` (abb:228+); parent = แถว `LineWebhookEventLog` เดียวกัน คอลัมน์ `classifyAuthorityJson/Revision`; `bas` เลือกคอลัมน์ตาม kind ทุกจุด (`parent()` :81–86, `issue` :124–178, `validate` :180–197, `resolvePrivateOwner` :199+, `reserve` :305–363)
 - `issue`: owner PRIVATE, `allowedProfileIds = ['line-classify/2']`, `maxTurnSlots = 2` (parser รับอยู่แล้ว abb:313), lane ใหม่ `classify` ใน `baseCeilings` (bas:45) = 8,000 ms, `attemptKey = deliveryHash(['line-classify-v2', webhookEventId])`; `narrow`/`transferToDocumentQa` ปฏิเสธ kind นี้
-- **profile ใหม่** `'line-classify/2': { maxInputTokens: 24_576, maxOutputTokens: 1_024, maxCalls: 1 }` (abb:216–219); `profileCounts` (bas:344) ทำให้เรียกได้ครั้งเดียว; digest ของตารางเปลี่ยน → release เดียว API/gateway/AgentCore
+- **profile ใหม่** `'line-classify/2': { maxInputTokens: 24_576, maxOutputTokens: 1_024, maxCalls: 2 }` (abb:216–219; รอบ 22 เพิ่มจาก 1 เพื่อยิงซ้ำหนึ่งครั้ง); `profileCounts` (bas:344) จำกัดไม่เกินสองครั้ง; digest ของตารางเปลี่ยน → release เดียว API/gateway/AgentCore
 - ขนาดจาก estimator จริง (abp:126–162): พรอมต์ ≤ 8,000 ไบต์ + ข้อความ ≤ 1,000 หน่วย UTF-16 (ไทย ≈ 3,000 ไบต์) + framing ≈ 300 + schema ≈ 1,700 → ≈ 13,000 + 4,096 → ปัด 1,024 = 17,408 ≤ 24,576; spec test ยืนยัน
 - **turn grant ไม่เปลี่ยน**: Tier 2 ใช้ turn grant ของ event (`prepareTextGrantV2` pwu:4436–4455) ordinal 0 ใน request ของ intake; ฟังก์ชัน slot (abb:339–351), `narrow` slot (bas:293), planner limit (stv2:727), QA (`apps/ai-gateway/src/modules/line-ai/application/document-qa.use-case.ts:97`), orchestrator (`orchestrator.agent.ts:1210`), AgentCore (`apps/ai-gateway/src/agentcore/runtime.ts:732`) คงเดิม (regression test)
-- **deadline**: turn grant ยังนับจาก `admittedAtMs` (pwu:4450) + 40,000 ms ของ lane `public` (pwu:4451, bas:45) เหมือนเดิม — เวลาที่ classifier ใช้ (≤ 4 วินาที) หักจากงบนี้ ไม่ขยาย; ผลคือ Tier 2 หลัง fallback ไม่ช้ากว่าเพดานเดิมของวันนี้ แต่ไม่อยู่ใต้ 15 วินาที (AC14)
+- **deadline**: turn grant ยังนับจาก `admittedAtMs` (pwu:4450) + 40,000 ms ของ lane `public` (pwu:4451, bas:45) เหมือนเดิม — เวลาที่ classifier ใช้ (≤ 5 วินาที รวมการยิงซ้ำ) หักจากงบนี้ ไม่ขยาย; ผลคือ Tier 2 หลัง fallback ไม่ช้ากว่าเพดานเดิมของวันนี้ แต่ไม่อยู่ใต้ 15 วินาที (AC14)
 - การตัดสินเก็บใน `classifyAuthorityJson.decision`: event ที่เล่นซ้ำใช้ผลเดิม ไม่จ่ายซ้ำ; authority ใช้แล้วไม่มี decision → Tier 2
 - ประตูเครดิต: การจองของ classifier ตรวจเครดิตเหมือน intake วันนี้; ปฏิเสธด้วยเหตุเครดิต → `answerAiCreditRefusal` (pwu:7060)
 
@@ -332,7 +332,8 @@ schema (ทุก field required, `additionalProperties: false`, ไม่มี
 - ตรวจ (ใน `acceptOutput` ก่อน settle — R12): `0 ≤ second_confidence ≤ confidence ≤ 1`, `ordinal` 0–9, span ทุกช่องเป็นสตริงย่อยของข้อความจริง (ไม่ใช่ → ค่าว่าง ไม่ทำให้ทั้งผลตก), `amount_text`/`date_text` ต้องตรง span ของ candidate จาก `extractValueCandidatesV2` (ไม่ตรง → ค่าว่าง), label นอก enum → ตก; `second_label` = `label` → ทำให้เป็น `second_label: 'none'`, `second_confidence: 0` ก่อนใช้ R9 และ §7.2.1 (เก็บทั้งค่าดิบและค่าหลังทำให้เป็นมาตรฐานใน decision); enum ตายตัวทุก tenant; งานนอก enum (คู่ค้า พนักงาน สาขา แพ็กเกจ แก้ใบเบิก) → `open`
 - พรอมต์ระบบ ≥ 4,000 ตัวอักษร และ ≤ 8,000 ไบต์ UTF-8: นิยาม label + ตัวอย่างสั้น + `LINE_AI_THAI_BUSINESS_GLOSSARY` (ira:52–56); `maxTokens` 256; usageTag `line.workflow-classify`; ไม่มี repair
 - thinking/effort: Sonnet 4.6 ไม่เปิด thinking เมื่อไม่ส่งพารามิเตอร์ (ทั้ง Converse และ Messages API); Haiku 5.5 เปิด adaptive thinking เป็นค่าตั้งต้น → classifier ส่ง `thinking: { type: 'disabled' }` + `output_config: { effort: 'low' }` (ชื่อของ Messages API; ปิด thinking ได้เมื่อ effort ≤ high — R19) ผ่าน `additionalModelRequestFields` ของ Converse (ชื่อบน Bedrock ยืนยันตอน probe — §17.1 MC5); **Phase C วัดและปล่อยบน Bedrock เท่านั้น** เพราะ `provider.factory.ts:52–54` เลือก `AnthropicApiProvider` เมื่อมี `anthropicApiKey` และคำขอของ provider นั้นไม่ปิด thinking (measurement M-R2); ถ้าเกิดบนเครื่องแล้วโทเคนหมดที่ thinking → `output_limit` → absorbed + Tier 2 (R12)
-- timeout 4,000 ms (หรือเหลือของ work deadline ของ classify grant) ผ่าน `deadlineAt`/`AbortSignal` เดิม; หมดเวลา/ตก → Tier 2 (absorbed)
+- timeout 5,000 ms (หรือเหลือของ work deadline ของ classify grant) ผ่าน `deadlineAt`/`AbortSignal` เดิม; หมดเวลา/ตก → Tier 2 (absorbed)
+- **ยิงซ้ำ (รอบ 22):** ถ้าครั้งแรกยังไม่ตอบใน 2,200 ms ส่งคำขอเดิมอีกหนึ่งครั้ง (call index 1 ผ่าน `budget-step` ของตัวเอง) คำตอบแรกที่ผ่าน `acceptOutput` ใช้ อีกครั้งถูกยกเลิก; ครั้งที่ยกเลิกหรือล้มเหลว บริษัทรับเอง ลูกค้าจ่ายไม่เกินหนึ่งครั้ง; ไม่ยิงซ้ำเมื่อครั้งแรกล้มเร็ว เวลาเหลือน้อยกว่าราว 1.5 วินาที หรือ budget ปฏิเสธ; คำขอที่ได้ admission แล้วแต่ไม่ได้ส่งถึง provider ต้อง settle เป็นศูนย์ (ไม่ทิ้ง hold `DISPATCHED`) — ที่มา: v13 มี 3 ใน 80 ครั้งที่ค้างถึงเพดาน ทั้งที่ครั้งอื่นตอบภายใน 2.6 วินาที
 - ประมาณราคา (คำนวณ, FX 33): Sonnet 4.6 อุ่น (2,500 cache read + 300 in + 100 out) ≈ 0.00315 USD ≈ **0.10 บาท**; เย็น (2,500 cache write 3.75) ≈ 0.011775 USD ≈ **0.39 บาท**; Haiku 5.5 อุ่น (cache read 0.01) ≈ 0.000105 USD ≈ **0.35 สตางค์** → ลงบัญชี **0 สตางค์**; เย็น (cache write 0.125) ≈ 0.0003925 USD ≈ **1.30 สตางค์** (1.29525) → ลงบัญชี **1 สตางค์** — ยอดรวมต่อการเรียกปัด ROUND_HALF_UP เป็นสตางค์เต็ม (ai-model-pricing.ts:223) จึงเป็น 0 เฉพาะเมื่อต่ำกว่า 0.5 สตางค์; รายงานต้นทุนใช้ค่าไม่ปัดแยก (measurement spec M-R3, §6.5)
 
 #### 7.2.1 เมื่อความมั่นใจไม่ผ่าน R9
@@ -590,9 +591,9 @@ assertion ใหม่ของ API ทั้งหมดอยู่ในไ�
 ## 16. Risks/rollout
 
 - schema enforcement เป็นเงื่อนไขปล่อย Tier 1 (probe; ไม่ได้ทั้งสองทาง = ไม่ปล่อย Tier 1)
-- grammar compile หลังหมดอายุอาจนานหลายนาที → timeout 4 วินาที → Tier 2 (absorbed); W14 ใน telemetry
+- grammar compile หลังหมดอายุอาจนานหลายนาที → timeout 5 วินาที (ยิงซ้ำที่ 2.2 วินาที) → Tier 2 (absorbed); W14 ใน telemetry
 - classifier ผิด → ได้ตัวเลือก/preview ไม่มีการเขียน (R4)
-- ข้อความเปิดเสีย classifier ~0.10–0.39 บาทและ ≤ 4 วินาที → ประตู W13
+- ข้อความเปิดเสีย classifier ~0.10–0.39 บาทและ ≤ 5 วินาที (ยิงซ้ำเฉพาะส่วนหางที่ช้า) → ประตู W13
 - B6 fix ลดรายได้เครดิตจากการเรียกที่ล้ม (ตามกติกา Owner) — แจ้งในสรุป release
 - action ใบเบิกที่ workflow เปิด ถ้าผู้ใช้พิมพ์งานใบเบิกอื่นไปทาง Tier 2 ระหว่างนั้น planner เดิมจะได้ `FINANCIAL_ACTION_SELECTION_REQUIRED` (rda:369–370) — ยอมรับ; workflow ทำต่อ action เดิมด้วยปุ่ม
 - ปุ่มเก่าแบบข้อความในประวัติแชต → parser รับ label เดิม (R3)

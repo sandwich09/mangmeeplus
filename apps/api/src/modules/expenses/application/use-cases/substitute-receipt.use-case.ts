@@ -109,6 +109,19 @@ function assertSubstitutePreparationAccess(ctx: RequestContext, expense: Pick<Ex
   if (scope.createdByUserId && expense.createdByUserId !== scope.createdByUserId) throw new ForbiddenException('Missing permission: expense.review');
 }
 
+/** The same preparation boundary serves web and LINE, including creator and branch scope. */
+export function canPrepareSubstituteReceipt(ctx: RequestContext, expense?: Pick<ExpenseRecordWithRelations, 'createdByUserId' | 'branchId'>): boolean {
+  if (ctx.freeExpenseDrafts) return false;
+  try {
+    if (expense) assertSubstitutePreparationAccess(ctx, expense);
+    else substituteReceiptPreparationScope(ctx);
+    return true;
+  } catch (error) {
+    if (!(error instanceof ForbiddenException)) throw error;
+    return false;
+  }
+}
+
 function assertBranch(ctx: RequestContext, branchId: string | null): void {
   if (!isBranchInScope(ctx.scopes ?? {}, branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
 }
@@ -713,11 +726,10 @@ export class PrepareSubstituteReceiptUseCase {
   private async prepare(ctx: RequestContext, expenseId: string, input: GenerateSubstituteReceiptInput,
     amendment?: { evidenceId: string; expectedUpdatedAt: Date; keepDocumentNumberConfirmed?: boolean; previousPaymentDate?: string }): Promise<SubstituteReceiptEvidenceSummary> {
     // R7: preparing is the one substitute-receipt step LINE may take. It writes staged facts and
-    // reserves a document number; it embeds no signature and grants no approval. The three gates
-    // keep their existing review and branch checks on LINE. Web also permits the readable creator
-    // to prepare; payer identity and signature authority are unchanged. Preview/certify/approve/download keep `assertWeb` (§16 last bullet).
+    // reserves a document number. LINE and web share the preparation scope and branch checks.
+    // Preview/certify/approve/download keep `assertWeb` (§16 last bullet).
     const preparedFromChannel = ctx.authProvider === 'line' ? 'LINE' : 'WEB';
-    if (ctx.authProvider === 'line' && !ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
+    if (ctx.authProvider === 'line' && !canPrepareSubstituteReceipt(ctx)) throw new ForbiddenException('Missing permission: expense.review');
     substituteReceiptPreparationScope(ctx);
     if (!['COMPANY', 'PERSONAL_ADVANCE'].includes(input.fundingSource)) throw new BadRequestException({ code: 'substitute_funding_source_required', message: 'เลือกบริษัทจ่ายเต็มจำนวนหรือพนักงานสำรองจ่ายเต็มจำนวน' });
     if (input.paidInFullAcknowledged !== true) throw new BadRequestException({ code: 'substitute_full_payment_required', message: 'ยืนยันว่าจ่ายเต็มจำนวนจากแหล่งเงินเดียวแล้ว' });

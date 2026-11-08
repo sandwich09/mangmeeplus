@@ -2273,11 +2273,13 @@ export type ReimbursementClaimFormPreview = {
 
 export type ReimbursementAiSummaryItem = { requestNo: string | null; title: string | null; requesterDisplayName: string | null; amount: string };
 
-export type ReimbursementAiReadFilters = { requesterName?: string; categoryName?: string; round?: string; status?: ReimbursementRequestStatus | 'APPROVED_UNPAID'; paymentStatus?: string };
+export type ReimbursementAiReadFilters = { requester?: 'me'; amountGt?: string; amountGte?: string; amountLt?: string; amountLte?: string; requesterName?: string; categoryName?: string; round?: string; status?: ReimbursementRequestStatus | 'APPROVED_UNPAID'; paymentStatus?: string };
 
 export type ReimbursementAiSummary = {
+  appliedFilters?: ReimbursementAiReadFilters;
+  matchedTotalsByCurrency?: Array<{ currency: string; amount: string }>;
   matchedCount?: number;
-  matchedItems?: Array<ReimbursementAiSummaryItem & { id: string; status: string }>;
+  matchedItems?: Array<ReimbursementAiSummaryItem & { id: string; status: string; currency?: string }>;
   pendingApprovalCount: number;
   unpaidApprovedCount: number;
   overdueApprovalCount: number;

@@ -26,7 +26,11 @@ export class GetReimbursementAiSummaryUseCase {
     const canReadRelated = ctx.permissions.includes('reimbursement.read_related');
     if (!canReadAll && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read reimbursements');
 
-    const requesterUserId = canReadAll || canReadRelated ? undefined : ctx.userId;
+    if (filters.requester !== undefined && filters.requester !== 'me') throw new BadRequestException('ระบุผู้เบิกเป็นตัวเอง');
+    for (const key of ['amountGt', 'amountGte', 'amountLt', 'amountLte'] as const) {
+      if (filters[key] !== undefined && (typeof filters[key] !== 'string' || !/^\d+(?:\.\d{1,2})?$/u.test(filters[key]!))) throw new BadRequestException('ระบุยอดเงินเป็นตัวเลขไม่เกินสองตำแหน่ง');
+    }
+    const requesterUserId = filters.requester === 'me' || !canReadAll && !canReadRelated ? ctx.userId : undefined;
     const relatedUserId = !canReadAll && canReadRelated ? ctx.userId : undefined;
     const currentPolicy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
     const approvedUnpaid = filters.status === 'APPROVED_UNPAID';
@@ -42,6 +46,10 @@ export class GetReimbursementAiSummaryUseCase {
       paymentStatus: filters.paymentStatus,
     });
     const all = scoped.filter(row => (!approvedUnpaid || row.paymentStatus !== 'PAID')
+      && (filters.amountGt === undefined || d(row.amount).gt(d(filters.amountGt)))
+      && (filters.amountGte === undefined || d(row.amount).gte(d(filters.amountGte)))
+      && (filters.amountLt === undefined || d(row.amount).lt(d(filters.amountLt)))
+      && (filters.amountLte === undefined || d(row.amount).lte(d(filters.amountLte)))
       && (!filters.round || new RegExp(`รอบ\\s*(?:ที่\\s*)?${filters.round}(?![0-9])`, 'u').test(`${row.title ?? ''} ${row.reason}`)));
     const now = new Date();
 
@@ -82,9 +90,13 @@ export class GetReimbursementAiSummaryUseCase {
       targetType: 'reimbursement_summary', requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
     });
 
+    const matchedTotals = new Map<string, Money>();
+    for (const row of all) addMoney(matchedTotals, row.currency, row.amount);
     return {
-      ...(Object.values(filters).some(value => value !== undefined) ? { matchedCount: all.length,
-        matchedItems: all.slice(0, 5).map(row => ({ ...item(row, decStr(d(row.amount))), id: row.id, status: row.status })) } : {}),
+      appliedFilters: { ...filters },
+      matchedTotalsByCurrency: moneyList(matchedTotals),
+      matchedCount: all.length,
+      matchedItems: all.slice(0, 5).map(row => ({ ...item(row, decStr(d(row.amount))), id: row.id, status: row.status, currency: row.currency })),
       pendingApprovalCount: pendingApproval,
       unpaidApprovedCount: unpaidApproved,
       overdueApprovalCount: overdueApproval,

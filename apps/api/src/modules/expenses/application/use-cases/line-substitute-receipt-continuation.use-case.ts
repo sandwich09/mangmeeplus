@@ -11,7 +11,7 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-mo
 import { isAutoMissingReceiptReason } from '../../domain/logic/expense-document.logic';
 import { substituteWetSignedScanRejection } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
-import { collectSubstituteReceiptEligibilityIssues, PrepareSubstituteReceiptUseCase } from './substitute-receipt.use-case';
+import { canPrepareSubstituteReceipt, collectSubstituteReceiptEligibilityIssues, PrepareSubstituteReceiptUseCase } from './substitute-receipt.use-case';
 import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 import { maySubmitSignature } from './signature-asset.use-case';
 // LINE renders a bare `/companies/...` as plain text, so these sites shipped an untappable string.
@@ -549,7 +549,7 @@ function preflight(
   routeCheckBill = false,
 ): LineSubstituteReceiptBlocker[] {
   const result: LineSubstituteReceiptBlocker[] = [];
-  if (!ctx.permissions.includes('expense.review')) result.push(blocker('expense_review_forbidden', 'ไม่มีสิทธิ์ตรวจทานเพื่อจัดทำใบรับรองแทนใบเสร็จรับเงิน'));
+  if (!canPrepareSubstituteReceipt(ctx, expense)) result.push(blocker('expense_review_forbidden', 'ไม่มีสิทธิ์ตรวจทานเพื่อจัดทำใบรับรองแทนใบเสร็จรับเงิน'));
   // Eligibility reads an effective expense containing the validated category proposal.
   result.push(...collectSubstituteReceiptEligibilityIssues(expense, values.reasonCode, { routeCheckBill })
     .map((issue) => blocker(issue.code, issue.message, issue.code === CATEGORY_BLOCKER)));
@@ -1362,10 +1362,10 @@ export class LineSubstituteReceiptContinuationUseCase {
 
   /** Re-read only the sources used by this reply; never run a workflow again to validate it. */
   async replySourcesCurrent(ctx: RequestContext, source: LineSubstituteReplySource | undefined): Promise<boolean> {
-    if (!source || source.records.length > 5 || !ctx.permissions.includes('expense.review')) return false;
+    if (!source || source.records.length > 5 || !canPrepareSubstituteReceipt(ctx)) return false;
     for (const proof of source.records) {
       const expense = await this.repo.findByIdWithRelations(ctx.companyId, proof.id, undefined, ctx.scopes ?? {});
-      if (!expense || expense.id !== proof.id || expense.companyId !== ctx.companyId || expense.updatedAt.toISOString() !== proof.revision
+      if (!expense || !canPrepareSubstituteReceipt(ctx, expense) || expense.id !== proof.id || expense.companyId !== ctx.companyId || expense.updatedAt.toISOString() !== proof.revision
         || sourceHash(expense.substituteReceiptEvidence) !== proof.evidenceHash
         || sourceHash(attachmentSource(expense)) !== proof.attachmentsHash) return false;
     }
@@ -1395,7 +1395,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     input = { ...input, language };
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, input.expenseId, undefined, ctx.scopes ?? {});
     if (!expense) throw new NotFoundException('Check-bill expense not found.');
-    if (!ctx.permissions.includes('expense.review')) {
+    if (!canPrepareSubstituteReceipt(ctx, expense)) {
       return {
         handled: true, status: 'FORBIDDEN', expenseId: expense.id, acceptedFields: [], blockers: [],
         replyText: formatStandalone({ language,
@@ -1433,11 +1433,16 @@ export class LineSubstituteReceiptContinuationUseCase {
   /** R14/§11: the open substitute work an arriving photo could belong to. `undefined` means this
    *  chat has none, and the media turn must behave exactly as it did before this existed. */
   async loadOpenMediaContext(ctx: RequestContext, chatKeyHash: string, language: 'th' | 'en' = 'th'): Promise<LineSubstituteMediaContext | undefined> {
-    if (!ctx.permissions.includes('expense.review')) return undefined;
+    if (!canPrepareSubstituteReceipt(ctx)) return undefined;
     const rows = await this.repo.listLineSubstituteContinuationRows({
       companyId: ctx.companyId, userId: ctx.userId, chatKeyHash, scopes: ctx.scopes ?? {}, take: 5,
     });
-    const states = rows.map((row) => stateFromMetadata(row.sourceChannelMetadataJson))
+    const scopedStates = [];
+    for (const row of rows) {
+      const expense = await this.repo.findByIdWithRelations(ctx.companyId, row.id, undefined, ctx.scopes ?? {});
+      if (expense && canPrepareSubstituteReceipt(ctx, expense)) scopedStates.push(stateFromMetadata(row.sourceChannelMetadataJson));
+    }
+    const states = scopedStates
       .filter((state): state is LineSubstituteReceiptContinuation => !!state);
     if (!states.length) return undefined;
     // The state that asked for a form is CONSUMED by the prepare, so every status is read here —
@@ -1517,14 +1522,17 @@ export class LineSubstituteReceiptContinuationUseCase {
 
   /** Resolve the pending workflow in this chat through the same scoped repository as continuation. */
   async pendingIssueDecisionExpenseId(ctx: RequestContext, chatKeyHash: string): Promise<string | undefined> {
-    if (!ctx.permissions.includes('expense.review')) return undefined;
+    if (!canPrepareSubstituteReceipt(ctx)) return undefined;
     const rows = await this.repo.listLineSubstituteContinuationRows({
       companyId: ctx.companyId, userId: ctx.userId, chatKeyHash, scopes: ctx.scopes ?? {}, take: 5,
     });
-    return rows.find((row) => {
+    for (const row of rows) {
       const state = stateFromMetadata(row.sourceChannelMetadataJson);
-      return !!state && ACTIVE_STATUSES.has(state.status) && state.pendingDecision === 'ISSUE_CONFIRM';
-    })?.id;
+      if (!state || !ACTIVE_STATUSES.has(state.status) || state.pendingDecision !== 'ISSUE_CONFIRM') continue;
+      const expense = await this.repo.findByIdWithRelations(ctx.companyId, row.id, undefined, ctx.scopes ?? {});
+      if (expense && canPrepareSubstituteReceipt(ctx, expense)) return row.id;
+    }
+    return undefined;
   }
 
   async hasPendingIssueDecision(ctx: RequestContext, chatKeyHash: string): Promise<boolean> {
@@ -1633,9 +1641,9 @@ export class LineSubstituteReceiptContinuationUseCase {
 
   async loadForWeb(ctx: RequestContext, expenseId: string, workflowId: string): Promise<LineSubstituteReceiptPrefill> {
     if (ctx.authProvider === 'line') throw new ForbiddenException('Open this continuation in the authenticated web app.');
-    if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
     if (!expense) throw new NotFoundException('Substitute-receipt continuation not found.');
+    if (!canPrepareSubstituteReceipt(ctx, expense)) throw new ForbiddenException('Missing permission: expense.review');
     const state = stateFromMetadata(expense.sourceChannelMetadataJson);
     if (!state || state.workflowId !== workflowId || state.expenseId !== expense.id
       || state.companyId !== ctx.companyId || state.userId !== ctx.userId
@@ -1699,7 +1707,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     const language = input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th');
     input = { ...input, language };
     // R3: the permission a link needs is checked before any target is discovered, so no link is offered.
-    if (!ctx.permissions.includes('expense.review')) {
+    if (!canPrepareSubstituteReceipt(ctx)) {
       return {
         handled: true, status: 'FORBIDDEN', acceptedFields: [],
         badge: substituteReceiptBadge({ language, status: 'FORBIDDEN' }),
@@ -1710,10 +1718,25 @@ export class LineSubstituteReceiptContinuationUseCase {
         }),
       };
     }
+    for (const candidate of input.recentCandidates) {
+      const expense = await this.repo.findByIdWithRelations(ctx.companyId, candidate.id, undefined, ctx.scopes ?? {});
+      if (expense && !canPrepareSubstituteReceipt(ctx, expense)) return {
+        handled: true, status: 'FORBIDDEN', acceptedFields: [],
+        badge: substituteReceiptBadge({ language, status: 'FORBIDDEN' }),
+        blockers: [blocker('expense_review_forbidden', 'ไม่มีสิทธิ์จัดทำใบรับรองให้รายการนี้')],
+        replyText: language === 'en' ? 'You cannot prepare this expense; ask its recorder or an authorized reviewer.'
+          : 'คุณยังไม่มีสิทธิ์ทำใบรับรองให้รายการนี้ ให้ผู้บันทึกหรือผู้มีสิทธิ์ตรวจทานทำให้ค่ะ',
+      };
+    }
     const rows = await this.repo.listLineSubstituteContinuationRows({
       companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: input.chatKeyHash, scopes: ctx.scopes ?? {}, take: 5,
     });
-    const states = rows
+    const permittedRows = [];
+    for (const row of rows) {
+      const expense = await this.repo.findByIdWithRelations(ctx.companyId, row.id, undefined, ctx.scopes ?? {});
+      if (!expense || canPrepareSubstituteReceipt(ctx, expense)) permittedRows.push(row);
+    }
+    const states = permittedRows
       .map((row) => ({ row, state: stateFromMetadata(row.sourceChannelMetadataJson) }))
       .filter((item): item is { row: typeof rows[number]; state: LineSubstituteReceiptContinuation } =>
         !!item.state && ACTIVE_STATUSES.has(item.state.status));
@@ -2412,9 +2435,8 @@ export class LineSubstituteReceiptContinuationUseCase {
         if (!updated || updated.updatedAt.getTime() !== saved.updatedAt.getTime()) throw new ConflictException('Expense changed after category confirmation');
         expense = updated;
       }
-      // This path is reached only after an explicit, revision-bound ISSUE/FORM answer.
-      // Use the same permission-checked review use case as the web; a chat capture is not a review.
-      const reviewResult = await this.review.execute(ctx, expense.id, {
+      // Reviewers keep their review step. Creators prepare through the same own-record scope as the web.
+      const reviewResult = ctx.permissions.includes('expense.review') ? await this.review.execute(ctx, expense.id, {
         expectedUpdatedAt: expense.updatedAt.toISOString(),
         // Paid check-bill continuation is an explicit user decision, still requiring
         // separate payment proof in preflight/prepare. OCR alone cannot take this route.
@@ -2428,7 +2450,7 @@ export class LineSubstituteReceiptContinuationUseCase {
           reason: values.missingReceiptReason ?? storedMissingReceiptReason(expense) ?? '',
         },
         documentReviewAcknowledged: true,
-      }, { requireExpectedUpdatedAt: true });
+      }, { requireExpectedUpdatedAt: true }) : expense;
       const reviewed = await this.repo.findByIdWithRelations(ctx.companyId, expense.id);
       if (!reviewed) throw new NotFoundException();
       if (reviewed.updatedAt.getTime() !== reviewResult.updatedAt.getTime()) throw new ConflictException('Expense changed after review');

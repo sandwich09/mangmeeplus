@@ -9,7 +9,7 @@ import { lineReplyLanguage } from '@watchdog-bms/contracts';
  * back to the deterministic text when the model is unavailable or breaks grounding.
  */
 import type { AgentIntentPlan, SpecialistOutput, SourceRef, LineAiWebLink, LineAiConversationContext, LineAiValueCandidates, LineAiResponsePreferences, LineCapabilityGroupId } from '@watchdog-bms/contracts';
-import { LINE_CAPABILITY_NO_ACCESS_TH, LINE_FEATURE_DISABLED_HELP_TH, LINE_CAPABILITY_GROUPS, LINE_TOOL_REGISTRY, canAdvertiseReceiptCapture, hasToolFeature, hasToolPermissions, usableCapabilityGroupIds, toolFeatureKeys } from '@watchdog-bms/contracts';
+import { LINE_CAPABILITY_NO_ACCESS_TH, LINE_FEATURE_DISABLED_HELP_TH, LINE_CAPABILITY_GROUPS, LINE_TOOL_REGISTRY, MENU_ENTITLEMENT_BINDINGS, inCapabilityGroup, canAdvertiseReceiptCapture, hasToolFeature, hasToolPermissions, usableCapabilityGroupIds, toolFeatureKeys, type ToolMeta } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
 import { MANGMEE_PERSONA_PROMPT, sanitizeMangmeeComposedText, shortLineKnowledgeText } from './mangmee-persona';
@@ -306,6 +306,22 @@ export function buildCapabilityHelp(language: 'th' | 'en', access?: CapabilityAc
     copy.example(copy.groups[groups[0]!].example),
     copy.closing,
   ].join('\n');
+}
+
+/** The existing capability copy, limited to reads actually offered for this turn. */
+export function buildCapabilityReadHelp(language: 'th' | 'en', offered: readonly ToolMeta[], access: CapabilityAccess): string {
+  const reads = offered.filter(tool => ['read_summary', 'read_detail', 'report'].includes(tool.category));
+  const copy = CAPABILITY_COPY[language];
+  const { groups } = usableAccess(access);
+  const lines = LINE_CAPABILITY_GROUPS.filter(group => groups.includes(group.id) && reads.some(tool => inCapabilityGroup(tool, group))).map(group => {
+    const claimsOnly = group.id === 'expenses' && reads.filter(tool => inCapabilityGroup(tool, group))
+      .every(tool => tool.sourceModule === 'reimbursements');
+    const label = claimsOnly ? language === 'en' ? 'Claims'
+      : MENU_ENTITLEMENT_BINDINGS.find(menu => menu.navKey === 'reimbursements')!.labelTh
+      : copy.groups[group.id].line.replace(/^•\s*/u, '');
+    return `• ${label}`;
+  });
+  return lines.length ? [copy.intro, ...lines].join('\n') : '';
 }
 
 /** The teaching rendering (spec §8.1): same gates, same example questions, numbered steps, the

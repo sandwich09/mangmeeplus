@@ -1280,7 +1280,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'reimbursement.get_summary',
-    description: 'Read a permission-scoped claim summary. Filter requesterName, categoryName, exact round, status or paymentStatus. APPROVED_UNPAID means approved and still awaiting payment. Filtered results include matchedCount and up to five matchedItems.',
+    description: 'requester me = caller. amountGt/Gte/Lt/Lte = >/>=/</<= from amount candidates. APPROVED_UNPAID = approved awaiting payment. Totals cover all matches.',
     businessSubjects: ['reimbursement'],
     questionKinds: ['summary', 'breakdown'],
     category: 'read_summary',
@@ -1290,8 +1290,8 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'cfo', 'general'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['requesterName', 'categoryName', 'round', 'status', 'paymentStatus'],
-    inputEnumValues: { status: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'APPROVED_UNPAID', 'REJECTED', 'CANCELLED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'VOIDED'], paymentStatus: ['UNPAID', 'PARTIALLY_PAID', 'PAID'] },
+    optionalInputFields: ['requester', 'requesterName', 'categoryName', 'round', 'status', 'paymentStatus', 'amountGt', 'amountGte', 'amountLt', 'amountLte'],
+    inputEnumValues: { requester: ['me'], status: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'APPROVED_UNPAID', 'REJECTED', 'CANCELLED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'VOIDED'], paymentStatus: ['UNPAID', 'PARTIALLY_PAID', 'PAID'] },
     inputLengthLimits: { requesterName: { min: 1, max: 80 }, categoryName: { min: 1, max: 80 }, round: { min: 1, max: 4 } },
   },
   {

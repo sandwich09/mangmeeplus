@@ -158,7 +158,7 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
  * "ที่จะ/รอ/ค้าง + verb" or "ที่ … verb ได้" names the job; a bare "ที่ + verb" ("ใบเบิกที่ไม่อนุมัติ") is a state read.
  */
 export function lineWorkflowListOpener(rawText: string): import('@watchdog-bms/contracts').LineWorkflowId | undefined {
-  const text = mapThaiDigits(rawText.trim()).replace(/ใบเบก/gu, 'ใบเบิก');
+  const text = mapThaiDigits(rawText.trim()).replace(/ใบเบก/gu, 'ใบเบิก').replace(/\s*คชจ\.?/gu, 'ค่าใช้จ่าย');
   if (/[?？]|(?<!เ)กี่|เท่าไร|เท่าไหร่|ไหม|มั้ย|อะไร|ใคร|ทำไม|ยังไง|อย่างไร|รึยัง|หรือยัง|เปล่า|สรุป|ยอดรวม/u.test(text)) return;
   if (!/^(?:(?:ช่วย|ขอ|รบกวน)\s*)*(?:เลือก|เปิด|ดู|แสดง|เอา|โชว์)|มาให้(?:ดู|เลือก)/u.test(text)) return;
   const match = /(ใบเบิก|บิล|รายจ่าย|ค่าใช้จ่าย|รายการ|ร่าง)\S*?\s*(ที่\s*จะ|ที่\s*รอ|ที่\s*ค้าง|รอ|ค้าง|ที่)\s*(?:(?:ฉัน|ผม|หนู|เรา|เค้า)\s*)?(ไม่อนุมัติ|อนุมัติ|approve|reject|cancel|submit|void|ยืนยัน|ส่งตรวจ|ส่งอนุมัติ|ส่ง|ลบ|ยกเลิก|ตีกลับ|บันทึกจ่าย|จ่ายคืน|จ่าย)\s*(\S*)/iu.exec(text);
@@ -211,7 +211,7 @@ export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/cont
     ['reimbursement_submit', /ส่งใบเบิก.*อนุมัติ/u], ['reimbursement_cancel', /(?:ยกเลิก|ถอน|ดึงกลับ)ใบเบิก|ใบเบิก.*(?<!ที่|ถูก|โดน)(?:ยกเลิก|ถอน|ดึงกลับ)(?!แล้ว|ไป)/u],
     ['expense_confirm', /ยืนยัน(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u], ['expense_submit', /^(?:(?:อยาก|ขอ|ช่วย)\s*)*(?:ส่งตรวจ|ให้คนตรวจ|ส่งให้ตรวจ)|ส่ง(?:ตรวจ(?:บิล|รายจ่าย|ค่าใช้จ่าย)|(?:บิล|รายจ่าย|ค่าใช้จ่าย).*ให้ตรวจ)/u],
     ['expense_delete', /ลบ(?:ทิ้ง|ร่าง|บิล|รายจ่าย|ค่าใช้จ่าย)|เอาร่าง.*ออก|การ์ดลบ/u], ['expense_void', /^ยกเลิก(?:บิล|รายการ|รายจ่าย|ค่าใช้จ่าย)/u],
-    ['reimbursement_pay', /^(?:บันทึกจ่ายคืน|จ่ายคืนใบเบิก|โอนคืน(?:ผู้เบิก|ใบเบิก))|ใบเบิก.*(?<!ที่|ถูก|ได้รับเงิน)(?:จ่ายคืน|โอนคืน)(?!แล้ว)/u], ['expense_pay', /^(?:บันทึกจ่าย|จ่ายเงิน)|\sบันทึกจ่าย(?:รายจ่าย|ค่าใช้จ่าย|บิล)/u],
+    ['reimbursement_pay', /^(?:บันทึกจ่ายคืน|จ่ายคืนใบเบิก|โอนคืน(?:ผู้เบิก|ใบเบิก))|ใบเบิก.*(?<!ที่|ถูก|ได้รับเงิน|รอ|ค้าง|ไม่|ได้)(?:จ่ายคืน|โอนคืน)(?!แล้ว)/u], ['expense_pay', /^(?:บันทึกจ่าย|จ่ายเงิน)|\sบันทึกจ่าย(?:รายจ่าย|ค่าใช้จ่าย|บิล)/u],
     ['payment_voucher', /^(?:สร้าง|ทำ)ใบเตรียมจ่าย/u], ['substitute_receipt', /^(?:ทำ|สร้าง|เตรียม)?ใบรับรองแทนใบเสร็จ/u],
   ] as Array<[import('@watchdog-bms/contracts').LineWorkflowId, RegExp]>).find(([, pattern]) => pattern.test(text))?.[0];
 }

@@ -2590,3 +2590,16 @@ for (const [context, label] of [[TH, 'ยังไม่มีรูปเอก
     assert.doesNotMatch(JSON.stringify(backlog), /รอตรวจหลักฐาน/u);
   });
 }
+
+it('R22 matched claim answer names the same group and uses the complete currency totals', () => {
+  const output = readOutput('reimbursement.get_summary', {
+    matchedCount: 7, matchedItems: Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, title: 'รอบ 2', amount: '100.00', currency: 'THB', status: 'APPROVED' })),
+    matchedTotalsByCurrency: [{ currency: 'THB', amount: '17000.01' }, { currency: 'USD', amount: '1200.00' }],
+    appliedFilters: { requesterName: 'สมชาย', categoryName: 'ค่าเดินทาง', status: 'APPROVED', round: '2', amountGt: '1000' },
+  }, { module: 'reimbursements', entityType: 'reimbursement_summary', label: 'ใบเบิก', permissionChecked: true });
+  const result = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY, output, { language: 'th', locale: 'th-TH' });
+  assert.equal(result.kind, 'answer');
+  if (result.kind !== 'answer') return;
+  for (const word of ['สมชาย', 'ค่าเดินทาง', 'อนุมัติแล้ว', 'รอบ 2', 'มากกว่า 1,000.00 บาท', '17,000.01 บาท', '1,200.00 USD', '7 ใบ']) assert.ok(result.replyText.includes(word), word);
+  assert.ok(result.layout?.notes?.some(note => note.includes('17,000.01 บาท')));
+});

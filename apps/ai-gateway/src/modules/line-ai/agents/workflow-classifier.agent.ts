@@ -1,6 +1,6 @@
 import { LINE_WORKFLOW_IDS, extractValueCandidatesV2, verifyLineAiInputEvidence,
   type LineWorkflowClassifyRequest, type LineWorkflowClassifyResponse, type LineWorkflowLabel } from '@watchdog-bms/contracts';
-import { drainUsage } from '../../../common/usage/usage-context';
+import { appendUsage, currentBudgetState, currentUsageCompanyId, drainUsage, runWithUsageContext } from '../../../common/usage/usage-context';
 import type { IModelProvider, ProviderOutput } from '../infrastructure/provider/provider.port';
 import { validateProviderStructuredText } from '../infrastructure/provider/provider-output.logic';
 import { LINE_AI_THAI_BUSINESS_GLOSSARY } from './intent-router.agent';
@@ -69,7 +69,8 @@ export type WorkflowClassifierResponse = Exclude<LineWorkflowClassifyResponse, {
   | (Extract<LineWorkflowClassifyResponse, { status: 'CLASSIFIED' }> & { rawDecision: WorkflowClassifierOutput });
 
 export class WorkflowClassifierAgent {
-  constructor(private readonly provider: IModelProvider) {}
+  constructor(private readonly provider: IModelProvider,
+    private readonly timers = { now: () => Date.now(), setTimeout, clearTimeout }) {}
 
   async classify(request: LineWorkflowClassifyRequest): Promise<WorkflowClassifierResponse> {
     const unavailable = (errorCode: string, budgetCode?: string): WorkflowClassifierResponse => ({
@@ -79,18 +80,16 @@ export class WorkflowClassifierAgent {
     const grant = request.budgetGrantV2;
     if (grant.authorityKind !== 'webhook_classify' || grant.allowedProfileIds.length !== 1
       || grant.allowedProfileIds[0] !== 'line-classify/2') return unavailable('AI_CONTRACT_UNSUPPORTED');
-    const deadlineAt = Math.min(Date.now() + 4000, grant.workDeadlineAtMs);
+    const deadlineAt = Math.min(this.timers.now() + 5000, grant.workDeadlineAtMs);
     const evidence = await verifyLineAiInputEvidence(request.inputEvidence, request.messageText);
     if (!evidence) return unavailable('AI_CONTRACT_UNSUPPORTED');
     const today = new Date(grant.admittedAtMs).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
     const candidates = await extractValueCandidatesV2(evidence, today);
     if (!candidates || candidates.completeness !== 'complete') return unavailable('AI_CONTRACT_UNSUPPORTED');
-    if (Date.now() >= deadlineAt) return unavailable('PROVIDER_TIMEOUT');
+    if (this.timers.now() >= deadlineAt) return unavailable('PROVIDER_TIMEOUT');
     let decision: WorkflowClassifierDecision | undefined;
-    let checked = false;
     const acceptOutput = (output: Extract<ProviderOutput, { ok: true }>): boolean => {
-      checked = true;
-      if (Date.now() >= deadlineAt || output.completion === 'output_limit' || output.completion === 'blocked'
+      if (this.timers.now() >= deadlineAt || output.completion === 'output_limit' || output.completion === 'blocked'
         || output.stopReason === 'max_tokens'
         || output.schemaEnforcement !== 'output_config' && output.schemaEnforcement !== 'strict_tool'
         || !validateProviderStructuredText(output.text, WORKFLOW_CLASSIFIER_SCHEMA)) return false;
@@ -109,18 +108,65 @@ export class WorkflowClassifierAgent {
       decision = { raw, normalized, schemaEnforcement: output.schemaEnforcement };
       return true;
     };
-    let result: ProviderOutput;
+    const budget = currentBudgetState();
+    const companyId = currentUsageCompanyId();
+    const controllers: AbortController[] = [];
+    const attempts: Promise<void>[] = [];
+    let running = 0;
+    let finish!: () => void;
+    let result: ProviderOutput = { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'Classifier deadline elapsed.', retryable: false } };
+    const finished = new Promise<void>(resolve => { finish = resolve; });
+    const start = (ordinal: number) => {
+      const controller = new AbortController();
+      controllers.push(controller);
+      running++;
+      // Each hedge owns its positional usage collector and budget-step ordinal. Sharing the
+      // collector would let the sequential provider guard attribute one call's money to another.
+      const attempt = runWithUsageContext({ companyId,
+        budget: budget?.status === 'active-v2' ? { ...budget, calls: ordinal, inFlight: false } : budget }, async () => {
+        let checked = false;
+        const accept = (output: Extract<ProviderOutput, { ok: true }>) => {
+          checked = true;
+          if (decision || !acceptOutput(output)) return false;
+          for (const other of controllers) if (other !== controller) other.abort();
+          return true;
+        };
+        try {
+          const output = await this.provider.generateText({ systemPrompt: WORKFLOW_CLASSIFIER_SYSTEM_PROMPT,
+            messages: [{ role: 'user', text: request.messageText }],
+            outputSchema: { name: 'line_workflow_classifier', schema: WORKFLOW_CLASSIFIER_SCHEMA },
+            maxTokens: 256, usageTag: 'line.workflow-classify', deadlineAt,
+            signal: controller.signal, acceptOutput: accept });
+          if (output.ok && !checked) accept(output);
+          result = output;
+        } catch {
+          result = { ok: false, error: { code: 'PROVIDER_UNKNOWN', message: 'Classifier call failed.', retryable: false } };
+        }
+        return drainUsage();
+      }).then(entries => {
+        for (const entry of entries) appendUsage(entry);
+        running--;
+        if (running === 0) finish();
+      });
+      attempts.push(attempt);
+    };
+    const timeout = this.timers.setTimeout(() => {
+      for (const controller of controllers) controller.abort();
+    }, Math.max(0, deadlineAt - this.timers.now()));
+    start(0);
+    const hedge = this.timers.setTimeout(() => {
+      if (!decision && running > 0 && deadlineAt - this.timers.now() >= 1500) start(1);
+    }, 2200);
     try {
-      result = await this.provider.generateText({ systemPrompt: WORKFLOW_CLASSIFIER_SYSTEM_PROMPT,
-        messages: [{ role: 'user', text: request.messageText }],
-        outputSchema: { name: 'line_workflow_classifier', schema: WORKFLOW_CLASSIFIER_SCHEMA },
-        maxTokens: 256, usageTag: 'line.workflow-classify', deadlineAt,
-        signal: AbortSignal.timeout(Math.max(0, deadlineAt - Date.now())), acceptOutput });
-    } catch { return unavailable('PROVIDER_UNKNOWN'); }
-    if (!result.ok) return unavailable(result.error.code, result.error.budgetCode);
-    if (!checked) acceptOutput(result);
+      await finished;
+      await Promise.all(attempts);
+    } finally {
+      this.timers.clearTimeout(hedge);
+      this.timers.clearTimeout(timeout);
+    }
+    if (!decision && !result.ok) return unavailable(this.timers.now() >= deadlineAt ? 'PROVIDER_TIMEOUT' : result.error.code, result.error.budgetCode);
     const accepted = decision as WorkflowClassifierDecision | undefined;
-    if (!accepted) return unavailable(Date.now() >= deadlineAt ? 'PROVIDER_TIMEOUT' : 'PROVIDER_OUTPUT_INCOMPLETE');
+    if (!accepted) return unavailable(this.timers.now() >= deadlineAt ? 'PROVIDER_TIMEOUT' : 'PROVIDER_OUTPUT_INCOMPLETE');
     const value = accepted.normalized;
     return { status: 'CLASSIFIED', label: value.label, secondLabel: value.second_label,
       confidence: value.confidence, secondConfidence: value.second_confidence,

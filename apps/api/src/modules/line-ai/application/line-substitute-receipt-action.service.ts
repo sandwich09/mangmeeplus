@@ -9,7 +9,7 @@ import { isBranchInScope } from '../../data-model-core/domain/logic/branch.logic
 import { LineDraftPreviewStore } from '../../expenses/application/services/line-draft-preview.store';
 import { PrismaExpenseRepository } from '../../expenses/infrastructure/prisma-expense.repository';
 import { LineSubstituteReceiptContinuationUseCase, substituteReceiptFactLines, type LineSubstituteReceiptContinuation, type LineSubstituteReceiptContinuationResult } from '../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
-import { ListMySubstituteReceiptSignaturesUseCase } from '../../expenses/application/use-cases/substitute-receipt.use-case';
+import { canPrepareSubstituteReceipt, ListMySubstituteReceiptSignaturesUseCase } from '../../expenses/application/use-cases/substitute-receipt.use-case';
 import { SELF_APPROVAL_EXEMPT_ROLES } from '../../procurement/domain/logic/procurement.logic';
 import type { ExpenseRecordWithRelations } from '../../expenses/domain/models/expense.model';
 import type { ExpenseActionControl } from './line-expense-action.service';
@@ -114,7 +114,7 @@ export class LineSubstituteReceiptActionService {
     let label: string;
     let summary: string;
     if (!evidence || evidence.status === 'SUPERSEDED') {
-      if (!ctx.permissions.includes('expense.review') || state?.status !== 'OPEN' || state.pendingDecision !== 'ISSUE_CONFIRM'
+      if (!canPrepareSubstituteReceipt(ctx, expense) || state?.status !== 'OPEN' || state.pendingDecision !== 'ISSUE_CONFIRM'
         || state.userId !== ctx.userId || state.companyId !== ctx.companyId || state.chatKeyHash !== chat
         || state.targetRevision !== expense.updatedAt.toISOString()) return {};
       if (decision === 'ISSUE' && state.signatureRequested && !await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId)) return { reply: en ? 'Please send your signature photo here.' : signatureAsk };
@@ -161,7 +161,7 @@ export class LineSubstituteReceiptActionService {
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, entry.expenseId, undefined, ctx.scopes ?? {});
     if (!expense || expense.updatedAt.toISOString() !== (applied ? entry.applied?.revision : entry.revision)
       || digest(expense, entry.decision) !== (applied ? entry.applied?.digest : entry.digest)) return false;
-    if (entry.action === 'PREPARE') return ctx.permissions.includes('expense.review');
+    if (entry.action === 'PREPARE') return canPrepareSubstituteReceipt(ctx, expense);
     return entry.action === 'WEB_LINK' && (expense.substituteReceiptEvidence?.payerUserId === ctx.userId
       || ctx.permissions.includes('expense.review') || await this.canApprove(ctx, expense));
   }
@@ -210,7 +210,7 @@ export class LineSubstituteReceiptActionService {
       }
       const expense = await this.repo.findByIdWithRelations(ctx.companyId, entry.expenseId, undefined, ctx.scopes ?? {});
       if (!expense || expense.updatedAt.toISOString() !== entry.revision || digest(expense, entry.decision) !== entry.digest) return { reply: language === 'en' ? 'The expense changed; please check the latest details before continuing.' : CHANGED };
-      if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException();
+      if (!canPrepareSubstituteReceipt(ctx, expense)) throw new ForbiddenException();
       const result = await this.continuation.execute(ctx, { language, messageText: entry.decision === 'FORM' ? '2' : '1', confirmedDecision: entry.decision, chatKeyHash: chat,
         recentCandidates: [{ id: expense.id, label: 'รายการนี้' }], boundCandidateExpenseIds: [expense.id], webBaseUrl: this.config.webBaseUrl });
       const reply = result.replyText;

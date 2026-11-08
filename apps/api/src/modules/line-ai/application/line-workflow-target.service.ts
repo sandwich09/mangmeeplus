@@ -169,18 +169,22 @@ export class LineWorkflowTargetService {
       return { rows: list.data, total: list.total };
     });
     const targets: LineWorkflowRecordTarget[] = [];
+    const latestTargets: LineWorkflowRecordTarget[] = [];
     for (const row of result.rows.sort((a, b) => b.expenseDate.getTime() - a.expenseDate.getTime() || b.id.localeCompare(a.id))) {
-      if (snapshotVendor && !snapshotVendorIds.has(row.vendorCounterpartyId ?? '') && !normalizeVendorName(row.vendorNameSnapshot).includes(normalizeVendorName(slots.vendorName).replace(/^(?:ร้าน|ผู้ขาย)/u, ''))) continue;
       if (creatorOnly && row.createdByUserId !== ctx.userId) continue;
       if (action === 'MARK_READY' && validateStatusTransition(row.status, row.status === 'REJECTED' ? 'NEEDS_REVIEW' : 'READY_FOR_CONFIRMATION')) continue;
       if (action === 'DELETE_DRAFT' && (!isExpenseDeletableState(row) || row.hasDeletionBlockingHistory || row.hasRetainedSubstituteReceiptEvidence)) continue;
       if (action !== 'VOUCHER_CREATE' && !await this.actions.permitted(ctx, { expenseId: row.id, createdByUserId: row.createdByUserId, preview: { action } })) continue;
       if (action === 'VOUCHER_CREATE' && (row.reservedByDisbursementVoucherId || Number(row.outstandingAmount) <= 0)) continue;
-      targets.push({ id: row.id, label: row.vendorNameSnapshot || row.expenseNumber || '', currency: row.currency,
+      const target: LineWorkflowRecordTarget = { id: row.id, label: row.vendorNameSnapshot || row.expenseNumber || '', currency: row.currency,
         documentNumbers: [row.expenseNumber, row.vendorDocumentNumber].filter((number): number is string => !!number),
         roundText: [row.vendorNameSnapshot, row.note, row.internalMemo].filter(Boolean).join(' '), revision: row.updatedAt.toISOString(),
-        amount: action === 'RECORD_PAYMENT' ? row.outstandingAmount ?? row.grandTotalAmount : row.grandTotalAmount });
+        amount: action === 'RECORD_PAYMENT' ? row.outstandingAmount ?? row.grandTotalAmount : row.grandTotalAmount };
+      latestTargets.push(target);
+      if (!snapshotVendor || snapshotVendorIds.has(row.vendorCounterpartyId ?? '') || normalizeVendorName(row.vendorNameSnapshot).includes(normalizeVendorName(slots.vendorName).replace(/^(?:ร้าน|ผู้ขาย)/u, ''))) targets.push(target);
     }
+    if (snapshotVendor && !targets.length && ctx.permissions.includes('accounting.counterparty.read') && !snapshotVendorIds.size) return { targets, total: 0, exhaustive: result.exhaustive, sellers: [], sellerSearch: slots.vendorName };
+    if (snapshotVendor && !targets.length && !ctx.permissions.includes('accounting.counterparty.read')) return { targets: latestTargets, total: result.total, exhaustive: result.exhaustive, latestOnly: true };
     return { targets, total: snapshotVendor && result.exhaustive ? targets.length : result.total, exhaustive: result.exhaustive, ...(latestOnly ? { latestOnly } : {}) };
   }
 

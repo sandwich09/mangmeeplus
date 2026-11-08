@@ -115,9 +115,9 @@ test('a repair never spends an answer slot, in every lane where one can precede 
   assert.equal(parseAiBudgetEnvelopeV2(answer(3)), undefined);
 });
 
-test('classify has its own one-call profile and authority without changing turn slots', () => {
+test('classify has its own two-call profile and authority without changing turn slots', () => {
   assert.deepEqual(AI_BUDGET_PROFILES_V2['line-classify/2'], {
-    maxInputTokens: 24_576, maxOutputTokens: 1_024, maxCalls: 1,
+    maxInputTokens: 24_576, maxOutputTokens: 1_024, maxCalls: 2,
   });
   const classified = parseAiBudgetGrantV2({ ...grant(), authorityKind: 'webhook_classify',
     allowedProfileIds: ['line-classify/2'], maxTurnSlots: 2 });

@@ -584,14 +584,21 @@ describe('withAiBudgetEnvelope: v2 budget envelope', () => {
     assert.notEqual(log.inputs[0], input);
   });
 
-  it('does not dispatch if the reservation round trip consumes the remaining work time', async () => {
+  it('R22 ordinary call settles zero usage if admission consumes its remaining work time', async () => {
     const realNow = Date.now; let now = realNow(); Date.now = () => now;
     try {
       const log = trace(), seam = v2Seam(log), original = seam.stepV2!;
+      const settlements: AiUsageEntry[] = [];
+      const settle = seam.settle;
+      seam.settle = async evidence => { settlements.push(structuredClone(evidence.entry)); return settle(evidence); };
       const state = activeV2State(); state.grant = { ...V2_GRANT, workDeadlineAtMs: now + 500, finalDeadlineAtMs: now + 3500 };
       seam.stepV2 = async (invocation, repair) => { const answer = await original(invocation, repair); now += 501; return answer; };
       const result = await runWithUsageContext({ companyId: 'co-1', budget: state }, () => guarded(fakeProvider(log), seam, log).generateText(textInput({ usageTag: 'line.loop', maxTokens: 1024 })));
       assert.equal(result.ok, false); assert.ok(log.events.includes('v2-step:0:false')); assert.equal(log.inputs.length, 0);
+      assert.equal(settlements.length, 1);
+      assert.equal(settlements[0]!.ok, false);
+      assert.deepEqual([settlements[0]!.inputTokens, settlements[0]!.outputTokens, settlements[0]!.cacheReadInputTokens,
+        settlements[0]!.cacheWriteInputTokens, settlements[0]!.externalUnits], [0, 0, 0, 0, 0]);
     } finally { Date.now = realNow; }
   });
 

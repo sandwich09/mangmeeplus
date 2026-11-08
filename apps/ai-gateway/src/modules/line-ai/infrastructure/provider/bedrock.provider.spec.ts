@@ -1569,13 +1569,28 @@ describe('B1 provider output schema', () => {
     assert.equal('schemaEnforcement' in ordinary, false);
   });
 
-  it('refuses Anthropic output schemas when this checkout has no structured-output SDK contract', async () => {
+  it('sends the local API-key transport the same schema as Messages API output_config and checks the reply', async () => {
     const original = globalThis.fetch;
-    globalThis.fetch = async () => { assert.fail('unsupported structured output must fail before dispatch'); };
+    const bodies: any[] = [];
+    const replies = [{ stop_reason: 'end_turn', text: '{"label":"read"}' }, { stop_reason: 'end_turn', text: '{}' }, { stop_reason: 'max_tokens', text: '{"label":"read"}' }];
+    globalThis.fetch = async (_url, init) => { bodies.push(JSON.parse(String(init?.body))); const next = replies.shift()!;
+      return new Response(JSON.stringify({ stop_reason: next.stop_reason, content: [{ type: 'text', text: next.text }], usage: { input_tokens: 1, output_tokens: 1 } })); };
     try {
-      const result = await new AnthropicApiProvider({ apiKey: 'test', modelId: 'test', timeoutMs: 10000 }).generateText({ messages: [], outputSchema } as any);
-      assert.equal(result.ok, false);
-      if (!result.ok) assert.equal(result.error.code, 'PROVIDER_CONTRACT_UNSUPPORTED');
+      const provider = new AnthropicApiProvider({ apiKey: 'test', modelId: 'test', timeoutMs: 10000 });
+      const ok = await provider.generateText({ messages: [{ role: 'user', text: 'ทดสอบ' }], outputSchema } as any);
+      assert.deepEqual(bodies[0].output_config, { format: { type: 'json_schema', schema: outputSchema.schema } });
+      assert.equal(ok.ok, true);
+      if (ok.ok) assert.equal((ok as any).schemaEnforcement, 'output_config');
+      for (const _ of [1, 2]) {
+        const bad = await provider.generateText({ messages: [{ role: 'user', text: 'ทดสอบ' }], outputSchema } as any);
+        assert.equal(bad.ok, false);
+        if (!bad.ok) assert.equal(bad.error.code, 'PROVIDER_OUTPUT_INCOMPLETE');
+      }
+      globalThis.fetch = async (_url, init) => { bodies.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'plain' }], usage: { input_tokens: 1, output_tokens: 1 } })); };
+      const plain = await provider.generateText({ messages: [{ role: 'user', text: 'ทดสอบ' }] });
+      assert.equal('output_config' in bodies.at(-1), false);
+      assert.equal('schemaEnforcement' in plain, false);
     } finally { globalThis.fetch = original; }
   });
 });

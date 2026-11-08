@@ -675,3 +675,46 @@ Blind set v6 is ready: 219 conversations, 644 turns, overlap 0 with every earlie
   - After a side answer, the substitute reminder repeats only the next open detail.
 - **Lexicon diff over 4,995 corpus texts (v1–v12 and tuning):** 2 texts changed, both "เปิดงาน<job>" openers.
 - **Next:** blind set v13 as the gate.
+
+## Blind set v13 and round 22, measured 2026-11-08
+**Blind set v13** ran on main `d3f33d194` (round 21) and cost 138.44 THB on Bedrock. It covered 220 conversations, 628 turns and 326 tasks. MA3/MA6 is **not met**.
+
+| Measure | As run | After the scorer fixes below |
+|---|---|---|
+| Workflow tasks | 198/204 (97.1%) | 198/204 (97.1%) |
+| Advisor tasks | 117/122 | 99/122 |
+| W1 | 340/398 (85.4%) | 363/398 (91.2%) |
+| W2 | 200/204 | 200/204 |
+| W3 | 315/326 (96.6%) | 297/326 (91.1%) |
+| W6 | 0 wrong applied; 6 wrong previews | — |
+| W9 | 0 invalid of 80 classifier calls | — |
+| W14 | 3 timeouts of 80 calls (3.75%) | — |
+| W15 | 0 | — |
+| Plain-text replies outside the locked card | 0 | — |
+| Reply length | p50 170, p95 382, max 543; 17 over 400 | — |
+
+- **Reply time (Bedrock):**
+
+  | Tier | p50 | p95 | Max |
+  |---|---|---|---|
+  | T0 | 1.3 s | 1.5 s | 2.4 s |
+  | T1 | 2.9 s | 3.4 s | 3.5 s |
+  | T2 | 6.1 s | 14.2 s | 26.7 s |
+
+  AC14 is met. 43 turns took over 8 s, almost all general-knowledge answers that run the classifier, the intake route and the compose turn in sequence.
+- **Scorer fixes.**
+  - The measurement spec scores gold `read`/`howto` turns on the advisor path. The product records that path as `open` (or `read` with delivered rows), and the scorer looked only for a kind `advisor`, which is never recorded.
+  - An answer turn that delivers the web exit ("ในแชตยังแสดง/อธิบาย…ไม่ได้") or "ลองส่งข้อความเดิม" is now a dead end. It counted as answered before, which hid 18 unanswered questions.
+- **Causes:**
+
+  | Cause | Effect |
+  |---|---|
+  | **Claim questions ended in the web exit.** The router asked for claim filters that `reimbursement.get_summary` accepts (person + status, category, draft, paid, round). The planner picked `list_pending_approvals` or `get_approval_backlog`, binding failed closed, and the index became `TOOL_INPUT_NOT_AUTHORIZED`. An amount threshold ("over one thousand") was dropped, so one answer listed a claim below it. A person plus a threshold made the router output schema-invalid, and the customer was told to send the message again. | 15 replies in 11 conversations |
+  | **Help questions without a reviewed card got the help exit:** what the assistant can do, where to start, a general receipt-photo question. | 3 replies |
+  | **LINE refused a substitute receipt to the member who recorded the bill.** The continuation required `expense.review`; owner decision ก4 and the web scope allow the recorder (author G2). | 2 tasks |
+  | **A vendor word from a member without `accounting.counterparty.read`, matching none of their bills,** got "not found" instead of the latest records (spec §6.1; author G1). | 2 tasks |
+  | **A short follow-up filter after a claim read was taken as a job,** and a read-only auditor was offered approve/reject buttons. | 2 tasks |
+  | **A named confirmed bill got the void/delete choice.** The reason typed at the choice went to the model, which answered with a dead end. | 1 task |
+  | "คชจ." was not read in a list opener; "ขอดู…ที่ยังรอจ่ายคืนทั้งหมด" opened the repay picker; a "ควร…" knowledge question that named sales got the package refusal. | 1 task each |
+  | **Three classifier calls hit the 4 s deadline** while every other call finished within 2.6 s, and the fallback path made those turns take 12–27 s. | 3 turns |
+- **Transport change.** The owner asked that local exams use his Claude API key, never Bedrock. From v14 on, exams run on the Anthropic API, so their reply times are not production Bedrock times. The API-key provider gains Messages API structured output (`output_config.format`) and strict tools, which the workflow classifier needs.

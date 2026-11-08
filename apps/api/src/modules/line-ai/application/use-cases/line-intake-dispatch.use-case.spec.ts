@@ -6268,3 +6268,25 @@ it('R21 a side question re-asks only the next open substitute detail, not the wh
   assert.match(sent, /ต่อจากเมื่อกี้: ใช้เงินของบริษัทหรือเงินส่วนตัวคะ/);
   assert.doesNotMatch(sent, /ต่อจากเมื่อกี้: ตอบข้อมูลที่ยังขาด|ธุรกิจเรื่องอะไร/);
 });
+
+it('R22 paid STAFF side question retains its own-bill question and typed put-off records DECLINED', async () => {
+  const h = makeHarness({ permissions: ['expense.read_own', 'expense.update', 'line.ai.query', 'ai.tool.invoke'],
+    routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 },
+    openWaiting: [{ id: 'sub-question', question: 'ใช้เงินของบริษัทหรือเงินส่วนตัวคะ', text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ',
+      askedAt: new Date().toISOString(), clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+      entry: { id: 'sub-question', companyId: 'company-1', userId: 'user-1', key: 'lineai:ledger:company-1:line-user-secret', turnId: 'previous', kind: 'sub_request' } }],
+    substituteResult: { handled: true, status: 'PAUSED', expenseId: 'expense-1', replyText: 'พักงานนี้ไว้แล้ว ข้อมูลที่รับไว้ยังอยู่', acceptedFields: [], blockers: [] },
+  });
+  let classifierCalls = 0;
+  (h.useCase as any).aiGateway.requestLineWorkflowClassify = async () => { classifierCalls++; assert.fail('open questions never classify'); };
+  await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ต้องเขียนชื่อคนขายด้วยไหม' });
+  assert.match(JSON.stringify(h.sentMessages), /ต่อจากเมื่อกี้: ใช้เงินของบริษัทหรือเงินส่วนตัวคะ/);
+  assert.equal(h.substituteCalls.length, 0); assert.equal(h.ledgerAcks.length, 0);
+  assert.equal(h.routeRequests.length, 1); assert.equal(h.turnRequests.length, 1);
+  const event = { ...TEXT_EVENT, webhookEventId: 'r22-staff-put-off', lineMessageId: 'r22-staff-put-off', messageText: 'พักไว้ก่อน ขอเช็กอีกที' };
+  await h.useCase.execute(event);
+  assert.equal(h.routeRequests.length, 1); assert.equal(h.turnRequests.length, 1); assert.equal(classifierCalls, 0);
+  assert.equal(h.substituteCalls.length, 1);
+  assert.deepEqual((h.useCase as any).workflowTaskOutcomes.get(event), { kind: 'substitute_receipt', status: 'DECLINED' });
+  assert.deepEqual(h.createExpenseCalls, []); assert.deepEqual(h.updateExpenseCalls, []);
+});

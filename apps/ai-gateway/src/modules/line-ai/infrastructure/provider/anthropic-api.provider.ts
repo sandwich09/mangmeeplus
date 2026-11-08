@@ -6,7 +6,7 @@ import {
   cacheableContextIndex, cacheableContextParts, defaultThrottleSleep, jitteredThrottleBackoffMs, logProviderUsage, toolLoopCachePlan,
 } from './bedrock.provider';
 import { conservativeTimeoutUsage } from './provider-usage-estimate';
-import { validateProviderToolCalls } from './provider-output.logic';
+import { validateProviderStructuredText, validateProviderToolCalls } from './provider-output.logic';
 
 type AnthropicApiProviderConfig = Pick<BedrockProviderConfig, 'modelId' | 'timeoutMs' | 'maxAttempts' | 'sleep'> & { apiKey: string };
 type ApiBlock = { type: string; text?: string; id?: string; name?: string; input?: unknown };
@@ -16,7 +16,7 @@ type ApiResponse = {
   usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
 };
 type ApiMessage = { role: 'user' | 'assistant'; content: Record<string, unknown>[] };
-type ApiRequest = { messages: ApiMessage[]; max_tokens: number; system?: Record<string, unknown>[]; tools?: Record<string, unknown>[] };
+type ApiRequest = { messages: ApiMessage[]; max_tokens: number; system?: Record<string, unknown>[]; tools?: Record<string, unknown>[]; output_config?: Record<string, unknown> };
 
 /** Only the wire ID changes; approval, pricing, and usage retain the original Bedrock ID. */
 export function anthropicModelId(modelId: string): string {
@@ -47,8 +47,6 @@ export class AnthropicApiProvider implements IModelProvider {
   constructor(private readonly cfg: AnthropicApiProviderConfig) {}
 
   async generateText(input: ProviderInput): Promise<ProviderOutput> {
-    // This checkout has no Anthropic SDK structured-output contract to render safely.
-    if (input.outputSchema) return { ok: false, error: { code: 'PROVIDER_CONTRACT_UNSUPPORTED', message: 'Structured output is unsupported by this provider.', retryable: false } };
     const error = precheck(input);
     if (error) return { ok: false, error };
     const contextIndex = cacheableContextIndex(input.messages);
@@ -65,11 +63,15 @@ export class AnthropicApiProvider implements IModelProvider {
       ] })),
       ...(input.systemPrompt ? { system: cachedText(input.systemPrompt) } : {}),
       max_tokens: input.maxTokens ?? 2048,
+      // Messages API structured outputs, the same schema the Bedrock provider sends as Converse outputConfig.
+      ...(input.outputSchema ? { output_config: { format: { type: 'json_schema', schema: input.outputSchema.schema } } } : {}),
     }, input, (response) => {
       const blocks = this.responseBlocks(response, ['end_turn', 'max_tokens']);
       const text = blocks.flatMap((b) => b.type === 'text' && typeof b.text === 'string' && b.text ? [b.text] : []).join('\n');
       if (!text.trim()) throw new ProviderResponseError('PROVIDER_OUTPUT_INCOMPLETE');
-      return { text, completion: response.stop_reason === 'end_turn' ? 'complete' as const : 'output_limit' as const,
+      if (input.outputSchema && (response.stop_reason !== 'end_turn' || !validateProviderStructuredText(text, input.outputSchema.schema)))
+        throw new ProviderResponseError('PROVIDER_OUTPUT_INCOMPLETE');
+      return { text, ...(input.outputSchema ? { schemaEnforcement: 'output_config' as const } : {}), completion: response.stop_reason === 'end_turn' ? 'complete' as const : 'output_limit' as const,
         providerStopReason: response.stop_reason, stopReason: response.stop_reason === 'end_turn' ? 'end_turn' as const : 'max_tokens' as const };
     });
   }
@@ -91,7 +93,7 @@ export class AnthropicApiProvider implements IModelProvider {
         ] };
         return { role: 'user', content: [...lead, { type: 'text', text: m.text }] };
       }),
-      tools: input.tools.map((t) => ({ name: t.name, ...(t.description ? { description: t.description } : {}), input_schema: t.inputSchema })),
+      tools: input.tools.map((t) => ({ name: t.name, ...(t.description ? { description: t.description } : {}), input_schema: t.inputSchema, ...(t.strict ? { strict: true } : {}) })),
       ...(input.systemPrompt ? { system: cachedText(input.systemPrompt) } : {}),
       max_tokens: input.maxTokens ?? 1024,
     };
@@ -112,6 +114,7 @@ export class AnthropicApiProvider implements IModelProvider {
       if (toolCalls.some((c) => !c.toolUseId || !c.name || c.input === undefined)
         || !validateProviderToolCalls(toolCalls, input.tools)) throw new ProviderResponseError('PROVIDER_TOOL_ARGUMENT_INVALID');
       return { text, toolCalls, completion: 'complete' as const, providerStopReason: response.stop_reason,
+        ...(toolCalls.length && toolCalls.every((c) => input.tools.find((t) => t.name === c.name)?.strict === true) ? { schemaEnforcement: 'strict_tool' as const } : {}),
         stopReason: response.stop_reason === 'tool_use' ? 'tool_use' as const : 'end_turn' as const };
     });
   }

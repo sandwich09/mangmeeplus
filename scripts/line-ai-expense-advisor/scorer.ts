@@ -661,7 +661,8 @@ export function scoreWorkflowCorpus(input: {
     const evidence = row.attempt?.turns.find(turn => turn.turnIndex === row.turnIndex);
     if (evidence?.classifier) return evidence.classifier.label === row.turn.expect.label;
     return evidence?.workflowKind === row.turn.expect.label || ['read', 'howto'].includes(row.turn.expect.label ?? '')
-      && ['advisor', 'read', 'howto'].includes(evidence?.workflowKind ?? '');
+      // The product records the advisor path as `open` (or `read` when it delivered source rows); measurement spec W1.
+      && ['advisor', 'open', 'read', 'howto'].includes(evidence?.workflowKind ?? '');
   }).length;
   const W2Tasks = tasks.filter(({ task }) => task.kind !== 'advisor');
   const W2Passed = W2Tasks.filter(({ conversation, task, turns }) => {

@@ -450,3 +450,38 @@ it('R17 a unique named claim uses its permission-checked detail and actual decid
     actedAt: '2026-11-05T03:00:00Z', approverName: 'ผู้ที่เซ็นจริง' }]);
   assert.equal((result.data as any).payments[0].paidAt, '2026-11-06T03:00:00Z');
 });
+
+it('R22 summary narrows me within company, related and own permission scopes', async () => {
+  for (const permission of ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own']) {
+    let query: any;
+    const summary = new GetReimbursementAiSummaryUseCase({ findPolicy: async () => null, listRequests: async (where: any) => { query = where; return []; } } as any, { log: async () => {} } as any);
+    await summary.execute({ companyId: 'co', userId: 'reader', permissions: [permission], scopes: { branchIds: ['branch'] } } as any, { requester: 'me', paymentStatus: 'PAID' } as any);
+    assert.equal(query.requesterUserId, 'reader');
+    assert.deepEqual(query.scopes, { branchIds: ['branch'] });
+    assert.equal(query.relatedUserId, permission === 'reimbursement.read_related' ? 'reader' : undefined);
+  }
+});
+
+it('R22 summary applies strict and inclusive thresholds and totals every currency beyond five shown claims', async () => {
+  const rows = ['611', '1000', '1000.01', '1200', '1300', '1400', '1500', '1600'].map((amount, i) => ({ id: `claim-${i}`, title: 'ค่าเดินทาง รอบ 2', reason: '', requestNo: null,
+    requesterDisplayNameSnapshot: 'สมชาย', amount, currency: i === 7 ? 'USD' : 'THB', status: 'DRAFT', paymentStatus: 'UNPAID', outstandingAmount: amount }));
+  const summary = new GetReimbursementAiSummaryUseCase({ findPolicy: async () => null, listRequests: async () => rows } as any, { log: async () => {} } as any);
+  const context: any = { companyId: 'co', userId: 'reader', permissions: ['reimbursement.read_own'] };
+  for (const [key, count] of [['amountGt', 6], ['amountGte', 7], ['amountLt', 1], ['amountLte', 2]] as const) {
+    const result: any = await summary.execute(context, { [key]: '1000', round: '2' });
+    assert.equal(result.matchedCount, count);
+    assert.equal(result.matchedItems.length, Math.min(count, 5));
+    if (key === 'amountGt') assert.deepEqual(result.matchedTotalsByCurrency, [{ currency: 'THB', amount: '6400.01' }, { currency: 'USD', amount: '1600.00' }]);
+    assert.equal(result.appliedFilters[key], '1000');
+  }
+});
+
+it('R22 standalone round returns all matching claims, and free source-drafts permissions refuse before repository reads', async () => {
+  let reads = 0;
+  const summary = new GetReimbursementAiSummaryUseCase({ findPolicy: async () => null, listRequests: async () => { reads++; return [1, 2].map(id => ({ id: String(id), title: 'ค่าเดินทาง รอบ 2', reason: '', amount: '100', currency: 'THB', status: 'DRAFT' })); } } as any, { log: async () => {} } as any);
+  const result: any = await summary.execute({ companyId: 'co', userId: 'reader', permissions: ['reimbursement.read_own'] } as any, { round: '2' });
+  assert.equal(result.matchedCount, 2);
+  assert.deepEqual(result.matchedTotalsByCurrency, [{ currency: 'THB', amount: '200.00' }]);
+  await assert.rejects(() => summary.execute({ companyId: 'co', userId: 'reader', permissions: ['expense.read'], freeExpenseDrafts: true } as any, { round: '2' }), ForbiddenException);
+  assert.equal(reads, 1);
+});

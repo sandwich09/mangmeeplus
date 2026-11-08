@@ -3,7 +3,7 @@ import { documentAdvisorReadText, productHelpWithData } from './document-advisor
 import { Logger } from '@nestjs/common';
 import { LINE_CHAT_ACTIONS, canUseLineChatAction, lineCustomerWording, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, aiBudgetV2OrdinalCeiling, civilPeriodRange, extractValueCandidatesV2, hasToolPermissions, isCivilPeriodKey, lineAiRetainedTaskSourceText, parseLineAiSemanticCoverage,
   parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, todayCivilDate, unresolvedMonthName,
-  type LineAiAnswerCardLayout, type LineAiPeriodCandidate,
+  type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiPeriodCandidate,
   type LineAiTurnRequest, type LineAiSemanticCoverageV2, type LineAiSourceRefV2, type LineAiValueCandidatesV2,
   type ToolMeta, type ToolResult, type PublicLookupResult, type SourceRef, type SpecialistOutput } from '@watchdog-bms/contracts';
 import type { AgentRunResult } from './agent-types';
@@ -15,13 +15,13 @@ import { LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-mode
 import { approvedKnowledgeFollowUp, productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
 import { activeProductHelpPack, productHelpAction } from './approved-product-help';
 import { ADVISOR_CONVERSATION_GUIDANCE, ADVISOR_TAX_GUIDANCE } from './advisor-domain-guidance';
-import { buildCapabilityHelp, claimsCompletedWrite, groundedNumbers, preservesGrounding, preservesSemanticGrounding, safeModelLineText } from './response-composer.agent';
+import { buildCapabilityHelp, buildCapabilityReadHelp, claimsCompletedWrite, groundedNumbers, preservesGrounding, preservesSemanticGrounding, safeModelLineText } from './response-composer.agent';
 import { BACKLOG_TOOLS, CODED_ONLY_FAMILY_KEYS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, backlogCardText, expenseComparisonCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
 import { draftUpdateCardLayout } from './draft-update-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
 import { MANGMEE_PERSONA_PROMPT, closesWithShopLine, fixMangmeeSelfReference, sanitizeMangmeeComposedText, shapeGeneralAnswer, shortLineKnowledgeText } from './mangmee-persona';
-import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, isExpenseReadReference, misroutedReadTool, myPendingWorkQuestion, resolveExpenseReadReferences, resolvePeriodKeyAlias } from './read-tool-input';
+import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, isExpenseReadReference, misroutedReadTool, myPendingWorkQuestion, resolveExpenseReadReferences, resolveClaimReadFilters, claimReadGroupUnavailable, CLAIM_READ_FILTER_KEYS, CLAIM_AMOUNT_FILTER_KEYS, resolvePeriodKeyAlias } from './read-tool-input';
 import { expenseNameResolutionIssue, expenseNameResolutionReplyText, type ExpenseNameResolutionIssue,
   expensePeriodComparisonSeries, expensePeriodComparisonReplyText, expenseComparisonUnavailableReplyText, aggregationIncomplete,
   expenseBreakdownShares, withAskedVendorRanking, type ExpensePeriodComparisonSeries,
@@ -38,6 +38,21 @@ const logger = new Logger('SemanticTurnV2');
 // The API's menu matcher is API-local; semantic turns use this clause's quoted input evidence.
 export function isCurrentCapabilityQuestion(text: string): boolean {
   return /^(?:(?:น้อง(?:มั่งมี)?|มั่งมี|คุณ|ระบบ)?(?:ทำ(?:อะไร|ไร)ได้(?:บ้าง)?|ช่วย(?:อะไร|ไร)(?:ฉัน|ผม|เรา)?ได้(?:บ้าง)?|มี(?:ความสามารถ|ฟีเจอร์)อะไร(?:บ้าง)?)(?:ครับ|ค่ะ|คะ|นะคะ|หน่อย)?|what\s+can\s+(?:you|u|i|we)\s+(?:do|help(?:\s+me)?\s+with)|what\s+are\s+your\s+(?:capabilities|abilities)|help|capabilities|features)(?:[?？!。.]*)$/iu.test(text.trim().replace(/^(?:แล้ว|งั้น|ละ|so\s+|and\s+)/iu, '').replace(/(?<=[ก-๙])\s+(?=[ก-๙])/gu, ''));
+}
+
+/** Receipt care and record-keeping questions, with product steps deliberately excluded. */
+export function isGeneralBusinessPracticeQuestion(text: string): boolean {
+  if (/เมนู|ปุ่ม|หน้าจอ|เว็บ|ระบบ|แอป|มั่งมี|ตั้งค่า|เพิ่มหมวด|สร้างหมวด|\b(?:app|menu|button|website|system|setup)\b/iu.test(text)) return false;
+  return /(?:ถ่าย(?:รูป|ภาพ)|สแกน).*(?:ใบเสร็จ|บิล).*(?:ชัด|อ่าน|แสง|เงา|เอียง)|(?:ใบเสร็จ|บิล).*(?:ซีด|จาง|กระดาษความร้อน).*(?:เก็บ|รักษา|อ่าน)|(?:ใบเสร็จ|บิล).*(?:เก็บ|รักษา).*(?:อ่านได้นาน|ไม่ซีด|ไม่จาง)|(?:จัดเก็บ|จัดเรียง|จัดหมวดหมู่).*(?:ใบเสร็จ|บิล|เอกสาร).*(?:หา|ค้น|สูญหาย)|แยกเงิน.*(?:ส่วนตัว|ร้าน)|(?:จด|จัด|แยก).*(?:รายรับรายจ่าย|รายรับ.*รายจ่าย).*(?:ยังไง|อย่างไร|เป็นระเบียบ)/u.test(text);
+}
+
+function capabilityHelpScope(text: string): 'reimbursements' | 'all' | undefined {
+  const compact = text.trim().replace(/\s+/gu, '');
+  if (/^(?:(?:น้อง(?:มั่งมี)?|มั่งมี|คุณ)?(?:ช่วย|ทำ)(?:เรื่อง)?(?:ใบเบิก|การเบิกจ่าย)|(?:เรื่อง)?(?:ใบเบิก|การเบิกจ่าย)(?:น้อง(?:มั่งมี)?|มั่งมี|คุณ)?(?:ช่วย|ทำ))(?:อะไร)?(?:ให้)?ได้(?:อะไร)?(?:บ้าง)?(?:คะ|ค่ะ|ครับ|นะคะ)?[?？]*$/u.test(compact)
+    || /^whatcanyou(?:help(?:me)?(?:with|about)?|do(?:with|about|for)?)(?:claims?|reimbursements?)[?？]*$/iu.test(compact)) return 'reimbursements';
+  if (/^(?:(?:เพิ่ง(?:เข้ามา)?(?:ใช้|ใช้งาน)(?:วันแรก|ครั้งแรก)|ใช้งานครั้งแรก|มือใหม่)[,，]*)?(?:ควรทำอะไรก่อน(?:ดี)?|เริ่ม(?:ใช้(?:งาน)?)?(?:ยังไง|อย่างไร|ตรงไหน)(?:ดี)?|เริ่มต้น(?:ใช้(?:งาน)?)?(?:ยังไง|อย่างไร))(?:คะ|ค่ะ|ครับ|นะคะ)?[?？]*$/u.test(compact)
+    || /^(?:wheredoistart|howdoistart|howtostart|gettingstarted)[?？]*$/iu.test(compact)) return 'all';
+  return undefined;
 }
 
 // Spec §8 row 1 ("อ่านข้อมูลไม่ได้ ฝั่งระบบ"): system-side, terminal, no retry invitation, no dead
@@ -343,7 +358,7 @@ function candidateIds(value: unknown, into = new Set<string>()): Set<string> {
 function validInput(meta: ToolMeta, input: unknown, req: LineAiTurnRequest,
   retainedCandidates?: LineAiValueCandidatesV2, readCandidates?: LineAiTurnRequest['valueCandidates'], currentResults: readonly ToolResult[] = []): Record<string, unknown> | undefined {
   if (!object(input) || Buffer.byteLength(JSON.stringify(input)) > 128 * 1024) return undefined;
-  const canonicalInput = canonicalizeReadToolEnums(meta, input, req.messageText);
+  const canonicalInput = canonicalizeReadToolEnums(meta, input, req.messageText, req.conversationContext?.recentReads);
   if (!canonicalInput) return undefined;
   if (meta.name === 'expense.get_detail' && !isExpenseReadReference(canonicalInput.expenseId, req.conversationContext)) return undefined;
   const fields = new Set([...(meta.requiredInputFields ?? []), ...(meta.optionalInputFields ?? [])]);
@@ -356,6 +371,12 @@ function validInput(meta: ToolMeta, input: unknown, req: LineAiTurnRequest,
   const overflow = (!retainedCandidates || retainedCandidates.completeness === 'overflow')
     && c && 'completeness' in c && c.completeness === 'overflow';
   if (overflow && /amount|quantity|price|percent|fromDate|toDate|incurredDate|periodKey|expenseDate/u.test(JSON.stringify(Object.keys(canonicalInput)))) return undefined;
+  for (const key of CLAIM_AMOUNT_FILTER_KEYS) {
+    const value = canonicalInput[key];
+    if (value !== undefined && (typeof value !== 'string' || !/^\d+(?:\.\d{1,2})?$/u.test(value)
+      || ![...(c?.amounts ?? []), ...(retainedCandidates?.amounts ?? [])].some(candidate => candidate.value === value)
+        && !req.conversationContext?.recentReads?.some(entry => entry.tool.startsWith('reimbursement.') && entry.claimFilters?.[key] === value))) return undefined;
+  }
   const dates = new Set([...(c?.dates ?? []), ...(retainedCandidates?.dates ?? []), ...(readCandidates?.dates ?? [])]
     .filter(item => !isAmbiguousDateCandidate(item)).map(item => item.isoDate));
   const periods = [...(c?.periods ?? []), ...(retainedCandidates?.periods ?? []), ...(readCandidates?.periods ?? [])].filter(item => !isAmbiguousPeriodCandidate(item));
@@ -489,10 +510,10 @@ function bindRequestedReadFilters(meta: ToolMeta, item: NonNullable<LineAiTurnRe
   req: LineAiTurnRequest, retainedCandidates?: LineAiValueCandidatesV2,
   readCandidates?: LineAiTurnRequest['valueCandidates'], currentResults: readonly ToolResult[] = []): Record<string, unknown> | undefined {
   if (!object(input)) return undefined;
-  const normalizedControl = canonicalizeReadToolEnums(meta, input, evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText));
+  const normalizedControl = canonicalizeReadToolEnums(meta, input, evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText), req.conversationContext?.recentReads);
   if (!normalizedControl) return undefined;
   if (item.kind !== 'read') return validInput(meta, normalizedControl, req, retainedCandidates, undefined, currentResults);
-  const filters = canonicalizeReadToolEnums(meta, item.requestedFilters, evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText));
+  const filters = canonicalizeReadToolEnums(meta, item.requestedFilters, evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText), req.conversationContext?.recentReads);
   if (!filters) return undefined;
   const fields = new Set([...(meta.requiredInputFields ?? []), ...(meta.optionalInputFields ?? [])]);
   const bound = { ...normalizedControl };
@@ -637,7 +658,7 @@ export async function runSemanticTurnV2(input: {
    *  permission check. Omitted (e.g. an older caller/test) keeps today's honest §8 terminal. */
   enabledDeterministicFamilies?: ReadonlySet<string>;
 }): Promise<AgentRunResult> {
-  let req = resolveExpenseReadReferences(input.req);
+  let req = resolveClaimReadFilters(resolveExpenseReadReferences(input.req));
   const { provider } = input, started = Date.now();
   let followUp = input.approvedKnowledgeEnabled && req.approvedKnowledge && !req.attachments?.length
     ? approvedKnowledgeFollowUp(activeProductHelpPack(), productKnowledgeAccess(req.userContext.permissions,
@@ -647,7 +668,8 @@ export async function runSemanticTurnV2(input: {
     semanticSubrequests: followUp.cards.map((_card, index) => ({ index, kind: 'help', goal: req.messageText,
       requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: req.semanticSubrequests?.[0]?.evidenceRefs ?? [] })) };
   const inventory = req.semanticSubrequests!.map(item => item.kind !== 'write'
-    && documentExplanationTopic(evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText))
+    && (documentExplanationTopic(evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText))
+      || item.kind === 'help' && isGeneralBusinessPracticeQuestion(evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText)))
     ? { ...item, kind: 'general' as const, toolHint: undefined } : item);
   const enabledFamilies = input.enabledDeterministicFamilies ?? new Set<string>();
   const retained = await retainedSelection(req);
@@ -681,12 +703,17 @@ export async function runSemanticTurnV2(input: {
   const capabilityReply = capabilityActions.length ? language === 'en' ? 'Choose what you would like to do with your current package and permissions.' : 'เลือกงานที่ทำได้ตามแพ็กเกจและสิทธิ์ของคุณได้เลยค่ะ'
     : language === 'en' ? 'No LINE tasks are available under your current access; ask the shop owner to check your permissions and package.' : 'ยังไม่มีงานที่คุณทำผ่าน LINE ได้ตามสิทธิ์ตอนนี้ ให้เจ้าของกิจการตรวจสิทธิ์และแพ็กเกจได้ค่ะ';
   const capabilityIndices = new Set<number>();
+  const capabilityScopes = new Map<number, 'reimbursements' | 'all'>();
+  const capabilityMenus = new Map<number, LineAiAnswerCard[]>();
   const followupActions = new Map<number, string>();
   for (const item of inventory) {
     const text = evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText);
     itemText.set(item.index, text);
-    if (isCurrentCapabilityQuestion(text)) {
+    if (item.kind === 'general' && isGeneralBusinessPracticeQuestion(text)) continue;
+    const capabilityScope = ['help', 'general'].includes(item.kind) ? capabilityHelpScope(text) : undefined;
+    if (isCurrentCapabilityQuestion(text) || capabilityScope) {
       capabilityIndices.add(item.index);
+      if (capabilityScope) capabilityScopes.set(item.index, capabilityScope);
       forced.set(item.index, { status: 'handled', reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED', text: capabilityReply });
       scopePolicyForcedIndices.add(item.index);
       continue;
@@ -730,6 +757,30 @@ export async function runSemanticTurnV2(input: {
       || meta.name.startsWith('reimbursement.draft.') && input.reimbursementDraftEnabled)
     && (meta.name !== 'public.lookup' || input.publicLookupEnabled && req.budgetGrantV2?.allowedProfileIds.includes('public-lookup/2') === true)
     && (!meta.name.startsWith('reimbursement.draft.') || input.reimbursementDraftEnabled));
+  for (const [index, scope] of capabilityScopes) {
+    const actions = (scope === 'reimbursements' ? usableActions.filter(action => action.id.startsWith('reimbursement_') || action.id === 'approvals')
+      : mainActions.length ? mainActions : usableActions).slice(0, 6);
+    const cards = actions.flatMap(action => {
+      const help = productHelpAction({ actionId: action.id, permissions: ctx.permissions,
+        featureKeys: entitledFeatureKeys ?? null, companyId: ctx.companyId, language, generalHelpEnabled: false });
+      return help?.allowed ? help.presentation.cards : [];
+    });
+    const reads = offered.filter(tool => ['read_summary', 'read_detail', 'report'].includes(tool.category)
+      && (scope === 'all' || tool.sourceModule === 'reimbursements'));
+    const readPage = reads.some(tool => tool.sourceModule === 'expenses') ? 'expenses'
+      : reads.some(tool => tool.sourceModule === 'reimbursements') ? 'reimbursements' : undefined;
+    const readHelp = buildCapabilityReadHelp(language, reads, { permissions: ctx.permissions, entitledFeatureKeys: entitledFeatureKeys ?? undefined });
+    if (readHelp) cards.push({ text: readHelp,
+      ...(readPage ? { webLink: { label: language === 'en' ? 'Open on web' : 'เปิดในเว็บ', path: `/companies/${ctx.companyId}/${readPage}` } } : {}) });
+    if (!cards.length) cards.push({ text: buildCapabilityHelp(language, { permissions: [], entitledFeatureKeys: [] }),
+      webLink: scopePolicyWebLinks({ reasonCode: 'ROLE_PERMISSION_REQUIRED', text: '',
+      webPage: permissionAlternative(ctx.permissions, language).page }, ctx.permissions, ctx.companyId, language)[0] });
+    const text = cards.map(card => card.text).join('\n');
+    const chatActionIds = cards.flatMap(card => card.chatActionIds ?? (card.chatActionId ? [card.chatActionId] : []));
+    const webLink = cards.find(card => card.webLink)?.webLink;
+    capabilityMenus.set(index, [{ text, ...(chatActionIds.length ? { chatActionIds } : {}), ...(webLink ? { webLink } : {}) }]);
+    forced.set(index, { status: 'handled', reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED', text });
+  }
   // Advisor S0 (G-16): an item the scope policy already answered needs no planning — a mixed "สต็อกคืออะไร แล้วร้านเรามีของ
   // เหลือเท่าไหร่" used to spend a planner call that read an unrelated tool for the stock half.
   const requiresTools = inventory.some(item => ['read', 'write', 'public', 'file'].includes(item.kind) && !scopePolicyForcedIndices.has(item.index));
@@ -894,7 +945,8 @@ export async function runSemanticTurnV2(input: {
         }
       }
       for (const call of calls) {
-        const index = Number(call.index), item = inventory.find(item => item.index === index)!, meta = offered.find(meta => meta.name === call.toolName);
+        const index = Number(call.index), item = inventory.find(item => item.index === index)!;
+        let meta = offered.find(meta => meta.name === call.toolName);
         // Items 1-3: this index already has its final, non-negotiable answer (see above) — never
         // let a model-proposed call reach execution for it, in this or any later round.
         if (scopePolicyForcedIndices.has(index)) continue;
@@ -903,6 +955,11 @@ export async function runSemanticTurnV2(input: {
           forced.set(index, { status: 'denied', reasonCode: 'TOOL_INPUT_NOT_AUTHORIZED',
             text: requestedTool.name === 'reimbursement.list_pending_approvals'
               ? reimbursementApprovalNotPermittedReplyText(language === 'en') : toolPermissionReplyText(language, req.userContext.permissions) });
+          continue;
+        }
+        if (claimReadGroupUnavailable(req, item)) {
+          forced.set(index, { status: 'needs_user', reasonCode: 'READ_FILTER_NOT_UNDERSTOOD', text: language === 'en'
+            ? 'Whose claims and which status should I total?' : 'ต้องการรวมใบเบิกของใครและสถานะไหนคะ' });
           continue;
         }
         // A preview/options response is not a committed financial source. Never execute a
@@ -929,8 +986,16 @@ export async function runSemanticTurnV2(input: {
           });
         const bindingReq = currentReads.length ? { ...req, conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [],
           ...req.conversationContext, recentReads: [...(req.conversationContext?.recentReads ?? []), ...currentReads] } } : req;
-        const normalizedInput = meta ? bindRequestedReadFilters(meta, item, plannedInput, bindingReq, retained?.candidates, readCandidateValues,
+        let normalizedInput = meta ? bindRequestedReadFilters(meta, item, plannedInput, bindingReq, retained?.candidates, readCandidateValues,
           results.filter(entry => entry.index === index).map(entry => entry.result)) : undefined;
+        const summary = offered.find(tool => tool.name === 'reimbursement.get_summary');
+        const chosenFields = [...(meta?.requiredInputFields ?? []), ...(meta?.optionalInputFields ?? [])];
+        if (item.kind === 'read' && meta?.name.startsWith('reimbursement.') && summary
+          && (!normalizedInput || Object.keys(item.requestedFilters).some(key => !chosenFields.includes(key)))
+          && object(plannedInput) && Object.keys({ ...plannedInput, ...item.requestedFilters }).every(key => CLAIM_READ_FILTER_KEYS.includes(key as typeof CLAIM_READ_FILTER_KEYS[number]))) {
+          const replacement = bindRequestedReadFilters(summary, item, plannedInput, bindingReq, retained?.candidates, readCandidateValues);
+          if (replacement) { meta = summary; call.toolName = summary.name; normalizedInput = replacement; }
+        }
         const key = canonical([call.toolName, normalizedInput]);
         const prior = results.find(entry => entry.result.toolName === call.toolName && (entry as { inputKey?: string }).inputKey === key);
         if (prior) { results.push({ index, result: prior.result }); continue; }
@@ -1011,7 +1076,8 @@ export async function runSemanticTurnV2(input: {
       forced.set(index, ungroundedReadIndices.has(index)
         ? { status: 'needs_user', reasonCode: 'READ_FILTER_NOT_UNDERSTOOD',
           text: periodAskBackText(itemText.get(index) ?? req.messageText, req.valueCandidates?.periods ?? [], language) }
-        : { status: 'unsupported', reasonCode: 'TOOL_INPUT_NOT_AUTHORIZED', text: language === 'en'
+        : { status: 'unsupported', reasonCode: 'TOOL_INPUT_NOT_AUTHORIZED', text: CLAIM_AMOUNT_FILTER_KEYS.some(key => inventory.find(item => item.index === index)?.requestedFilters[key] !== undefined)
+          ? language === 'en' ? 'I cannot filter claims by amount here. Open the claim list on the web to continue.' : 'ในแชตยังกรองใบเบิกตามยอดเงินนี้ไม่ได้ เปิดรายการใบเบิกในเว็บเพื่อดูต่อค่ะ' : language === 'en'
           ? 'I cannot show the requested data in chat; open the web page to continue.' : 'ในแชตยังแสดงข้อมูลตามที่ถามไม่ได้ เปิดรายการในเว็บเพื่อดูต่อค่ะ' });
     }
   }
@@ -1205,6 +1271,8 @@ export async function runSemanticTurnV2(input: {
     forcedOutcomes: [...forced].map(([index, value]) => ({ index, ...value })),
     documentExplanations: inventory.flatMap(item => documentExplanationTopic(itemText.get(item.index) ?? '')
       ? [{ index: item.index, instruction: 'Explain what this document is and why it matters in one or two sentences of general knowledge. Do not read or claim any shop records or give product workflow instructions.' }] : []),
+    generalBusinessPractice: inventory.flatMap(item => item.kind === 'general' && isGeneralBusinessPracticeQuestion(itemText.get(item.index) ?? '')
+      ? [{ index: item.index, instruction: 'Answer as general business knowledge in one sentence and up to three short bullets. Do not invent product menus, buttons or workflow steps.' }] : []),
     // Item 3(a)/(b): code-computed period-comparison and breakdown-share facts, labelled per index —
     // cite these instead of re-deriving a difference or percentage from the raw toolResults figures.
     ...(derivedFactsByIndex.size ? { derivedFacts: [...derivedFactsByIndex].map(([index, facts]) => ({ index, facts })) } : {}) };
@@ -1281,7 +1349,8 @@ export async function runSemanticTurnV2(input: {
     if (Array.isArray(candidate?.helpActions)) for (const selection of candidate.helpActions) {
       if (followUp || !object(selection) || !inventory.some(item => item.index === selection.index && ['help', 'general'].includes(item.kind))
         || capabilityIndices.has(Number(selection.index)) || scopePolicyForcedIndices.has(Number(selection.index))
-        || documentExplanationTopic(itemText.get(Number(selection.index)) ?? '')) continue;
+        || documentExplanationTopic(itemText.get(Number(selection.index)) ?? '')
+        || isGeneralBusinessPracticeQuestion(itemText.get(Number(selection.index)) ?? '')) continue;
       const help = helpFor(selection.actionId, undefined, itemText.get(Number(selection.index)),
         inventory.find(item => item.index === selection.index)?.toolHint);
       if (help) helps.set(Number(selection.index), help);
@@ -1700,5 +1769,8 @@ export async function runSemanticTurnV2(input: {
       ...(sourceLabels.length > 0 ? { sourceLabels } : {}), ...(webLinks[0] ? { webLink: webLinks[0] } : {}) }] } } : {}),
     ...(capabilityIndices.size && inventory.length === 1 ? { presentation: { kind: 'answer_cards' as const, cards: [{ text: replyText, chatActionIds: capabilityActions,
       ...(!capabilityActions.length ? { webLink: { label: language === 'en' ? 'Packages' : 'ดูแพ็กเกจ', path: `/companies/${req.userContext.companyId}/billing?channel=line` } } : {}) }] } } : {}),
+    ...(capabilityMenus.size ? { presentation: { kind: 'answer_cards' as const, cards: inventory.flatMap(item => capabilityMenus.get(item.index)
+      ?? [actionHelps.get(item.index)?.presentation.cards[0] ?? { text: texts[item.index] ?? replyText,
+        ...(layouts.has(item.index) ? { layout: layouts.get(item.index)! } : {}) }]) } } : {}),
     durationMs: Date.now() - started };
 }

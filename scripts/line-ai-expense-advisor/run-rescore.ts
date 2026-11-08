@@ -49,6 +49,8 @@ const DB_NAME = 'watchdog_ai_reliability_replay_expense_advisor';
 const CORPUS_PATH = process.env['MANGMEE_EVAL_CORPUS'] ?? resolve(REPO_ROOT, 'scripts/line-ai-expense-advisor/corpus.sample.json');
 const REDIS_URL = process.env['MANGMEE_EVAL_REDIS_URL'] ?? 'redis://127.0.0.1:16389/13';
 
+const READ_EXIT_REPLY = /ในแชตยัง(?:แสดง|อธิบาย)[^"]{0,40}ไม่ได้|ลองส่งข้อความเดิม|I cannot show the requested (?:data|records) in chat/u;
+
 /** The minimal shape of a run-real.ts `*.evidence.json` this script actually reads. */
 export type SavedEvidenceFile = {
   startedAt: string;
@@ -120,6 +122,8 @@ export function workflowAttemptsFromEvidence(corpus: WorkflowCorpus, rows: Saved
         ...(row.webhookEvents.some(event => (event as { status?: string }).status === 'free_expense_month_summary') && row.delivery?.status === 'ACCEPTED' && row.receipts.length ? { terminalEffect: 'ANSWERED' } : {}),
         ...(row.action && !row.replayFailure ? { pressedLabel: row.action.label } : {}),
         ...(row.replayFailure ? { deadEnd: true } : {}),
+        // A question the gold expects answered, met with the web exit or "send it again", was not answered.
+        ...(expect?.card === 'answer' && !expect.refusal && READ_EXIT_REPLY.test(JSON.stringify(receipts)) ? { deadEnd: true } : {}),
         ...(answerGold ? { deliveredCards: deliveredKnowledgeCards(row), deliveredText: toCapturedEvidence(row).deliveredTextExcludingQuickReplies,
           textModelAttempts: Math.max(row.gatewayResponses.length, reservations.length),
           toolCalls: row.toolResults.map(call => ({ tool: call.tool, input: call.input as Record<string, unknown> })) } : {}) };

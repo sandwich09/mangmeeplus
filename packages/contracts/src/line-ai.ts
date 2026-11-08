@@ -11,6 +11,7 @@ import type { LineAiInputEvidenceV2 } from './line-ai-input-evidence.js';
 import { parseAiBudgetGrantV2 } from './ai-budget-bounds.js';
 import { parseLineAiInputEvidence, verifyLineAiInputEvidence, validateLineAiSourceRefV2, type LineAiSourceRefV2 } from './line-ai-input-evidence.js';
 import type { AiBudgetGrantV2 } from './ai-budget-bounds.js';
+import type { ReimbursementAiReadFilters } from './reimbursements.js';
 
 export type LineAiTurnValueCandidates = NormalizedLineAiValueCandidates | LineAiValueCandidatesV2;
 
@@ -265,11 +266,13 @@ export type LineAiReadMemoryShownItem = {
  * Spec §4 R-M1: what one successful read tool call actually applied, recorded by the API from the
  * tool result's OWN `queryApplied`/resolved data — never the model's raw proposed input, so a
  * follow-up can never inherit a filter that was rejected, ambiguous, or never really took effect.
- * R-M6: carries NO amounts, ever — this is understanding-only memory; every number in an answer must
- * come from this turn's own tool results.
+ * R-M6: carries no returned figures. Claim amount bounds describe the query to repeat,
+ * never a previous total. Every answer figure comes from this turn's own tool results.
  */
 export type LineAiReadMemory = {
   tool: string;
+  /** Exact applied claim filters, including an empty object for a verified unfiltered read. */
+  claimFilters?: ReimbursementAiReadFilters;
   period?: { fromDate: string; toDate: string };
   documentStatus?: string;
   paymentStatus?: string;

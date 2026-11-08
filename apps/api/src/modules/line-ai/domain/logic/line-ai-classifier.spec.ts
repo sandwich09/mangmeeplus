@@ -494,3 +494,13 @@ it('R21 controller: "เปิดงาน" before a job verb is a lead-in, not 
   assert.equal(lineWorkflowCommand('ช่วยเปิดงานลบร่างบิลอื่น-0099'), 'expense_delete');
   assert.equal(lineWorkflowCommand('เปิดงานที่ค้างอยู่ให้ดูหน่อย'), undefined);
 });
+
+it('R22 controller: "คชจ." opens a job list, and a waiting-for-repayment state is a read, not a repay', async () => {
+  const { lineWorkflowCommand, lineWorkflowListOpener } = await import('./line-ai-classifier.logic');
+  assert.equal(lineWorkflowListOpener('เอา คชจ. ที่ฉันลบได้มาให้เลือกหน่อย'), 'expense_delete');
+  assert.equal(lineWorkflowListOpener('เปิดคชจ.ที่ฉันส่งตรวจได้มาให้ดู'), 'expense_submit');
+  assert.equal(lineWorkflowCommand('อยากดูใบเบิกที่ค้างจ่ายคืนทั้งหมด'), undefined);
+  assert.equal(lineWorkflowCommand('ดูใบเบิกที่ยังไม่ได้โอนคืนให้หน่อย'), undefined);
+  assert.equal(lineWorkflowCommand('ใบเบิกรอบ 4 จ่ายคืนให้หน่อย'), 'reimbursement_pay');
+  assert.equal(lineWorkflowCommand('จ่ายคืนใบเบิกค่าที่พักให้ด้วย'), 'reimbursement_pay');
+});

@@ -299,7 +299,6 @@ async function admitV2(
   const returned = parseAiBudgetEnvelopeV2(step.envelope);
   const { version: _version, reservationId: _id, invocationKey: _key, tariffVersion: _tariff, ...echo } = returned ?? {};
   if (!returned || canonicalJson(echo) !== canonicalJson(invocation)) return refuse('v2_reservation_echo_mismatch');
-  if (Date.now() >= grant.workDeadlineAtMs || input.signal?.aborted || input.deadlineAt !== undefined && input.deadlineAt <= Date.now()) return refuse('v2_deadline_elapsed');
   state.repairPending = false;
   if (repair) state.repairCount += 1;
   return { ok: true, invocationKey: returned.invocationKey, envelope: returned };
@@ -435,6 +434,15 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
           : input;
         // The callback stays in this process, outside adapter payload construction.
         const { acceptOutput: _acceptOutput, ...providerInput } = bounded;
+        if (state.status === 'active-v2' && (Date.now() >= bounded.deadlineAt! || input.signal?.aborted)) {
+          failure = { code: 'PROVIDER_TIMEOUT', message: 'Admitted work expired before provider dispatch.', retryable: false };
+          // Admission already owns a DISPATCHED hold. Its known-zero failure must reach the
+          // existing settlement/cancel path, without estimating timeout usage for an uncalled provider.
+          appendUsage({ tag: input.usageTag ?? 'untagged', modelId: opts.modelId, ok: false, errorCode: failure.code,
+            inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, externalUnits: 0,
+            durationMs: 0, usageBasis: 'CONSERVATIVE_ESTIMATE' });
+          return { ok: false, error: failure };
+        }
         const output = await call(providerInput as I);
         if (state.status === 'active-v2' && (Date.now() >= bounded.deadlineAt! || input.signal?.aborted)) {
           timedOut = input;

@@ -137,6 +137,18 @@ function readMemoryBreakdownGroups(data: Record<string, unknown>, axis: 'categor
  */
 // Exported (unlike its single-tool sibling expenseSummaryEvidence): this dispatches across 7 tool
 // result shapes, so a direct unit test per shape is worth more than only the record()/pg round-trip.
+const CLAIM_READ_FILTER_KEYS = ['requester', 'requesterName', 'categoryName', 'round', 'status', 'paymentStatus', 'amountGt', 'amountGte', 'amountLt', 'amountLte'] as const;
+
+/** R22: the claim filters `reimbursement.get_summary` reports it applied, so "ยอดรวมของกลุ่มนั้น" repeats the same query.
+ *  Amount bounds describe that query, never a returned figure (R-M6). Anything else drops the whole object. */
+export function validClaimReadFilters(raw: unknown): NonNullable<LineAiReadMemory['claimFilters']> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const entries = Object.entries(raw as Record<string, unknown>).filter(([, value]) => value !== undefined);
+  if (entries.some(([key, value]) => !(CLAIM_READ_FILTER_KEYS as readonly string[]).includes(key) || typeof value !== 'string' || !value || value.length > 80
+    || key === 'requester' && value !== 'me' || /^amount/u.test(key) && !/^\d+(?:\.\d{1,2})?$/u.test(value))) return undefined;
+  return Object.fromEntries(entries) as NonNullable<LineAiReadMemory['claimFilters']>;
+}
+
 export function readMemoryEvidence(result: ToolResult): LineAiReadMemory | undefined {
   if (!READ_MEMORY_TOOLS.has(result.toolName) || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)
     || !Number.isFinite(Date.parse(result.asOf))) return undefined;
@@ -164,6 +176,8 @@ export function readMemoryEvidence(result: ToolResult): LineAiReadMemory | undef
     shownItems = readMemoryRecordItems(data['items'], 'id', 'vendorNameSnapshot', 'ไม่ระบุร้าน', 'expenseDate');
   } else if (result.toolName === 'reimbursement.list_pending_approvals') {
     shownItems = readMemoryRecordItems(data['items'], 'id', 'requesterDisplayName', 'ไม่ระบุผู้ขอ', 'submittedAt');
+  } else if (result.toolName === 'reimbursement.get_summary') {
+    shownItems = readMemoryRecordItems(data['matchedItems'], 'id', 'requesterDisplayName', 'ใบเบิก', 'incurredDate');
   } else if (result.toolName === 'expense.get_breakdown') {
     shownItems = readMemoryBreakdownGroups(data, groupBy ?? 'category');
   } else if (result.toolName === 'expense.get_detail' || result.toolName === 'reimbursement.get_detail') {
@@ -191,10 +205,12 @@ export function readMemoryEvidence(result: ToolResult): LineAiReadMemory | undef
     };
   }
 
+  const claimFilters = result.toolName === 'reimbursement.get_summary' ? validClaimReadFilters(data['appliedFilters']) : undefined;
   return {
     tool: result.toolName,
     answerShape: READ_MEMORY_ANSWER_SHAPE[result.toolName]!,
     asOf: result.asOf,
+    ...(claimFilters ? { claimFilters } : {}),
     ...(period ? { period } : {}),
     ...(documentStatus ? { documentStatus } : {}),
     ...(stringFilter('paymentStatus') ? { paymentStatus: stringFilter('paymentStatus') } : {}),

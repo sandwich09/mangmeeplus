@@ -14,7 +14,7 @@ import type {
   ToolMeta,
 } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
-import { canonicalizeReadToolEnums, myPendingWorkQuestion, nameFilterGroundedInText, paymentStatusGroundedInText } from './read-tool-input';
+import { canonicalizeReadToolEnums, myPendingWorkQuestion, nameFilterGroundedInText, paymentStatusGroundedInText, CLAIM_AMOUNT_FILTER_KEYS, evidenceRefsText, claimAmountFilters, reimbursementStatusQuestion, resolveClaimReadFilters, claimReadGroupUnavailable } from './read-tool-input';
 
 // Spec item 2(b): categoryName/vendorName are free text the model must have echoed from what the user
 // typed, not a value proven by an id/date/enum shape. Checked by normalized substring, not raw equality.
@@ -212,11 +212,11 @@ function boundedFilters(value: unknown, kind: unknown, reject: (reason: CompactD
 // follow-up naming no period or filter of its own still pass this same check. Only the string filter
 // fields memory carries at all are looked up; fromDate/toDate/periodKey go through
 // recentReadsPeriodMatch below (a pair, not a single field) exactly like valueCandidates.periods does.
-const RECENT_READS_STRING_FIELDS = new Set(['documentStatus', 'paymentStatus', 'categoryId', 'categoryName', 'vendorId', 'vendorName', 'branchId', 'branchName', 'groupBy']);
+const RECENT_READS_STRING_FIELDS = new Set(['documentStatus', 'paymentStatus', 'categoryId', 'categoryName', 'vendorId', 'vendorName', 'branchId', 'branchName', 'groupBy', 'requester', 'requesterName', 'round', 'status', ...CLAIM_AMOUNT_FILTER_KEYS]);
 
 function recentReadsFilterValue(key: string, value: string, recentReads: readonly LineAiReadMemory[] | undefined): boolean {
   if (!RECENT_READS_STRING_FIELDS.has(key)) return false;
-  return (recentReads ?? []).some((entry) => (entry as unknown as Record<string, unknown>)[key] === value);
+  return (recentReads ?? []).some((entry) => ((entry.claimFilters ?? entry) as unknown as Record<string, unknown>)[key] === value);
 }
 
 // Spec §4 R-M5: expense.get_detail/reimbursement.get_detail's own record id is an opaque internal
@@ -239,9 +239,12 @@ function isGroundedFilterValue(
   if (RECORD_ID_GROUNDING_FIELD[tool.name] === key) {
     return typeof value === 'string' && (recentReads ?? []).some((entry) => entry.shownItems?.some((item) => item.id === value));
   }
+  if (CLAIM_AMOUNT_FILTER_KEYS.includes(key as typeof CLAIM_AMOUNT_FILTER_KEYS[number])) {
+    return typeof value === 'string' && ((candidates?.amounts ?? []).some(candidate => candidate.value === value) || recentReadsFilterValue(key, value, recentReads));
+  }
   const literal = String(value);
   if (literal && messageText.includes(literal)) return true;
-  if (key === 'round' || key === 'olderThanMonths') return canonicalizeReadToolEnums(tool, { [key]: value }, messageText) !== undefined;
+  if (key === 'round' || key === 'olderThanMonths') return canonicalizeReadToolEnums(tool, { [key]: value }, messageText, recentReads) !== undefined;
   if (typeof value === 'string' && NAME_FILTER_GROUNDING_FIELDS.has(key) && nameFilterGroundedInText(value, messageText)) return true;
   // Item 1: paymentStatus needs its own word-level check — see paymentStatusGroundedInText — before
   // the generic enum-membership fallback below, which would otherwise wave through ANY listed value.
@@ -395,7 +398,7 @@ function simpleReadPlan(input: {
   const subject = tool.businessSubjects[0]!;
   const agent = tool.supportedAgents[0]!;
 
-  const rawCanonicalFilters = canonicalizeReadToolEnums(tool, only.requestedFilters, messageText) as Record<string, string | number | boolean | null> | undefined;
+  const rawCanonicalFilters = canonicalizeReadToolEnums(tool, only.requestedFilters, messageText, recentReads) as Record<string, string | number | boolean | null> | undefined;
   if (!rawCanonicalFilters) return { rejection: 'filter_not_grounded' };
   const allowedFilters = new Set([...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? [])]);
   const canonicalFilters = withoutRemovedStatusFilters(
@@ -520,7 +523,8 @@ export function parseLineIntakeCompactDecision(input: {
     const toolHint = typeof item['tool'] === 'string' && enabledTools.has(item['tool'])
       && hintedTool && SIMPLE_READ_CATEGORIES.has(hintedTool.category) ? item['tool'] : undefined;
     canonical.push({
-      index, kind: item['kind'], goal: item['goal'], requiredEvidence, requestedFilters: filters, dependsOn,
+      index, kind: item['kind'], goal: item['goal'], requiredEvidence, requestedFilters: item['kind'] === 'read' && (toolHint?.startsWith('reimbursement.') || reimbursementStatusQuestion(messageText))
+        ? { ...claimAmountFilters(evidenceRefsText(refs, inputEvidence, messageText), input.valueCandidates), ...filters } : filters, dependsOn,
       evidenceRefs: refs,
       ...(entity !== undefined ? { entityReference: { kind: 'user_text', value: entity } } : {}),
       ...(taskRef !== undefined ? { taskRef } : {}),
@@ -528,9 +532,12 @@ export function parseLineIntakeCompactDecision(input: {
       ...(toolHint !== undefined ? { toolHint } : {}),
     });
   }
-  const semanticSubrequests = parseLineAiSemanticSubrequests(canonical, messageText, inputEvidence, input.originalClarifications);
-  if (!semanticSubrequests) return reject('semantic_contract_invalid');
-  if (raw['simpleRead'] === undefined) return { semanticSubrequests };
+  const parsedSubrequests = parseLineAiSemanticSubrequests(canonical, messageText, inputEvidence, input.originalClarifications);
+  if (!parsedSubrequests) return reject('semantic_contract_invalid');
+  const semanticSubrequests = resolveClaimReadFilters({ messageText, semanticSubrequests: parsedSubrequests, inputEvidence, valueCandidates,
+    conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: recentReads ? [...recentReads] : undefined } }).semanticSubrequests;
+  if (raw['simpleRead'] === undefined || semanticSubrequests.some(item => claimReadGroupUnavailable({ messageText,
+    conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: recentReads ? [...recentReads] : undefined } }, item))) return { semanticSubrequests };
   // Read context only: preserve the original relative period at the time the question was asked.
   const originals = input.originalClarifications ?? [];
   const originalCandidates = clarificationReadCandidates(originals);

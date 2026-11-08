@@ -1,3 +1,4 @@
+import { LINE_TOOL_REGISTRY, type LineAiTurnResponse } from '@watchdog-bms/contracts';
 import Decimal from 'decimal.js';
 import type { AiBudgetReservation, AiUsageEvent, PrismaClient } from '../../../generated/prisma/client';
 import { deliveryHash } from '../domain/logic/line-delivery-plan.logic';
@@ -89,4 +90,29 @@ export async function recordLineTaskEvent(client: PrismaClient, input: LineTaskO
     } });
     return input.status === 'OPEN' ? null : id;
   });
+}
+
+/** Workflow action names already carried by controls, questions and previews. */
+export function lineTaskKindForAction(action: string | undefined): string | undefined {
+  const kinds: Record<string, string> = {
+    MARK_READY: 'expense_submit', CONFIRM: 'expense_confirm', DELETE_DRAFT: 'expense_delete',
+    VOID: 'expense_void', RECORD_PAYMENT: 'expense_pay', REIMBURSEMENT_SUBMIT: 'reimbursement_submit', REIMBURSEMENT_CANCEL: 'reimbursement_cancel',
+    REIMBURSEMENT_APPROVE: 'approvals', REIMBURSEMENT_REJECT: 'reimbursement_reject', REIMBURSEMENT_RECORD_PAYMENT: 'reimbursement_pay',
+    VOUCHER_CREATE: 'payment_voucher', VOUCHER_SUBMIT: 'payment_voucher', VOUCHER_APPROVE: 'payment_voucher', VOUCHER_PAY: 'payment_voucher',
+    VOUCHER_CANCEL: 'payment_voucher', VOUCHER_RETURN: 'payment_voucher', WHT_CERTIFICATE_ISSUE: 'wht_certificate',
+  };
+  return action ? kinds[action] : undefined;
+}
+
+/** Counts and totals can be successful reads without delivering individual record IDs. */
+export function lineTaskResponseKind(response: LineAiTurnResponse, subrequests: readonly { index: number; kind: string }[] = []): 'read' | 'howto' | undefined {
+  if (response.refused) return undefined;
+  if (response.sourceRefs.some(source => source.module === 'knowledge'
+    && source.entityType === 'approved_product_help' && source.permissionChecked)) return 'howto';
+  const handled = subrequests.filter(item => response.semanticCoverage?.some(coverage => coverage.index === item.index && coverage.status === 'handled'));
+  if (handled.some(item => item.kind === 'read')) return 'read';
+  if (handled.some(item => item.kind === 'help')) return 'howto';
+  if (response.toolCalls?.some(call => call.status === 'ok' && !call.errorCode && LINE_TOOL_REGISTRY.some(tool => tool.name === call.name
+    && ['read_summary', 'read_detail', 'report'].includes(tool.category)))) return 'read';
+  return undefined;
 }

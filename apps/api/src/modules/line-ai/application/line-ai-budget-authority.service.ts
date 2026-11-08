@@ -268,8 +268,10 @@ export class LineAiBudgetAuthorityService {
         || row.companyId !== grant.payerCompanyId || state.owner.kind !== 'PRIVATE'
         || !await this.ownerCurrent(tx, state.owner)) return null;
       if (state.decision) return structuredClone(state.decision);
+      const classifyCalls = state.profileCounts['line-classify/2'] ?? 0;
       if (!this.parentCurrent(row, grant.authorityKind, state.owner, now)
-        || decision.status === 'CLASSIFIED' && state.profileCounts['line-classify/2'] !== 1) return null;
+        || decision.status === 'CLASSIFIED' && (classifyCalls < 1
+          || classifyCalls > AI_BUDGET_PROFILES_V2['line-classify/2'].maxCalls)) return null;
       const next = { ...state, decision: structuredClone(decision) };
       if (Buffer.byteLength(JSON.stringify(next)) > MAX_AUTHORITY_BYTES) return null;
       const changed = await parent.updateMany({ where: { id: row.id, classifyAuthorityRevision: row.classifyAuthorityRevision },
@@ -422,7 +424,10 @@ export class LineAiBudgetAuthorityService {
           || !aiBudgetV2CallAllowed(grant, invocation.ordinal, repair, authority.repairCount) || !await this.ownerCurrent(tx, authority.owner)) return false;
         // An unresolved prior paid call may still be executing; a new worker cannot overlap it.
         const running = await tx.aiBudgetReservation.count({ where: { companyId: grant.payerCompanyId, attemptKey: grant.attemptKey,
-          stepKind: 'provider-v2', status: { in: ['RESERVED', 'DISPATCHED', 'UNRESOLVED'] } } });
+          stepKind: 'provider-v2', status: { in: ['RESERVED', 'DISPATCHED', 'UNRESOLVED'] },
+          // Only the classifier's second call may hedge its own still-dispatched first call.
+          ...(grant.authorityKind === 'webhook_classify' && invocation.profileId === 'line-classify/2' && invocation.ordinal === 1 && !repair
+            ? { NOT: { invocationKey: `${grant.payerCompanyId}#${grant.attemptKey}#provider-v2#0`, status: 'DISPATCHED', pricingSnapshot: { path: ['profileId'], equals: 'line-classify/2' } } } : {}) } });
         if (running) return false;
         // A turn funds every call from ONE cycle: a different one means the pin raced (A36).
         if (funding && authority.fundingContext && authority.fundingContext.cycleKey !== funding.cycleKey) return false;

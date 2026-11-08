@@ -1407,15 +1407,27 @@ function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: 
  */
 function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
   const data = sourceData(output, 'reimbursement.get_summary');
-  if (isCount(data?.matchedCount) && Array.isArray(data?.matchedItems)) {
+  if (isCount(data?.matchedCount) && Array.isArray(data?.matchedItems)
+    && (!data.appliedFilters || Object.keys(data.appliedFilters as object).length > 0 || /รวม|ทั้งหมด|เท่าไหร่|เท่าไร/u.test(ctx.messageText ?? ''))) {
     const items = data.matchedItems.slice(0, 5) as Array<Record<string, unknown>>;
     if (items.some(item => !isMoney(item.amount) || typeof item.status !== 'string')) return { kind: 'unverified' };
     const { sourceRefs, webLinks } = groundedSource(output.facts.find(fact => fact.sourceRef)?.sourceRef, isEnglish(ctx));
     const rows = items.map(item => ({ label: String(item.requestNo ?? item.title ?? 'ใบเบิก'),
-      value: [item.requesterDisplayName, `${moneyText(item.amount as string)} บาท`, REIMBURSEMENT_STATUS_TH[String(item.status)] ?? 'รอตรวจสอบ'].filter(Boolean).join(' · ') }));
-    const replyText = `พบใบเบิก ${data.matchedCount} ใบค่ะ${rows.length ? '\n' + rows.map(row => `${row.label}: ${row.value}`).join('\n') : ''}`;
+      value: [item.requesterDisplayName, `${moneyText(item.amount as string)} ${item.currency && item.currency !== 'THB' ? item.currency : 'บาท'}`, REIMBURSEMENT_STATUS_TH[String(item.status)] ?? 'รอตรวจสอบ'].filter(Boolean).join(' · ') }));
+    const filters = data.appliedFilters as Record<string, unknown> | undefined;
+    const group = filters ? [filters.requester === 'me' ? 'ของคุณ' : '', filters.requesterName ? `ของ${filters.requesterName}` : '',
+      filters.categoryName ? `หมวด${filters.categoryName}` : '', filters.round ? `รอบ ${filters.round}` : '',
+      filters.status ? REIMBURSEMENT_STATUS_TH[String(filters.status)] ?? (filters.status === 'APPROVED_UNPAID' ? 'อนุมัติแล้วรอจ่าย' : '') : '',
+      filters.paymentStatus ? ({ PAID: 'จ่ายแล้ว', UNPAID: 'ยังไม่จ่าย', PARTIALLY_PAID: 'จ่ายบางส่วนแล้ว' } as Record<string, string>)[String(filters.paymentStatus)] : '',
+      ...(['amountGt', 'amountGte', 'amountLt', 'amountLte'] as const).flatMap(key => filters[key] === undefined ? []
+        : [`${{ amountGt: 'มากกว่า', amountGte: 'อย่างน้อย', amountLt: 'ต่ำกว่า', amountLte: 'ไม่เกิน' }[key]} ${moneyText(String(filters[key]))} บาท`])].filter(Boolean).join(' · ') : '';
+    const totals = Array.isArray(data.matchedTotalsByCurrency) ? data.matchedTotalsByCurrency as Array<Record<string, unknown>> : [];
+    if (totals.some(total => !isMoney(total.amount) || typeof total.currency !== 'string')) return { kind: 'unverified' };
+    const totalText = totals.length ? `ยอดรวม ${totals.map(total => `${moneyText(total.amount as string)} ${total.currency === 'THB' ? 'บาท' : total.currency}`).join(' · ')}` : '';
+    const notes = [group, totalText].filter(Boolean);
+    const replyText = `พบใบเบิก ${data.matchedCount} ใบค่ะ${notes.length ? '\n' + notes.join('\n') : ''}${rows.length ? '\n' + rows.map(row => `${row.label}: ${row.value}`).join('\n') : ''}`;
     return { kind: 'answer', replyText, sourceRefs, webLinks,
-      layout: cardLayout({ context: 'open_work', header: ['ใบเบิกตามที่ถาม', `${data.matchedCount} ใบ`],
+      layout: cardLayout({ context: 'open_work', header: ['ใบเบิกตามที่ถาม', `${data.matchedCount} ใบ`], ...(notes.length ? { notes } : {}),
         rows: rows.length ? rows : [{ label: 'รายการ', value: 'ยังไม่พบใบเบิกตามที่ถาม' }], linkLabel: data.matchedCount > rows.length ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ' }) };
   }
   const pending = data?.['pendingApprovalCount'];

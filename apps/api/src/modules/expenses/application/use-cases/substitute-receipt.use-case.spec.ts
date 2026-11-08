@@ -2619,3 +2619,41 @@ it('R20 substitute side answers display Thai document and evidence names without
     assert.equal(h.saves.length, before); assert.deepEqual(h.prepares, []);
   }
 });
+
+it('R22 paid OWNER starts any bill while STAFF starts only their own and may pause without issuing', async () => {
+  for (const creator of ['user-1', 'another-member']) {
+    const h = lineHarness({ expense: lineExpense({ createdByUserId: creator }) });
+    const actor = { ...lineCtx(['expense.read_own', 'expense.update']), roles: ['STAFF'] };
+    const input = { messageText: 'ทำใบรับรองแทนใบเสร็จ', confirmedStart: true, chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'EXP-001' }], webBaseUrl: 'https://app.example.com' };
+    const result = await h.useCase.execute(actor, input);
+    if (creator === actor.userId) {
+      assert.ok(result.pendingQuestion);
+      assert.ok(await h.useCase.replySourcesCurrent(actor, result.source));
+      const paused = await h.useCase.execute(actor, { ...input, messageText: 'พักไว้ก่อน' });
+      assert.equal(paused.status, 'PAUSED');
+      assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'PAUSED');
+    } else {
+      assert.equal(result.status, 'FORBIDDEN');
+      assert.equal(h.saves.length, 0);
+      const owner = await h.useCase.execute(lineCtx(), input);
+      assert.ok(owner.pendingQuestion, 'OWNER can start another member’s bill');
+    }
+    assert.equal(h.prepares.length, 0); assert.equal(h.links.length, 0); assert.equal(h.audits.length, 0);
+  }
+});
+
+it('R22 paid own-bill signed preparation survives STAFF scope and refuses other records and free access', async () => {
+  for (const mode of ['own', 'other', 'free']) {
+    const h = await actionHarness({ expense: lineExpense({ createdByUserId: mode === 'other' ? 'another-member' : 'user-1', vendorNameSnapshot: 'วินมอเตอร์ไซค์', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'), missingReceiptReason: 'วินไม่ออกใบเสร็จ', attachments: [{ id: 'att-1', status: 'ACTIVE', purpose: 'expense.receipt.supporting' }] }) });
+    const actor = { ...lineCtx(['expense.read_own', 'expense.update']), roles: ['STAFF'], ...(mode === 'free' ? { freeExpenseDrafts: true } : {}) };
+    const prep = await h.service.prepare(actor, 'chat-hash', 'expense-1');
+    if (mode === 'own') {
+      assert.ok(prep.preview);
+      assert.equal(await h.service.current(actor, 'chat-hash', prep.preview.token), true);
+      const result = await h.service.apply(actor, 'chat-hash', { action: 'expense_action_confirm', token: prep.preview.token });
+      assert.equal(result.expenseId, 'expense-1'); assert.equal(h.prepares.length, 1, JSON.stringify(result));
+      assert.equal(h.getExpense().substituteReceiptEvidence.status, 'PREPARED');
+    } else { assert.equal(prep.preview, undefined); assert.equal(h.prepares.length, 0); }
+    assert.equal(h.calls.length, 0);
+  }
+});

@@ -1177,7 +1177,7 @@ function workflowAnswer(overrides: Record<string, unknown> = {}) {
 }
 
 async function runWorkflowClassifier(request: LineWorkflowClassifyRequest,
-  answer: (input: ProviderInput) => Promise<ProviderOutput>, afterSettle?: () => void) {
+  answer: (input: ProviderInput) => Promise<ProviderOutput>, afterSettle?: () => void, refuseSecond = false, beforeStep?: (ordinal: number) => Promise<void>) {
   const inputs: ProviderInput[] = [], settled: AiUsageEntry[] = [];
   const provider = withAiBudgetEnvelope({ generateText: async input => {
     inputs.push(input);
@@ -1187,6 +1187,8 @@ async function runWorkflowClassifier(request: LineWorkflowClassifyRequest,
   } }, { modelId: 'test-model', companyId: request.companyId, log() {}, seam: {
     step: async () => { throw new Error('legacy seam must not run'); },
     stepV2: async invocation => {
+      await beforeStep?.(invocation.ordinal);
+      if (refuseSecond && invocation.ordinal === 1) return { ok: false, code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' };
       const envelope = parseAiBudgetEnvelopeV2({ ...invocation, version: 2, reservationId: 'reservation-1',
         invocationKey: `${request.companyId}#classify-attempt#provider-v2#${invocation.ordinal}`, tariffVersion: 'test:1' });
       assert.ok(envelope);
@@ -1196,14 +1198,14 @@ async function runWorkflowClassifier(request: LineWorkflowClassifyRequest,
   } });
   const response = await runWithUsageContext({ companyId: request.companyId, budget: { status: 'active-v2',
     grant: request.budgetGrantV2, inputDigest: request.inputEvidence.joinedSha256, sourceRoute: 'line-workflow-classify',
-    calls: 0, repairCount: 0 } }, () => new WorkflowClassifierAgent(provider).classify(request));
+    calls: 0, repairCount: 0 } }, () => new WorkflowClassifierAgent(provider, { now: () => Date.now(), setTimeout, clearTimeout }).classify(request));
   return { response, inputs, settled };
 }
 
 const workflowOutput = (answer = workflowAnswer()): ProviderOutput => ({ ok: true, text: JSON.stringify(answer),
   completion: 'complete', schemaEnforcement: 'output_config' });
 
-describe('B3 one-call workflow classifier', () => {
+describe('B3 workflow classifier', () => {
   it('uses a stable cacheable prompt with no shop data and a rendered bound within the classify profile', async () => {
     assert.ok(WORKFLOW_CLASSIFIER_SYSTEM_PROMPT.length >= 4000);
     assert.ok(Buffer.byteLength(WORKFLOW_CLASSIFIER_SYSTEM_PROMPT, 'utf8') <= 8000);
@@ -1220,7 +1222,7 @@ describe('B3 one-call workflow classifier', () => {
     assert.equal(input.maxTokens, 256);
     assert.equal(input.usageTag, 'line.workflow-classify');
     assert.deepEqual(input.outputSchema, { name: 'line_workflow_classifier', schema: WORKFLOW_CLASSIFIER_SCHEMA });
-    assert.ok(input.deadlineAt! <= Date.now() + 4000);
+    assert.ok(input.deadlineAt! <= Date.now() + 5000);
     assert.ok(input.signal instanceof AbortSignal);
     assert.ok(v2RenderedInput({ ...input, messages: [{ role: 'user', text: 'ก'.repeat(1000) }] }).inputTokenBound <= 24576);
     assert.deepEqual(first.response.usage.map(entry => entry.ok), [true]);
@@ -1303,7 +1305,7 @@ describe('B3 one-call workflow classifier', () => {
     try {
       const request = await workflowClassifyRequest();
       const slow = await runWorkflowClassifier(request, async () => {
-        Date.now = () => realNow() + 4001;
+        Date.now = () => realNow() + 5001;
         return workflowOutput();
       });
       assert.equal(slow.response.status, 'UNAVAILABLE');
@@ -1317,7 +1319,7 @@ describe('B3 one-call workflow classifier', () => {
     try {
       const request = await workflowClassifyRequest();
       const { response, settled } = await runWorkflowClassifier(request, async () => workflowOutput(),
-        () => { Date.now = () => realNow() + 4001; });
+        () => { Date.now = () => realNow() + 5001; });
       assert.equal(settled[0]!.ok, true);
       assert.equal(response.status, 'CLASSIFIED', 'a result accepted before settlement cannot become a charged failure afterwards');
       assert.equal(response.usage[0]!.ok, true);
@@ -1373,4 +1375,146 @@ it('R9 classifier distinguishes paying a service expense from reimbursing a clai
 it('R11 classifier treats withdrawing a claim as cancellation without claiming voucher payment support', () => {
   assert.match(WORKFLOW_CLASSIFIER_SYSTEM_PROMPT, /ถอนใบเบิก.*ดึงกลับใบเบิก/);
   assert.ok(Buffer.byteLength(WORKFLOW_CLASSIFIER_SYSTEM_PROMPT) <= 8000);
+});
+
+// R22 uses virtual time so the hedge and deadline checks make no provider calls or long sleeps.
+async function flushClassifier() {
+  for (let index = 0; index < 20; index++) await new Promise<void>(resolve => setImmediate(resolve));
+}
+
+it('R22 slow first classifier hedges once, charges only the winner and absorbs the aborted call', async t => {
+  const request = await workflowClassifyRequest();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  let calls = 0;
+  const pending = runWorkflowClassifier(request, async input => {
+    calls++;
+    if (calls === 2) return workflowOutput(workflowAnswer({ label: 'expense_pay' }));
+    return new Promise(resolve => input.signal!.addEventListener('abort', () => resolve(workflowOutput()), { once: true }));
+  });
+  await flushClassifier();
+  assert.equal(calls, 1);
+  t.mock.timers.tick(2200);
+  await flushClassifier();
+  assert.equal(calls, 2, 'slow first call must launch the hedge');
+  const { response, settled, inputs } = await pending;
+  assert.equal(response.status, 'CLASSIFIED');
+  if (response.status === 'CLASSIFIED') assert.equal(response.label, 'expense_pay');
+  assert.equal(calls, 2);
+  assert.equal(settled.filter(entry => entry.ok).length, 1, 'one customer-chargeable settlement');
+  assert.equal(settled.filter(entry => entry.ok === false).length, 1, 'loser is company-absorbed');
+  assert.equal(new Set(settled.map(entry => entry.invocationKey)).size, 2);
+  assert.ok(settled.some(entry => entry.invocationKey?.endsWith('#1')));
+  assert.equal(inputs[0]!.systemPrompt, inputs[1]!.systemPrompt);
+  assert.deepEqual(inputs[0]!.messages, inputs[1]!.messages);
+  assert.deepEqual(inputs[0]!.outputSchema, inputs[1]!.outputSchema);
+  assert.equal(inputs[0]!.signal!.aborted, true);
+});
+
+it('R22 fast first classifier makes one chargeable settlement and no hedge', async t => {
+  const request = await workflowClassifyRequest();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  const result = await runWorkflowClassifier(request, async () => workflowOutput());
+  t.mock.timers.tick(5000);
+  assert.equal(result.response.status, 'CLASSIFIED');
+  assert.equal(result.inputs.length, 1);
+  assert.deepEqual(result.settled.map(entry => entry.ok), [true]);
+});
+
+it('R22 both slow classifier calls time out at five seconds and both are absorbed', async t => {
+  const request = await workflowClassifyRequest();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  const pending = runWorkflowClassifier(request, input => new Promise(resolve => input.signal!.addEventListener('abort',
+    () => resolve({ ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'aborted', retryable: false } }), { once: true })));
+  await flushClassifier(); t.mock.timers.tick(2200); await flushClassifier();
+  t.mock.timers.tick(2800); await flushClassifier();
+  const result = await pending;
+  assert.equal(result.inputs.length, 2);
+  assert.equal(result.response.status, 'UNAVAILABLE');
+  if (result.response.status === 'UNAVAILABLE') assert.equal(result.response.errorCode, 'PROVIDER_TIMEOUT');
+  assert.deepEqual(result.settled.map(entry => entry.ok), [false, false]);
+});
+
+it('R22 refused hedge budget keeps the first classifier alive and settles it once', async t => {
+  const request = await workflowClassifyRequest();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  let finish!: (output: ProviderOutput) => void;
+  const pending = runWorkflowClassifier(request, () => new Promise(resolve => { finish = resolve; }), undefined, true);
+  await flushClassifier(); t.mock.timers.tick(2200); await flushClassifier();
+  finish(workflowOutput()); await flushClassifier();
+  const result = await pending;
+  assert.equal(result.response.status, 'CLASSIFIED');
+  assert.equal(result.inputs.length, 1);
+  assert.deepEqual(result.settled.map(entry => entry.ok), [true]);
+});
+
+it('R22 fast provider failure and short remaining deadline never hedge', async t => {
+  const request = await workflowClassifyRequest();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  const failed = await runWorkflowClassifier(request, async () => ({ ok: false,
+    error: { code: 'PROVIDER_UNKNOWN', message: 'failed', retryable: false } }));
+  assert.equal(failed.inputs.length, 1);
+  request.budgetGrantV2.workDeadlineAtMs = Date.now() + 3600;
+  let finish!: (output: ProviderOutput) => void;
+  const pending = runWorkflowClassifier(request, () => new Promise(resolve => { finish = resolve; }));
+  await flushClassifier(); t.mock.timers.tick(2200); await flushClassifier();
+  finish(workflowOutput());
+  const result = await pending;
+  assert.equal(result.inputs.length, 1);
+  assert.equal(result.response.status, 'CLASSIFIED');
+});
+
+it('R22 first classifier can win after the hedge starts and late accepted-looking output is absorbed', async t => {
+  const request = await workflowClassifyRequest();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  let calls = 0, finishFirst!: (output: ProviderOutput) => void;
+  const pending = runWorkflowClassifier(request, input => {
+    calls++;
+    return calls === 1 ? new Promise(resolve => { finishFirst = resolve; })
+      : new Promise(resolve => input.signal!.addEventListener('abort', () => resolve(workflowOutput()), { once: true }));
+  });
+  await flushClassifier(); t.mock.timers.tick(2200); await flushClassifier();
+  assert.equal(calls, 2);
+  finishFirst(workflowOutput(workflowAnswer({ label: 'expense_pay' })));
+  await flushClassifier();
+  const { response, settled } = await pending;
+  assert.equal(response.status, 'CLASSIFIED');
+  if (response.status === 'CLASSIFIED') assert.equal(response.label, 'expense_pay');
+  assert.equal(settled.filter(entry => entry.ok).length, 1);
+  assert.equal(settled.filter(entry => entry.ok === false).length, 1);
+});
+
+it('R22 abort during hedge budget admission must settle the admitted loser', async t => {
+  const request = await workflowClassifyRequest();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  let finishFirst!: (output: ProviderOutput) => void, admitHedge!: () => void;
+  const hedgeAdmission = new Promise<void>(resolve => { admitHedge = resolve; });
+  const ordinals: number[] = [];
+  const pending = runWorkflowClassifier(request, () => new Promise(resolve => { finishFirst = resolve; }), undefined, false,
+    async ordinal => { ordinals.push(ordinal); if (ordinal === 1) await hedgeAdmission; });
+  await flushClassifier(); t.mock.timers.tick(2200); await flushClassifier();
+  assert.deepEqual(ordinals, [0, 1]);
+  finishFirst(workflowOutput()); await flushClassifier();
+  admitHedge(); await flushClassifier();
+  const { response, inputs, settled } = await pending;
+  assert.equal(response.status, 'CLASSIFIED');
+  assert.equal(inputs.length, 1, 'the aborted hedge never reached the provider');
+  assert.equal(settled.length, 2, 'both dispatched reservations need settlement evidence');
+  const loser = settled.find(entry => entry.ok === false)!;
+  assert.ok(loser);
+  assert.deepEqual([loser.inputTokens, loser.outputTokens, loser.cacheReadInputTokens, loser.cacheWriteInputTokens, loser.externalUnits], [0, 0, 0, 0, 0]);
+});
+
+it('R22 ordinary single call settles zero usage when its deadline passes during admission', async t => {
+  const request = await workflowClassifyRequest();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  const { response, inputs, settled } = await runWorkflowClassifier(request, async () => {
+    assert.fail('the provider must not be called after the admitted deadline');
+  }, undefined, false, async () => { t.mock.timers.setTime(request.budgetGrantV2.workDeadlineAtMs); });
+  assert.equal(response.status, 'UNAVAILABLE');
+  if (response.status === 'UNAVAILABLE') assert.equal(response.errorCode, 'PROVIDER_TIMEOUT');
+  assert.equal(inputs.length, 0);
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0]!.ok, false);
+  assert.deepEqual([settled[0]!.inputTokens, settled[0]!.outputTokens, settled[0]!.cacheReadInputTokens,
+    settled[0]!.cacheWriteInputTokens, settled[0]!.externalUnits], [0, 0, 0, 0, 0]);
 });

@@ -48,6 +48,51 @@ export function resolveExpenseReadReferences(req: LineAiTurnRequest): LineAiTurn
   }) };
 }
 
+export const CLAIM_AMOUNT_FILTER_KEYS = ['amountGt', 'amountGte', 'amountLt', 'amountLte'] as const;
+export const CLAIM_READ_FILTER_KEYS = ['requester', 'requesterName', 'categoryName', 'round', 'status', 'paymentStatus', ...CLAIM_AMOUNT_FILTER_KEYS] as const;
+
+/** Select a threshold only from the deterministic candidates adjacent to its comparison word. */
+export function claimAmountFilters(text: string, candidates?: LineAiTurnRequest['valueCandidates']): Record<string, string> {
+  const filters: Record<string, string> = {};
+  for (const candidate of candidates?.amounts ?? []) {
+    const escapedSpan = candidate.span.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    const comparison = new RegExp(`(ไม่เกิน|ไม่ถึง|ต่ำกว่า|อย่างน้อย|มากกว่า|เกิน)\\s*${escapedSpan}`, 'u').exec(text)?.[1];
+    const key = comparison === 'ไม่เกิน' ? 'amountLte' : comparison === 'ไม่ถึง' || comparison === 'ต่ำกว่า' ? 'amountLt'
+      : comparison === 'อย่างน้อย' ? 'amountGte' : comparison ? 'amountGt' : undefined;
+    if (key) filters[key] = candidate.value;
+  }
+  return filters;
+}
+
+/** Old delivered reads did not record their claim filters, so their group cannot be re-read safely. */
+export function claimReadGroupUnavailable(req: Pick<LineAiTurnRequest, 'messageText' | 'conversationContext'>,
+  item: NonNullable<LineAiTurnRequest['semanticSubrequests']>[number]): boolean {
+  const previous = req.conversationContext?.recentReads?.[0];
+  return item.kind === 'read' && item.toolHint === 'reimbursement.get_summary'
+    && Object.keys(item.requestedFilters).length === 0 && previous?.tool.startsWith('reimbursement.') === true
+    && previous.claimFilters === undefined
+    && /รวม|ทั้งหมด|กี่ใบ|กี่รายการ|กี่บาท|เท่าไหร่|เท่าไร/u.test(req.messageText);
+}
+
+/** Continue the latest delivered claim group without treating its previous figures as current data. */
+export function resolveClaimReadFilters<T extends Pick<LineAiTurnRequest, 'messageText' | 'semanticSubrequests' | 'conversationContext' | 'inputEvidence' | 'valueCandidates'>>(req: T): T {
+  const latest = req.conversationContext?.recentReads?.[0];
+  return { ...req, semanticSubrequests: req.semanticSubrequests?.map(item => {
+    const text = evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText);
+    const totalQuestion = /รวม|ทั้งหมด|กี่ใบ|กี่รายการ|กี่บาท|เท่าไหร่|เท่าไร/u.test(text);
+    const followUp = /เมื่อกี้|ที่แสดง|กลุ่ม|คนนี้|ของเขา|ของคนนี้|ของคนเดิม|แล้ว.*(?:รวม|กี่|เท่า)/u.test(text)
+      || /^(?:แล้ว)?(?:รวม(?:ทั้งหมด)?|ยอดรวม|ทั้งหมด|มีกี่ใบ|กี่ใบ)(?:เป็นเงิน)?(?:เท่าไหร่|เท่าไร|กี่บาท|กี่ใบ|กี่รายการ)?(?:คะ|ค่ะ|ครับ|นะ|ไหม|บ้าง|[?？\s])*$/u.test(text);
+    const samePerson = latest?.claimFilters?.requesterName && item.requestedFilters.requesterName === latest.claimFilters.requesterName
+      || latest?.claimFilters?.requester && item.requestedFilters.requester === latest.claimFilters.requester;
+    const previous = totalQuestion && (followUp || samePerson) && latest?.tool.startsWith('reimbursement.') ? latest : undefined;
+    if (item.kind !== 'read' || item.toolHint && !item.toolHint.startsWith('reimbursement.')
+      || !(item.toolHint?.startsWith('reimbursement.') || reimbursementStatusQuestion(text) || previous)) return item;
+    const carried = previous?.claimFilters ?? {};
+    const amounts = claimAmountFilters(text, req.valueCandidates);
+    return { ...item, ...(previous ? { toolHint: 'reimbursement.get_summary' } : {}), requestedFilters: { ...carried, ...amounts, ...item.requestedFilters } };
+  }) };
+}
+
 export type ConversationReadCandidates = {
   turns: Array<{ at: string; todayIso: string; dates: LineAiValueCandidates['dates']; periods: NonNullable<LineAiValueCandidates['periods']> }>;
   candidates: LineAiValueCandidates;
@@ -150,15 +195,19 @@ export function canonicalizeReadToolEnums(
   meta: Pick<ToolMeta, 'inputEnumValues'> & { name?: string },
   raw: Record<string, unknown>,
   messageText?: string,
+  recentReads?: readonly NonNullable<LineAiConversationContext['recentReads']>[number][],
 ): Record<string, unknown> | undefined {
   const canonical = { ...raw };
   if (meta.name?.startsWith('reimbursement.')) {
+    for (const key of CLAIM_AMOUNT_FILTER_KEYS) if (typeof canonical[key] === 'number' && Number.isFinite(canonical[key])) canonical[key] = String(canonical[key]);
     for (const key of ['requesterName', 'categoryName']) {
-      if (canonical[key] !== undefined && (typeof canonical[key] !== 'string' || !nameFilterGroundedInText(canonical[key] as string, messageText ?? ''))) return undefined;
+      if (canonical[key] !== undefined && (typeof canonical[key] !== 'string' || !nameFilterGroundedInText(canonical[key] as string, messageText ?? '') && !recentReads?.some(entry => entry.tool.startsWith('reimbursement.') && entry.claimFilters?.[key as 'requesterName' | 'categoryName'] === canonical[key]))) return undefined;
     }
     if (canonical.round !== undefined) {
       const spoken = /รอบ\s*(?:ที่\s*)?([0-9๐-๙]+|[ก-๙]+)/u.exec(messageText ?? '')?.[1];
-      if (!spoken || extractValueCandidates(spoken).amounts[0]?.value !== String(canonical.round)) return undefined;
+      if ((!spoken || extractValueCandidates(spoken).amounts[0]?.value !== String(canonical.round))
+        && !recentReads?.some(entry => entry.tool.startsWith('reimbursement.') && entry.claimFilters?.round === String(canonical.round))) return undefined;
+      canonical.round = String(canonical.round);
     }
     if (canonical.status === 'APPROVED' && /อนุมัติแล้ว.*(?:ยังไม่จ่าย|ยังไม่ได้จ่าย|รอจ่าย)/u.test(messageText ?? '')) canonical.status = 'APPROVED_UNPAID';
   }

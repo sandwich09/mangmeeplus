@@ -503,7 +503,7 @@ export class LineAiInternalController {
       || budget.grant.authorityKind !== 'webhook_classify' || budget.inputDigest !== evidence.joinedSha256) {
       return { status: 'UNAVAILABLE', errorCode: 'AI_CONTRACT_UNSUPPORTED', usage: [] };
     }
-    return new WorkflowClassifierAgent(createProvider(this.config, { timeoutMs: 4000 }))
+    return new WorkflowClassifierAgent(createProvider(this.config, { timeoutMs: 5000 }))
       .classify({ ...body, inputEvidence: evidence, budgetGrantV2: grant });
   }
 

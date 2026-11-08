@@ -3,13 +3,13 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "eed3d40d52c46639fb6d6622e7419d96a994d145",
+  "sourceRevision": "096e24bd282bafbc7dbd8a7bd4a03993a1896414",
   "checkoutBranch": null,
   "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
-      "sha256": "868e4138479d7a69d9e4509fc5649e7c02ad0bfefc2dbd30ac85427f9f241404"
+      "sha256": "03a18af741406c546195f571ec64d93687dfea9e24d01cc0c7e48e029470c971"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.ts",
@@ -61,7 +61,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
-      "sha256": "600880e916df64d73c42eecffaf2d5fefeee8a5084e068041f29f178c2a339b9"
+      "sha256": "48e2cdc4e0c551b13a96e459151cb3bab9080ee1ac08c0a8626b8a438f0587a2"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-reimbursement-draft.service.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "249578c42c02b36e59943ffe70efc5b4940520aededaaeb34b81bc609859147d"
+      "sha256": "3229a6f259c1bb9fafbbbe16e8d50cf218b47396051db1125fd36b153fdb3db0"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -241,7 +241,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "1ed288cab8c5337ef7c4ec30c0f33090ca0b50bce4fabff98f493fd2afa7e0a5"
+      "sha256": "be6acf9321f22ac369ddfa245d2ecaa7c980f890609683f732348874f2863678"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -249,7 +249,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "0498ebb06015a4b34822dcab603858cef9f9b990c893ff1e8d600d5cb6939436"
+      "sha256": "586401c70b4f707f95f81652be7bac3f2d595f35318bd46e0892e8469b7d27ab"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -6258,15 +6258,25 @@
       "supportedFields": {
         "required": [],
         "optional": [
+          "amountGt",
+          "amountGte",
+          "amountLt",
+          "amountLte",
           "categoryName",
           "paymentStatus",
+          "requester",
           "requesterName",
           "round",
           "status"
         ],
         "allowed": [
+          "amountGt",
+          "amountGte",
+          "amountLt",
+          "amountLte",
           "categoryName",
           "paymentStatus",
+          "requester",
           "requesterName",
           "round",
           "status"
@@ -10285,6 +10295,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-08T07:27:15.205Z",
-  "manifestDigest": "2d2163564c7bfea520b1debd657ab72034170a3caa0292c6d18adb06a6b2d86c"
+  "generatedAt": "2026-11-08T10:26:54.466Z",
+  "manifestDigest": "12749e42f76c9cc9ec32261779e152274efbcc6454e4d4459e642b680db0525e"
 }

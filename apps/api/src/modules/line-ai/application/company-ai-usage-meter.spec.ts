@@ -2684,7 +2684,7 @@ const classifyInvocation = (grant: import('@watchdog-bms/contracts').AiBudgetGra
   inputDigest: 'a'.repeat(64), payloadDigest: 'b'.repeat(64), schemaDigest: 'c'.repeat(64),
 });
 
-it('B2 classify reserves once, replays without a second hold and leaves intake ordinal zero available', async () => {
+it('B2 classify bounds two calls, replays without another hold and leaves intake ordinal zero available', async () => {
   const { service, input, row, now, money } = await classifyAuthorityFixture();
   const turn = await service.issue({ ...input, authorityKind: 'webhook_event', lane: 'public',
     allowedProfileIds: ['line-intake-text/2'], attemptKey: 'separate-turn' }, now);
@@ -2699,20 +2699,21 @@ it('B2 classify reserves once, replays without a second hold and leaves intake o
   const replay = await service.reserve(classifyInvocation(grant), false, now);
   assert.equal(replay.ok, false);
   assert.equal(money.reservations.size, 1);
-  // Complete the first call so the profile limit, rather than an in-flight hold, fences ordinal 1.
+  // A settled first call still leaves exactly one classifier slot.
   [...money.reservations.values()][0].status = 'SETTLED';
-  assert.equal((await service.reserve(classifyInvocation(grant, 1), false, now)).ok, false);
+  assert.equal((await service.reserve(classifyInvocation(grant, 1), false, now)).ok, true);
   assert.equal((await service.reserve(classifyInvocation(grant, 1), true, now)).ok, false);
-  assert.equal(row.classifyAuthorityJson.nextOrdinal, 1);
-  assert.equal(row.classifyAuthorityJson.profileCounts['line-classify/2'], 1);
+  assert.equal((await service.reserve(classifyInvocation(grant, 2), false, now)).ok, false);
+  assert.equal(row.classifyAuthorityJson.nextOrdinal, 2);
+  assert.equal(row.classifyAuthorityJson.profileCounts['line-classify/2'], 2);
   const intake = await service.reserve(classifyInvocation(turn, 0, 'line-intake-text/2'), false, now);
   assert.ok(intake.ok);
-  assert.equal(money.reservations.size, 2);
+  assert.equal(money.reservations.size, 3);
   assert.equal(row.budgetAuthorityJson.nextOrdinal, 1);
   const decision = { status: 'UNAVAILABLE' as const, errorCode: 'PROVIDER_TIMEOUT', usage: [] };
   assert.deepEqual(await service.storeClassifyDecision(grant, input.inputDigest, decision, now), decision);
   assert.equal((await service.reserve(classifyInvocation(grant, 1), false, now)).ok, false);
-  assert.equal(money.reservations.size, 2);
+  assert.equal(money.reservations.size, 3);
 });
 
 it('B2 a cached no-call decision also prevents a fresh classify reservation', async () => {
@@ -2758,7 +2759,7 @@ it('B2 classify and intake both require a paid package after credit cutover, inc
   }
 });
 
-it('real PostgreSQL: B2 classify races once, caches its decision and preserves the turn authority', async t => {
+it('real PostgreSQL: R22 classify races each hedge ordinal once, caches its two-call decision and preserves the turn authority', async t => {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     if (process.env.OCR_REQUIRE_POSTGRES === 'true') throw new Error('OCR PostgreSQL test database is required');
@@ -2814,12 +2815,26 @@ it('real PostgreSQL: B2 classify races once, caches its decision and preserves t
     assert.equal(results.filter(result => result.ok).length, 1);
     const first = results.find(result => result.ok)!;
     assert.ok(first.ok);
-    assert.equal(await settleAiBudgetStep(prisma, { invocationKey: first.envelope.invocationKey, meta: { sourceRoute: 'line-ai-v2' },
-      entry: { modelId, tag: 'line.workflow-classify', ok: true, inputTokens: 100, outputTokens: 10,
-        cacheReadInputTokens: 0, cacheWriteInputTokens: 0, usageBasis: 'PROVIDER_REPORTED' } as never }), 'settled');
-    assert.equal((await service.reserve(classifyInvocation(grant, 1), false, now)).ok, false);
-    assert.equal((await service.reserve(classifyInvocation(grant, 1), true, now)).ok, false);
-    assert.deepEqual(await service.readClassifyState(grant, input.inputDigest, owner), { decision: null, used: true });
+    const hedges = await Promise.all([service.reserve(classifyInvocation(grant, 1), false, now), service.reserve(classifyInvocation(grant, 1), false, now)]);
+    assert.equal(hedges.filter(result => result.ok).length, 1);
+    const second = hedges.find(result => result.ok)!; assert.ok(second.ok);
+    const reservations = await client.aiBudgetReservation.findMany({ where: { companyId } });
+    assert.equal(reservations.length, 2);
+    assert.ok(reservations.every(row => row.status === 'DISPATCHED' && row.upperBoundSatang > 0));
+    assert.equal(reservations[0]!.upperBoundSatang, reservations[1]!.upperBoundSatang);
+    const settle = (invocationKey: string, ok: boolean) => settleAiBudgetStep(prisma, { invocationKey, meta: { sourceRoute: 'line-ai-v2' },
+      entry: { modelId, tag: 'line.workflow-classify', ok, ...(!ok ? { errorCode: 'PROVIDER_TIMEOUT' } : {}),
+        inputTokens: 1000, outputTokens: 100, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, usageBasis: 'PROVIDER_REPORTED' } as never });
+    assert.equal(await settle(second.envelope.invocationKey, true), 'settled');
+    assert.equal(await settle(first.envelope.invocationKey, false), 'settled');
+    const loser = await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: first.envelope.reservationId } });
+    const winner = await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: second.envelope.reservationId } });
+    assert.equal((loser.evidenceJson as any).customerChargedSatang, 0);
+    assert.ok((loser.evidenceJson as any).companyAbsorbedSatang > 0);
+    assert.ok((winner.evidenceJson as any).customerChargedSatang > 0);
+    assert.equal(await settle(first.envelope.invocationKey, false), 'duplicate');
+    assert.deepEqual(await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: loser.id } }), loser);
+    assert.equal((await service.reserve(classifyInvocation(grant, 2), false, now)).ok, false);
     const decision: import('@watchdog-bms/contracts').LineWorkflowClassifyResponse = {
       status: 'CLASSIFIED', label: 'reimbursement_submit', secondLabel: 'none', confidence: 0.99, secondConfidence: 0,
       slots: { reference: 'this', ordinal: 0, personName: '', vendorName: '', descriptionText: '', amountText: '', dateText: '', reasonText: '', categoryText: '' },
@@ -2832,11 +2847,22 @@ it('real PostgreSQL: B2 classify races once, caches its decision and preserves t
     const after = await client.lineWebhookEventLog.findUniqueOrThrow({ where: { id: event.id } });
     assert.deepEqual(after.budgetAuthorityJson, before);
     assert.equal(after.budgetAuthorityRevision, 1);
-    assert.equal((after.classifyAuthorityJson as any).nextOrdinal, 1);
+    assert.equal((after.classifyAuthorityJson as any).nextOrdinal, 2);
     assert.deepEqual(await service.issue(input, now), grant);
-    assert.equal(await client.aiBudgetReservation.count({ where: { companyId } }), 1);
-    assert.ok((await service.reserve(classifyInvocation(turn, 0, 'line-intake-text/2'), false, now)).ok);
     assert.equal(await client.aiBudgetReservation.count({ where: { companyId } }), 2);
+    const intake = await service.reserve(classifyInvocation(turn, 0, 'line-intake-text/2'), false, now);
+    assert.ok(intake.ok);
+    assert.equal(await client.aiBudgetReservation.count({ where: { companyId } }), 3);
+    const unspent = { invocationKey: intake.envelope.invocationKey, externalUnits: 0, meta: { sourceRoute: 'line-intake-route' },
+      entry: { modelId, tag: 'line.intake-route', ok: false, errorCode: 'PROVIDER_TIMEOUT', usageBasis: 'CONSERVATIVE_ESTIMATE' as const,
+        inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 0, externalUnits: 0 } };
+    assert.equal(await settleAiBudgetStep(prisma, unspent), 'settled');
+    const cancelled = await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: intake.envelope.reservationId } });
+    assert.equal(cancelled.status, 'CANCELLED');
+    assert.equal(cancelled.usageBasis, 'COMPANY_ABSORBED');
+    assert.equal((cancelled.evidenceJson as any).customerChargedSatang, 0);
+    assert.equal((cancelled.evidenceJson as any).companyAbsorbedSatang, 0);
+    assert.equal(await settleAiBudgetStep(prisma, unspent), 'duplicate');
     await client.companyAiConfiguration.update({ where: { companyId }, data: { aiCreditCutoverAt: new Date(0) } });
     const freeEvent = await client.lineWebhookEventLog.create({ data: { companyId, webhookEventId: `${companyId}-no-package`, eventType: 'message', status: 'processing' } });
     const freeGrant = await service.issue({ ...input, authorityId: freeEvent.id, turnKey: freeEvent.id }, now);
@@ -2844,7 +2870,7 @@ it('real PostgreSQL: B2 classify races once, caches its decision and preserves t
     const refused = await service.reserve(classifyInvocation(freeGrant), false, now);
     assert.equal(refused.ok, false);
     if (!refused.ok && refused.reason !== 'already_claimed') assert.equal(refused.aiCredit, 'PACKAGE_REQUIRED');
-    assert.equal(await client.aiBudgetReservation.count({ where: { companyId } }), 2);
+    assert.equal(await client.aiBudgetReservation.count({ where: { companyId } }), 3);
   } finally {
     if (created) {
       await client.lineWebhookEventLog.deleteMany({ where: { companyId } });
@@ -2875,4 +2901,74 @@ it('B2 ledger grants keep their original columns, owner validation and reservati
   assert.equal(row.classifyAuthorityRevision, 0);
   assert.equal(await service.readClassifyState(grant, input.inputDigest, owner), null);
   assert.equal(await service.issue({ ...input, authorityKind: 'qa_job' }, now), null, 'QA still requires transfer');
+});
+
+it('R22 classify reserves two upper bounds, caches a two-call decision and absorbs the loser idempotently', async () => {
+  const { service, input, row, owner, now, money } = await classifyAuthorityFixture();
+  const grant = await service.issue(input, now); assert.ok(grant);
+  money.prisma.client.aiBudgetReservation.count = async ({ where }: any) => [...money.reservations.values()].filter(hold =>
+    hold.companyId === where.companyId && hold.attemptKey === where.attemptKey && where.status.in.includes(hold.status)
+    && !(where.NOT && hold.invocationKey === where.NOT.invocationKey && hold.status === where.NOT.status
+      && hold.pricingSnapshot.profileId === where.NOT.pricingSnapshot.equals)).length;
+  const first = await service.reserve(classifyInvocation(grant), false, now); assert.ok(first.ok);
+  money.reservations.get(first.envelope.reservationId)!.status = 'UNRESOLVED';
+  assert.equal((await service.reserve(classifyInvocation(grant, 1), false, now)).ok, false, 'an unresolved first call cannot hedge');
+  money.reservations.get(first.envelope.reservationId)!.status = 'DISPATCHED';
+  const second = await service.reserve(classifyInvocation(grant, 1), false, now); assert.ok(second.ok);
+  const holds = [...money.reservations.values()];
+  assert.equal(holds.length, 2);
+  assert.ok(holds.every(hold => hold.status === 'DISPATCHED' && hold.upperBoundSatang > 0));
+  assert.equal(holds[0].upperBoundSatang, holds[1].upperBoundSatang);
+  assert.equal(row.classifyAuthorityJson.nextOrdinal, 2);
+  assert.equal(row.classifyAuthorityJson.profileCounts['line-classify/2'], 2);
+  assert.deepEqual(await service.readClassifyState(grant, input.inputDigest, owner), { used: true, decision: null });
+  assert.equal((await service.reserve(classifyInvocation(grant, 2), false, now)).ok, false);
+  const { settleAiBudgetStep } = await import('./company-ai-budget-reservation');
+  const evidence = (invocationKey: string, ok: boolean) => ({ invocationKey, companyId: owner.companyId,
+    meta: { sourceRoute: 'line-workflow-classify' }, entry: { tag: 'line.workflow-classify', modelId: input.model.modelId,
+      ok, durationMs: 1, ...(!ok ? { errorCode: 'PROVIDER_TIMEOUT' } : {}), inputTokens: 1000, outputTokens: 100,
+      cacheReadInputTokens: 0, cacheWriteInputTokens: 0, usageBasis: 'PROVIDER_REPORTED' as const } });
+  assert.equal(await settleAiBudgetStep(money.prisma, evidence(second.envelope.invocationKey, true)), 'settled');
+  assert.equal(await settleAiBudgetStep(money.prisma, evidence(first.envelope.invocationKey, false)), 'settled');
+  const before = structuredClone([...money.reservations.values()]);
+  assert.equal(await settleAiBudgetStep(money.prisma, evidence(first.envelope.invocationKey, false)), 'duplicate');
+  assert.deepEqual([...money.reservations.values()], before);
+  const loser = money.reservations.get(first.envelope.reservationId)!;
+  const winner = money.reservations.get(second.envelope.reservationId)!;
+  assert.equal(loser.evidenceJson.customerChargedSatang, 0);
+  assert.ok(loser.evidenceJson.companyAbsorbedSatang > 0);
+  assert.ok(winner.evidenceJson.customerChargedSatang > 0);
+  const decision: import('@watchdog-bms/contracts').LineWorkflowClassifyResponse = { status: 'CLASSIFIED',
+    label: 'expense_pay', secondLabel: 'none', confidence: 0.99, secondConfidence: 0, slots: { reference: 'none', ordinal: 0, personName: '', vendorName: '', descriptionText: '',
+      amountText: '', dateText: '', reasonText: '', categoryText: '' },
+    schemaEnforcement: 'output_config', usage: [], modelId: input.model.modelId };
+  assert.deepEqual(await service.storeClassifyDecision(grant, input.inputDigest, decision, now), decision);
+  assert.deepEqual(await service.readClassifyState(grant, input.inputDigest, owner), { used: true, decision });
+  assert.deepEqual(await service.storeClassifyDecision(grant, input.inputDigest,
+    { status: 'UNAVAILABLE', errorCode: 'PROVIDER_TIMEOUT', usage: [] }, now), decision);
+});
+
+it('R22 never-dispatched zero usage cancels the admitted hold once without customer or provider cost', async () => {
+  const { service, input, now, money } = await classifyAuthorityFixture();
+  const grant = await service.issue(input, now); assert.ok(grant);
+  const admitted = await service.reserve(classifyInvocation(grant), false, now); assert.ok(admitted.ok);
+  const { settleAiBudgetStep, readAiBudgetMonthSnapshot } = await import('./company-ai-budget-reservation');
+  const evidence = { invocationKey: admitted.envelope.invocationKey, externalUnits: 0,
+    meta: { sourceRoute: 'line-workflow-classify' }, entry: { modelId: input.model.modelId, tag: 'line.workflow-classify',
+      ok: false, errorCode: 'PROVIDER_TIMEOUT', usageBasis: 'CONSERVATIVE_ESTIMATE' as const,
+      inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, externalUnits: 0, durationMs: 0 } };
+  assert.equal(await settleAiBudgetStep(money.prisma, evidence), 'settled');
+  const reservation = money.reservations.get(admitted.envelope.reservationId)!;
+  assert.equal(reservation.status, 'CANCELLED');
+  assert.equal(reservation.usageBasis, 'COMPANY_ABSORBED');
+  assert.equal(reservation.settledCostSatang, 0);
+  assert.equal(reservation.evidenceJson.customerChargedSatang, 0);
+  assert.equal(reservation.evidenceJson.companyAbsorbedSatang, 0);
+  assert.equal(money.events.get(admitted.envelope.invocationKey)!.costSatang, 0);
+  const snapshot = await readAiBudgetMonthSnapshot(money.prisma, input.owner.owner.companyId, grant.monthKey);
+  assert.equal(snapshot.reserved.TOTAL, 0);
+  const before = structuredClone(reservation);
+  assert.equal(await settleAiBudgetStep(money.prisma, evidence), 'duplicate');
+  assert.deepEqual(reservation, before);
+  assert.equal(money.events.size, 1);
 });
