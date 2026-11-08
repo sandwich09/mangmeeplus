@@ -20783,7 +20783,7 @@ it('R23 controller: a member without the review right naming another member\'s b
     h.flow.substituteReceiptContinuation = { substituteContext: async () => ({ workflowState: 'none', hasPendingQuestion: false, preparedState: 'none', recentCandidateCount: 0 }),
       execute: async (_ctx: any, input: any) => { inputs.push(input); return { handled: true, status: 'TARGET_REQUIRED', replyText: 'เลือกรายการ', pendingQuestion: 'เลือกรายการ' }; } };
     h.flow.deliverSubstituteWorkflow = async () => {};
-    const event = await h.execute('ทำใบรับรองแทนใบเสร็จบิล ทดสอบ-0009 ที่พนักงานลงไว้');
+    const event = await h.execute(review ? 'ทำใบรับรองแทนใบเสร็จบิล ทดสอบ-0009 ที่พนักงานลงไว้' : 'ขอทำใบรับรองแทนใบเสร็จของรายการ 0009 ให้คนอื่น');
     if (!review) {
       assert.match(JSON.stringify(h.delivered.at(-1)), /ได้เฉพาะรายการที่คุณบันทึกเอง/);
       assert.deepEqual(h.flow.workflowTaskOutcomes.get(event), { status: 'REFUSED', kind: 'substitute_receipt' });
@@ -20799,4 +20799,15 @@ it('R23 controller: a reject reason that names what is missing is taken as the r
   assert.equal(isPendingFieldAnswer('ไม่ระบุว่าเป็นค่าอะไรค่ะ', 'reason'), true);
   for (const text of ['ขาดอะไรบ้างคะ', 'ยอดเท่าไหร่', 'ไม่มีใบเสร็จต้องทำยังไง']) assert.equal(isPendingFieldAnswer(text, 'reason'), false, text);
   assert.equal(isPendingFieldAnswer('ไม่ระบุว่าเป็นค่าอะไรค่ะ', 'payee'), false);
+});
+
+it('R23 controller: a reject reason with an embedded "อะไร" opens the reject preview', async t => {
+  const h = await r8ClaimPicker(t, 'reimbursement_reject');
+  await h.execute('ใบเบิก 1877 บ.');
+  const key = `expense-action:${chatKeyHashOf(BASE_EVENT)}`;
+  assert.equal((await h.source.actions.store.load('company-1', key))?.awaitingReason, true);
+  await h.execute('ขาดข้อมูลว่าจะใช้ทำอะไร');
+  const entry = await h.source.actions.store.load('company-1', key);
+  assert.equal(entry?.preview.reason, 'ขาดข้อมูลว่าจะใช้ทำอะไร');
+  assert.equal(entry?.preview.action, 'REIMBURSEMENT_REJECT');
 });

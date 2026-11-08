@@ -4845,7 +4845,8 @@ export class ProcessLineWebhookUseCase {
         }
         // Owner decision ก4 lets a member without the review right prepare only bills they recorded: a named bill
         // outside that list is refused plainly, never answered with a picker of other bills.
-        const namedDocuments = lineWorkflowPickerText(event.messageText).documents;
+        const typedEnding = /(?:รายการ|บิล|เลข(?:ท้าย)?|เอกสาร)\s*(\d{3,})(?!\s*(?:บาท|บ\.|฿))/u.exec(mapThaiDigits(event.messageText))?.[1];
+        const namedDocuments = lineWorkflowPickerText(event.messageText).documents.length ? lineWorkflowPickerText(event.messageText).documents : typedEnding ? [typedEnding] : [];
         if (expenseWorkflow === 'substitute_receipt' && namedDocuments.length === 1 && !ctx.permissions.includes('expense.review') && records.exhaustive
           && !records.targets.some(target => target.documentNumbers?.some(number => lineDocumentNumberMatches(number, namedDocuments[0]!)))) {
           this.workflowTaskOutcomes.set(event, { status: 'REFUSED', kind: 'substitute_receipt' });

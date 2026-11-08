@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "63c9a87327d8d80b2f7125c54b4a28081710f699",
+  "sourceRevision": "dc8afe728d3d80179f7c604f9b800e4c0e1be5bf",
   "checkoutBranch": null,
   "checkoutDirty": true,
   "sourceHashes": [
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "6e5b97095946b6e940916b072d4bd73b08bc4695c6e4bd690dbde212cdc7ae0e"
+      "sha256": "0b8de7562dc6dd742ea36141f3050b4ec968268e255ffe036d2a0b3ca34246c5"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-message-buffer.service.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "d8543227264d94225b3d2ffd3383e917b5913ebd7738f8448092615c05de9754"
+      "sha256": "cff1d122d8f48341d02851552621cd411ee4deb9284e7959b8f56a86d3beded7"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -10295,6 +10295,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-08T15:17:53.332Z",
-  "manifestDigest": "1c1f1f013971e5256c9047eeb8f7eacfce3049604cd2c228b0b7f7ce5f8e2784"
+  "generatedAt": "2026-11-08T15:29:10.036Z",
+  "manifestDigest": "7aa77d8265bb0333411ae24f0fb317b2ae11fd7d91e6a97810fffd56b9bcee88"
 }

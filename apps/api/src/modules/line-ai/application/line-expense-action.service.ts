@@ -615,7 +615,7 @@ export class LineExpenseActionService {
     for (const field of ['reason', 'payeeName', 'payeeAddress']) {
       const value = input[field];
       if (typeof value !== 'string') continue;
-      if (lineWorkflowPickerText(value).question || isLineWorkflowPutOff(value)) delete input[field];
+      if (lineWorkflowPickerText(value).question && !(field === 'reason' && isReasonStatement(value)) || isLineWorkflowPutOff(value)) delete input[field];
       else input[field] = stripLineFieldParticles(field === 'reason' ? value.replace(/^เหตุผล(?:คือ)?\s*[:：]?\s*/u, '') : value);
     }
     let action = input.action as ExpenseAction;
