@@ -8,7 +8,7 @@ import { LineWorkflowTargetService, type LineWorkflowTargets, type LineWorkflowR
 import { CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ClaimWorkflowId, type ExpenseWorkflowId } from '../domain/logic/line-reimbursement-approval-control.logic';
 import { verifyLineWorkflowOpenSig, lineWorkflowOpenData } from '../domain/logic/line-reimbursement-approval-control.logic';
 import type { LineAiInputEvidenceV2, LineWorkflowControl } from '@watchdog-bms/contracts';
-import { isPendingFieldAnswer, lineDocumentNumberMatches, lineWorkflowPickerText } from '../domain/logic/line-ai-classifier.logic';
+import { isPendingFieldAnswer, isReasonStatement, lineDocumentNumberMatches, lineWorkflowPickerText } from '../domain/logic/line-ai-classifier.logic';
 import { REIMBURSEMENT_DRAFT_CHANGED } from '../domain/logic/line-reimbursement-draft-card.logic';
 import { DISBURSEMENT_VOUCHER_MAX_LINES, DISBURSEMENT_VOUCHER_ERROR_WORDS, E_WHT_WORDS, eWhtRateKind, eWhtReducedRateOn, LINE_WORKFLOW_OPEN_ACTIONS, lineReplyLanguage } from '@watchdog-bms/contracts';
 import { lineUiLabel, lineDisplayDate, lineExpenseEvidenceNotes, type LineReplyLanguage } from '../domain/logic/line-language.logic';
@@ -1320,7 +1320,8 @@ export class LineExpenseActionService {
   async answerReason(ctx: RequestContext, chat: string, reason: string, evidence?: LineAiInputEvidenceV2): Promise<{ preview?: ExpenseActionPreview; reply: string; cancelled?: true; taskSource?: { action: ExpenseAction; id: string } } | null> {
     const entry = await this.store.load(ctx.companyId, this.key(chat));
     if (!(entry?.awaitingReason || entry?.awaitingField) || !await this.bound(ctx, chat, entry)) return null;
-    if (lineWorkflowPickerText(reason).question || isLineWorkflowPutOff(reason) || lineWorkflowCommand(reason) && lineWorkflowPickerText(reason, true).explicit) return null;
+    const reasonField = !!entry.awaitingReason || entry.awaitingField === 'reason';
+    if (lineWorkflowPickerText(reason).question && !(reasonField && isReasonStatement(reason)) || isLineWorkflowPutOff(reason) || lineWorkflowCommand(reason) && lineWorkflowPickerText(reason, true).explicit) return null;
     reason = stripLineFieldParticles(entry.awaitingReason || entry.awaitingField === 'reason' ? reason.replace(/^เหตุผล(?:คือ)?\s*[:：]?\s*/u, '') : reason);
     if (!reason) return { reply: this.question(entry) };
     const language: LineReplyLanguage = /[\u0E00-\u0E7F]/u.test(reason) ? 'th' : entry.awaitingField && entry.awaitingField !== 'reason' ? entry.preview.language ?? 'th' : lineReplyLanguage(reason, entry.preview.language ?? 'th');

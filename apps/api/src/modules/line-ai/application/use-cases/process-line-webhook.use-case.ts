@@ -4843,6 +4843,19 @@ export class ProcessLineWebhookUseCase {
           await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);
           return;
         }
+        // Owner decision ก4 lets a member without the review right prepare only bills they recorded: a named bill
+        // outside that list is refused plainly, never answered with a picker of other bills.
+        const namedDocuments = lineWorkflowPickerText(event.messageText).documents;
+        if (expenseWorkflow === 'substitute_receipt' && namedDocuments.length === 1 && !ctx.permissions.includes('expense.review') && records.exhaustive
+          && !records.targets.some(target => target.documentNumbers?.some(number => lineDocumentNumberMatches(number, namedDocuments[0]!)))) {
+          this.workflowTaskOutcomes.set(event, { status: 'REFUSED', kind: 'substitute_receipt' });
+          await this.deliverReply(event, replyLanguage(event) === 'en'
+            ? 'You can prepare a substitute receipt only for expenses you recorded. Ask the person who recorded it, or someone who reviews expenses.'
+            : 'ทำใบรับรองแทนใบเสร็จได้เฉพาะรายการที่คุณบันทึกเองค่ะ ให้ผู้ที่บันทึกรายการนั้น หรือผู้ตรวจทานค่าใช้จ่ายทำแทนค่ะ',
+            lineChoiceQuickReply([{ label: replyLanguage(event) === 'en' ? 'Main menu' : 'เมนูหลัก', text: 'เมนูหลัก' }]));
+          await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);
+          return;
+        }
         if (expenseWorkflow === 'substitute_receipt' && (records.targets.length || this.classifiedWorkflowStarts.has(event)) && this.substituteReceiptContinuation) {
           let offered = records.targets, exhaustive = records.exhaustive;
           const evidence = await this.textEvidenceV2(event);

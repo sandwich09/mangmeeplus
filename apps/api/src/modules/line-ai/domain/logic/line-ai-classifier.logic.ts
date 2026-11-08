@@ -99,15 +99,24 @@ export function chooseAgent(intent: LineAiIntent, normalizedText: string): LineA
 }
 
 /** Pending fields own plain answers; questions and new commands keep their normal route. */
+/** "ขาดข้อมูลว่าจะใช้ทำอะไร": a reason that names what is missing or wrong is a statement, even with an embedded อะไร/ไหน. */
+export function isReasonStatement(text: string): boolean {
+  const value = stripLineFieldParticles(text.normalize('NFC')).trim();
+  return /^(?:ขาด|ไม่มี|ไม่ได้ระบุ|ไม่ระบุ|ไม่ครบ|ไม่ตรง|ไม่ชัด|ไม่ถูก|ผิด|ซ้ำ|ลืม|บันทึกผิด|ใส่ผิด|รายการซ้ำ)/u.test(value)
+    && /ว่า\S*(?:อะไร|ไหน)/u.test(value)
+    && !/[?？]|ไหม|มั้ย|เปล่า|หรือยัง|รึยัง|เท่าไร|เท่าไหร่|กี่|ยังไง|อย่างไร|ทำไม|ใคร|เมื่อไร|เมื่อไหร่/u.test(value);
+}
+
 export function isPendingFieldAnswer(text: string, field: 'claim' | 'reason' | 'payee'): boolean {
   const value = stripLineFieldParticles(text);
-  return !!value && !isLineWorkflowPutOff(text) && !(lineWorkflowCommand(text) && lineWorkflowPickerText(text, true).explicit) && value.length <= 2000 && !lineWorkflowPickerText(text).question && !/[?？\n]/u.test(value)
+  return !!value && !isLineWorkflowPutOff(text) && !(lineWorkflowCommand(text) && lineWorkflowPickerText(text, true).explicit) && value.length <= 2000 && (!lineWorkflowPickerText(text).question || field === 'reason' && isReasonStatement(text)) && !/[?？\n]/u.test(value)
     && (field === 'claim'
       ? !/^(?:ขอ|ช่วย|สร้าง|เบิก|บันทึก|ดู|ยกเลิก|ไม่ทำ|เปลี่ยน|แก้|ทำข้อ|ทำรายการ|ให้ทำ|ติดต่อเจ้าหน้าที่)/u.test(value)
       : !staffMenuCommand(value) && !parseLineCompanyCommand(value)
         && !/^(?:ยกเลิก|ไม่ทำ|ไม่ทำแล้ว|cancel|บันทึกรายจ่าย|ทำใบเบิกให้หน่อย)$/iu.test(value)
         && !LINE_CHAT_ACTIONS.some(action => action.command && action.command.toLowerCase() === value.toLowerCase()))
-    && !/(?:อะไร|ยังไง|อย่างไร|ไหม|มั้ย|เท่าไร|เท่าไหร่|ทำไม|หรอ|เหรอ|บ้าง|หรือเปล่า|รึเปล่า|ไหน|ใคร|เมื่อไร|เมื่อไหร่)\s*(?:คะ|ค่ะ|ครับ|นะ|จ๊ะ|จ้า)?$|^(?:ทำไม|ยังไง|อย่างไร|ใคร|ที่ไหน|เมื่อไร|เมื่อไหร่)|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu.test(value);
+    && (field === 'reason' && isReasonStatement(text)
+      || !/(?:อะไร|ยังไง|อย่างไร|ไหม|มั้ย|เท่าไร|เท่าไหร่|ทำไม|หรอ|เหรอ|บ้าง|หรือเปล่า|รึเปล่า|ไหน|ใคร|เมื่อไร|เมื่อไหร่)\s*(?:คะ|ค่ะ|ครับ|นะ|จ๊ะ|จ้า)?$|^(?:ทำไม|ยังไง|อย่างไร|ใคร|ที่ไหน|เมื่อไร|เมื่อไหร่)|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu.test(value));
 }
 
 /** A typed number names a record when it is the whole number, or its last part after a dash or slash

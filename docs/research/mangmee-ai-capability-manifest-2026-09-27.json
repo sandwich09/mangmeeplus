@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "b48fcc5b90f466634524b1c926cd0875c329b148",
+  "sourceRevision": "63c9a87327d8d80b2f7125c54b4a28081710f699",
   "checkoutBranch": null,
   "checkoutDirty": true,
   "sourceHashes": [
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "4cb9756795fb2ba365a27d57a16a7b15cda83a245690b6672d95ca84d49ca6ae"
+      "sha256": "6e5b97095946b6e940916b072d4bd73b08bc4695c6e4bd690dbde212cdc7ae0e"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-message-buffer.service.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "78a38acbcf0881b9d39a7b2346c62dae4573fe61c7c33bd78cfd751c33ac65f4"
+      "sha256": "d8543227264d94225b3d2ffd3383e917b5913ebd7738f8448092615c05de9754"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -249,7 +249,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "18244c2299ead5ea06ed155f2d062de01cde941ede152d2f73f749f7ae577e4c"
+      "sha256": "f072f12f0ec8936b197ead66b8a16efaef331058e8f40143afa818a583b80825"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -10295,6 +10295,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-08T14:57:07.246Z",
-  "manifestDigest": "6fbe9db496653656b5af385fdcec72e0840cb68c59e27463ed0cb293251b2095"
+  "generatedAt": "2026-11-08T15:17:53.332Z",
+  "manifestDigest": "1c1f1f013971e5256c9047eeb8f7eacfce3049604cd2c228b0b7f7ce5f8e2784"
 }

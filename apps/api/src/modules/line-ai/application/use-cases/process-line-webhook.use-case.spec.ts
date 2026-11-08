@@ -20772,3 +20772,31 @@ it('R23 controller: a voucher vendor name stops before particles, and shop words
   assert.equal(voucherVendorName('สร้างใบเตรียมจ่ายของร้านเราจ้ะ'), undefined);
   assert.equal(voucherVendorName('สร้างใบเตรียมจ่ายจากบิล ทดสอบ-0004 ให้หน่อย'), undefined);
 });
+
+it('R23 controller: a member without the review right naming another member\'s bill for a substitute receipt is refused, not shown a picker', async t => {
+  for (const review of [false, true]) {
+    const h = await r7OffPagePicker(t), inputs: any[] = [];
+    h.source.records.forEach((row, i) => { row.expenseNumber = `อื่น-${i}`; });
+    (h.source.targets as any).candidates = { execute: async () => ({ items: h.source.records, total: h.source.records.length }) };
+    h.flow.workflowTargets = h.source.targets;
+    if (!review) h.source.ctx.permissions = h.source.ctx.permissions.filter((key: string) => key !== 'expense.review');
+    h.flow.substituteReceiptContinuation = { substituteContext: async () => ({ workflowState: 'none', hasPendingQuestion: false, preparedState: 'none', recentCandidateCount: 0 }),
+      execute: async (_ctx: any, input: any) => { inputs.push(input); return { handled: true, status: 'TARGET_REQUIRED', replyText: 'เลือกรายการ', pendingQuestion: 'เลือกรายการ' }; } };
+    h.flow.deliverSubstituteWorkflow = async () => {};
+    const event = await h.execute('ทำใบรับรองแทนใบเสร็จบิล ทดสอบ-0009 ที่พนักงานลงไว้');
+    if (!review) {
+      assert.match(JSON.stringify(h.delivered.at(-1)), /ได้เฉพาะรายการที่คุณบันทึกเอง/);
+      assert.deepEqual(h.flow.workflowTaskOutcomes.get(event), { status: 'REFUSED', kind: 'substitute_receipt' });
+      assert.equal(inputs.length, 0);
+    } else assert.doesNotMatch(JSON.stringify(h.delivered.at(-1) ?? ''), /ได้เฉพาะรายการที่คุณบันทึกเอง/);
+    assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+  }
+});
+
+it('R23 controller: a reject reason that names what is missing is taken as the reason', async () => {
+  const { isPendingFieldAnswer, isReasonStatement } = await import('../../domain/logic/line-ai-classifier.logic');
+  assert.equal(isReasonStatement('ขาดข้อมูลว่าซื้อไปใช้ที่สาขาไหน'), true);
+  assert.equal(isPendingFieldAnswer('ไม่ระบุว่าเป็นค่าอะไรค่ะ', 'reason'), true);
+  for (const text of ['ขาดอะไรบ้างคะ', 'ยอดเท่าไหร่', 'ไม่มีใบเสร็จต้องทำยังไง']) assert.equal(isPendingFieldAnswer(text, 'reason'), false, text);
+  assert.equal(isPendingFieldAnswer('ไม่ระบุว่าเป็นค่าอะไรค่ะ', 'payee'), false);
+});
