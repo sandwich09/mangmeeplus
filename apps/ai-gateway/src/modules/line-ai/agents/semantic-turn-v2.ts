@@ -43,15 +43,22 @@ export function isCurrentCapabilityQuestion(text: string): boolean {
 /** Receipt care and record-keeping questions, with product steps deliberately excluded. */
 export function isGeneralBusinessPracticeQuestion(text: string): boolean {
   if (/เมนู|ปุ่ม|หน้าจอ|เว็บ|ระบบ|แอป|มั่งมี|ตั้งค่า|เพิ่มหมวด|สร้างหมวด|\b(?:app|menu|button|website|system|setup)\b/iu.test(text)) return false;
-  return /(?:ถ่าย(?:รูป|ภาพ)|สแกน).*(?:ใบเสร็จ|บิล).*(?:ชัด|อ่าน|แสง|เงา|เอียง)|(?:ใบเสร็จ|บิล).*(?:ซีด|จาง|กระดาษความร้อน).*(?:เก็บ|รักษา|อ่าน)|(?:ใบเสร็จ|บิล).*(?:เก็บ|รักษา).*(?:อ่านได้นาน|ไม่ซีด|ไม่จาง)|(?:จัดเก็บ|จัดเรียง|จัดหมวดหมู่).*(?:ใบเสร็จ|บิล|เอกสาร).*(?:หา|ค้น|สูญหาย)|แยกเงิน.*(?:ส่วนตัว|ร้าน)|(?:จด|จัด|แยก).*(?:รายรับรายจ่าย|รายรับ.*รายจ่าย).*(?:ยังไง|อย่างไร|เป็นระเบียบ)/u.test(text);
+  return /(?:ถ่าย(?:รูป|ภาพ)|สแกน).*(?:ใบเสร็จ|บิล).*(?:ชัด|อ่าน|แสง|เงา|เอียง)|(?:ใบเสร็จ|บิล).*(?:ซีด|จาง|เลือน|กระดาษความร้อน|อ่านยาก|อ่านไม่ออก|ไม่ชัด).*(?:เก็บ|รักษา|อ่าน|ดู|ถ่าย|ทำ(?:ยังไง|อย่างไร))|(?:ใบเสร็จ|บิล).*(?:เก็บ|รักษา).*(?:อ่านได้นาน|ไม่ซีด|ไม่จาง)|(?:จัดเก็บ|จัดเรียง|จัดหมวดหมู่).*(?:ใบเสร็จ|บิล|เอกสาร).*(?:หา|ค้น|สูญหาย)|แยกเงิน.*(?:ส่วนตัว|ร้าน)|(?:จด|จัด|แยก).*(?:รายรับรายจ่าย|รายรับ.*รายจ่าย).*(?:ยังไง|อย่างไร|เป็นระเบียบ)/u.test(text);
 }
 
-function capabilityHelpScope(text: string): 'reimbursements' | 'all' | undefined {
+export function capabilityHelpScope(text: string): 'reimbursements' | 'all' | undefined {
   const compact = text.trim().replace(/\s+/gu, '');
-  if (/^(?:(?:น้อง(?:มั่งมี)?|มั่งมี|คุณ)?(?:ช่วย|ทำ)(?:เรื่อง)?(?:ใบเบิก|การเบิกจ่าย)|(?:เรื่อง)?(?:ใบเบิก|การเบิกจ่าย)(?:น้อง(?:มั่งมี)?|มั่งมี|คุณ)?(?:ช่วย|ทำ))(?:อะไร)?(?:ให้)?ได้(?:อะไร)?(?:บ้าง)?(?:คะ|ค่ะ|ครับ|นะคะ)?[?？]*$/u.test(compact)
-    || /^whatcanyou(?:help(?:me)?(?:with|about)?|do(?:with|about|for)?)(?:claims?|reimbursements?)[?？]*$/iu.test(compact)) return 'reimbursements';
-  if (/^(?:(?:เพิ่ง(?:เข้ามา)?(?:ใช้|ใช้งาน)(?:วันแรก|ครั้งแรก)|ใช้งานครั้งแรก|มือใหม่)[,，]*)?(?:ควรทำอะไรก่อน(?:ดี)?|เริ่ม(?:ใช้(?:งาน)?)?(?:ยังไง|อย่างไร|ตรงไหน)(?:ดี)?|เริ่มต้น(?:ใช้(?:งาน)?)?(?:ยังไง|อย่างไร))(?:คะ|ค่ะ|ครับ|นะคะ)?[?？]*$/u.test(compact)
-    || /^(?:wheredoistart|howdoistart|howtostart|gettingstarted)[?？]*$/iu.test(compact)) return 'all';
+  if (/^whatcanyou(?:help(?:me)?(?:with|about)?|do(?:with|about|for)?)(?:claims?|reimbursements?)[?？]*$/iu.test(compact)) return 'reimbursements';
+  if (/^(?:wheredoistart|howdoistart|howtostart|gettingstarted)[?？]*$/iu.test(compact)) return 'all';
+  // The plain "ช่วยอะไรได้บ้าง" keeps the current capability list (isCurrentCapabilityQuestion).
+  if (isCurrentCapabilityQuestion(text)) return undefined;
+  // A setup or step question keeps the reviewed-guide path; this is only "what can you help with" and "where do I start".
+  if (/ตั้งค่า|เพิ่ม(?:หมวด|ผู้|สาขา|พนักงาน)|สร้าง|ขั้นตอน|setup/iu.test(compact)) return undefined;
+  // The assistant is the subject: "ช่วยเรื่องใบเบิกอะไรได้บ้าง", "น้องทำอะไรได้บ้าง", never "ร้านทำอะไรได้บ้างเพื่อลดต้นทุน".
+  const asksWhat = /ช่วย(?:เรื่อง\S{0,20}|ใน\S{0,20}|ฉัน|ผม|หนู|เรา)?(?:(?:อะไร|ไร)\S{0,8}ได้|ได้(?:อะไร|ไร)บ้าง)|(?:น้อง|มั่งมี|คุณ|ระบบ|บอท)\S{0,6}ทำ(?:อะไร|ไร)\S{0,6}ได้/u.test(compact);
+  if (asksWhat) return /ใบเบิก|เบิกจ่าย|เบิกเงิน/u.test(compact) ? 'reimbursements' : 'all';
+  if (/เพิ่ง(?:เข้ามา|เริ่ม)?(?:ใช้|ใช้งาน)|มือใหม่|(?:ใช้(?:งาน)?|เข้าใช้)ครั้งแรก|เริ่ม(?:ต้น)?ใช้(?:งาน)?(?:ระบบ|มั่งมี)?(?:ยังไง|อย่างไร|ตรงไหน|จากตรงไหน|อะไรก่อน)/u.test(compact)
+    || /^(?:เริ่ม(?:ต้น)?(?:จาก)?(?:ตรงไหน|อะไร)(?:ก่อน)?|ควรทำอะไรก่อน)(?:ดี)?(?:คะ|ค่ะ|ครับ|นะคะ|จ้ะ|จ้า)?[?？]*$/u.test(compact)) return 'all';
   return undefined;
 }
 
@@ -988,12 +995,15 @@ export async function runSemanticTurnV2(input: {
           ...req.conversationContext, recentReads: [...(req.conversationContext?.recentReads ?? []), ...currentReads] } } : req;
         let normalizedInput = meta ? bindRequestedReadFilters(meta, item, plannedInput, bindingReq, retained?.candidates, readCandidateValues,
           results.filter(entry => entry.index === index).map(entry => entry.result)) : undefined;
-        const summary = offered.find(tool => tool.name === 'reimbursement.get_summary');
+        // A claim or voucher read whose chosen tool cannot hold the asked filters uses the subject's filterable list tool.
+        const fallbackName = meta?.name.startsWith('reimbursement.') ? 'reimbursement.get_summary' : meta?.name.startsWith('voucher.') ? 'voucher.list_recent' : undefined;
+        const summary = fallbackName && meta?.name !== fallbackName ? offered.find(tool => tool.name === fallbackName) : undefined;
+        const fallbackKeys: readonly string[] = fallbackName === 'reimbursement.get_summary' ? CLAIM_READ_FILTER_KEYS : [...(summary?.optionalInputFields ?? [])];
         const chosenFields = [...(meta?.requiredInputFields ?? []), ...(meta?.optionalInputFields ?? [])];
-        if (item.kind === 'read' && meta?.name.startsWith('reimbursement.') && summary
+        if (item.kind === 'read' && summary
           && (!normalizedInput || Object.keys(item.requestedFilters).some(key => !chosenFields.includes(key)))
-          && object(plannedInput) && Object.keys({ ...plannedInput, ...item.requestedFilters }).every(key => CLAIM_READ_FILTER_KEYS.includes(key as typeof CLAIM_READ_FILTER_KEYS[number]))) {
-          const replacement = bindRequestedReadFilters(summary, item, plannedInput, bindingReq, retained?.candidates, readCandidateValues);
+          && object(plannedInput) && Object.keys({ ...(fallbackName === 'voucher.list_recent' ? {} : plannedInput), ...item.requestedFilters }).every(key => fallbackKeys.includes(key))) {
+          const replacement = bindRequestedReadFilters(summary, item, fallbackName === 'voucher.list_recent' ? {} : plannedInput, bindingReq, retained?.candidates, readCandidateValues);
           if (replacement) { meta = summary; call.toolName = summary.name; normalizedInput = replacement; }
         }
         const key = canonical([call.toolName, normalizedInput]);

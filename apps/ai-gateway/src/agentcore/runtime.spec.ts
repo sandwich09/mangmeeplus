@@ -363,6 +363,18 @@ describe('AgentCore Runtime – payload validation', () => {
 	    assert.equal(manyItems?.conversationContext?.recentReads?.[0]?.shownItems?.length, 10);
 	  });
 
+	  it('R22 carries a claim summary\'s applied filters, and drops forged or malformed ones', () => {
+	    const oneContext = (claimFilters: unknown, tool = 'reimbursement.get_summary') => validatePayload({
+	      turnId: 't-claim', companyId: 'c-1', userId: 'u-1', messageText: 'ของเขารวมเท่าไร',
+	      conversationContext: { recentTurns: [{ at: '2026-09-27T09:00:00.000Z' }],
+	        recentReads: [{ tool, answerShape: 'single_metric', asOf: '2026-09-27T09:00:00.000Z', claimFilters }] },
+	    })?.conversationContext?.recentReads?.[0];
+	    assert.deepEqual(oneContext({ requesterName: 'สมชัย', status: 'REJECTED', amountGt: '1000' })?.claimFilters, { requesterName: 'สมชัย', status: 'REJECTED', amountGt: '1000' });
+	    assert.deepEqual(oneContext({})?.claimFilters, {});
+	    for (const bad of [{ requester: 'someone' }, { amountGt: '1,000' }, { total: '5000' }, { requesterName: 7 }, 'x']) assert.equal(oneContext(bad)?.claimFilters, undefined);
+	    assert.equal(oneContext({ requesterName: 'สมชัย' }, 'expense.list_recent')?.claimFilters, undefined);
+	  });
+
 	  it('spec R-M6: never carries an amount field through, and rejects a malformed recentReads entry entirely', () => {
 	    const oneContext = (recentReads: unknown) => ({
 	      turnId: 't-1', companyId: 'c-1', userId: 'u-1', messageText: 'รายการแรกคืออะไร',

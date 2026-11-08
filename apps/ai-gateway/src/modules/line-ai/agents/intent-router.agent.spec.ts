@@ -2129,6 +2129,17 @@ describe('R22 claim read binding', () => {
       assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: filters }]);
     }
   });
+  it('R22 controller: a person named only in the last claim read grounds a "ของเขา" follow-up', async () => {
+    const memory = [{ tool: 'reimbursement.get_summary', answerShape: 'single_metric', asOf: '2026-11-08T00:00:00Z', claimFilters: { requesterName: 'สมชัย', status: 'REJECTED' } }];
+    const { calls } = await claimRead('ช่วยบอกยอดรวมของเขากลุ่มนี้หน่อย', { requesterName: 'สมชัย', status: 'REJECTED' }, 'reimbursement.list_pending_approvals', ['reimbursement.read'], memory);
+    assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: { requesterName: 'สมชัย', status: 'REJECTED' } }]);
+    const { calls: stranger } = await claimRead('ช่วยบอกยอดรวมของเขากลุ่มนี้หน่อย', { requesterName: 'สมศรี', status: 'REJECTED' }, 'reimbursement.list_pending_approvals', ['reimbursement.read'], memory);
+    assert.deepEqual(stranger, []);
+  });
+  it('R22 controller: a voucher filter the detail tool cannot hold uses the voucher list', async () => {
+    const { calls } = await claimRead('ใบเตรียมจ่ายที่เป็นร่างรวมกี่ใบ', { status: 'DRAFT' }, 'voucher.get_detail', ['expense.disbursement.read', 'expense.read']);
+    assert.deepEqual(calls, [{ tool: 'voucher.list_recent', input: { status: 'DRAFT' } }]);
+  });
   it('R22.2 preserves my paid claims for own, related and company readers', async () => {
     for (const permission of ['reimbursement.read_own', 'reimbursement.read_related', 'reimbursement.read']) {
       const { calls } = await claimRead('ใบเบิกของฉันจ่ายแล้วไหม', { requester: 'me', paymentStatus: 'PAID' }, 'reimbursement.get_summary', [permission]);

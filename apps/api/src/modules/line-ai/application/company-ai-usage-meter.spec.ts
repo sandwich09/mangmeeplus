@@ -2614,8 +2614,8 @@ it('B2 classify issue, validation and owner resolution use separate columns and 
   assert.equal(classify.attemptKey, deliveryHash(['line-classify-v2', row.webhookEventId]));
   assert.equal(classify.maxTurnSlots, 2);
   assert.deepEqual(classify.allowedProfileIds, ['line-classify/2']);
-  assert.equal(classify.finalDeadlineAtMs, now.getTime() + 8000);
-  assert.equal(classify.workDeadlineAtMs, now.getTime() + 5000);
+  assert.equal(classify.finalDeadlineAtMs, now.getTime() + 10000);
+  assert.equal(classify.workDeadlineAtMs, now.getTime() + 7000);
   assert.equal(await service.validate(classify, input.inputDigest, owner), true);
   assert.deepEqual(await service.resolvePrivateOwner(classify, input.inputDigest, owner), input.owner);
   assert.equal(await service.validate(classify, input.inputDigest, { ...owner, userId: 'other' }), false);

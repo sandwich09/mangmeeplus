@@ -182,6 +182,18 @@ function parseReadMemoryShownItem(value: unknown): LineAiReadMemoryShownItem | u
 
 /** R-M6: no amount field exists on LineAiReadMemory's type, so this parser — like every other field
  *  here — simply never has one to copy; there is no separate stripping step to keep correct. */
+const CLAIM_FILTER_KEYS = new Set(['requester', 'requesterName', 'categoryName', 'round', 'status', 'paymentStatus', 'amountGt', 'amountGte', 'amountLt', 'amountLte']);
+
+/** R22: the claim filters the API recorded for a claim summary, so "ของเขา"/"กลุ่มนั้น" repeats that query. Amount bounds
+ *  describe the query, never a returned figure (R-M6). Any unknown key or malformed value drops the whole object. */
+function parseClaimFilters(value: unknown): LineAiReadMemory['claimFilters'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.some(([key, item]) => !CLAIM_FILTER_KEYS.has(key) || typeof item !== 'string' || !item || item.length > 80
+    || key === 'requester' && item !== 'me' || key.startsWith('amount') && !/^\d+(?:\.\d{1,2})?$/u.test(item))) return undefined;
+  return Object.fromEntries(entries) as LineAiReadMemory['claimFilters'];
+}
+
 function parseReadMemoryEntry(value: unknown): LineAiReadMemory | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;
@@ -212,8 +224,10 @@ function parseReadMemoryEntry(value: unknown): LineAiReadMemory | undefined {
   const vendorName = boundedString(raw['vendorName'], 200);
   const branchId = boundedString(raw['branchId'], 200);
   const branchName = boundedString(raw['branchName'], 200);
+  const claimFilters = tool === 'reimbursement.get_summary' ? parseClaimFilters(raw['claimFilters']) : undefined;
   return {
     tool, answerShape: raw['answerShape'], asOf,
+    ...(claimFilters && { claimFilters }),
     ...(period && { period }),
     ...(documentStatus && { documentStatus }),
     ...(paymentStatus && { paymentStatus }),

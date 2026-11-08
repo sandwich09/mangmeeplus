@@ -46,7 +46,7 @@ const canonical = (value: unknown): string => value === null || typeof value !==
   : Array.isArray(value) ? `[${value.map(canonical).join(',')}]`
     : `{${Object.entries(value).filter(([, entry]) => entry !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`).join(',')}}`;
 const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
-const baseCeilings = { classify: 8_000, general: 10_000, simple: 15_000, mixed: 30_000, public: 40_000, document_qa: 15 * 60_000 };
+const baseCeilings = { classify: 10_000, general: 10_000, simple: 15_000, mixed: 30_000, public: 40_000, document_qa: 15 * 60_000 };
 export function documentQaAuthorityInputDigest(job: { questionText: string; attachmentsJson: unknown; questionsJson?: unknown }): string | null {
   if (typeof job.questionText !== 'string' || !job.questionText || !Array.isArray(job.attachmentsJson)) return null;
   const questions = job.questionsJson == null ? undefined : parseLineDocumentQaQuestions(job.questionsJson, job.questionText);
