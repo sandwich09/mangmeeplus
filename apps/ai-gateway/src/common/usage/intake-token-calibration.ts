@@ -84,6 +84,7 @@ export function intakeConstantParts(input: Pick<ProviderInput, 'systemPrompt' | 
 }
 
 export function calibratedIntakeTextBound(input: ProviderInput | ProviderToolsInput, modelId: string): number | undefined {
+  // Haiku 5.5 has no paired calibration evidence. v2RenderedInput retains full UTF-8 bytes.
   if (modelId !== INTAKE_CALIBRATION_MODEL || input.usageTag !== 'line.intake-route' || 'tools' in input) return undefined;
   const parts = intakeConstantParts(input);
   const calibration = INTAKE_CONSTANT_CALIBRATIONS.find(row => row.digest === parts?.digest);

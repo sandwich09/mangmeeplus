@@ -13,6 +13,19 @@ const entry = (over: Partial<Parameters<typeof computeCostSatang>[0]> = {}) => (
 });
 
 describe('ai model pricing', () => {
+  it('R18 prices Haiku 5.5 warm and cold calls with one half-up rounding', () => {
+    for (const modelId of ['global.anthropic.claude-haiku-5-5', 'claude-haiku-5-5']) {
+      assert.deepEqual(resolveAiModelPrices(modelId), {
+        known: true, prices: { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 },
+      });
+      assert.equal(computeCostSatang(entry({ modelId, inputTokens: 300, outputTokens: 100, cacheReadInputTokens: 2500 }), 33).costSatang, 0);
+      assert.equal(computeCostSatang(entry({ modelId, inputTokens: 300, outputTokens: 100, cacheWriteInputTokens: 2500 }), 33).costSatang, 1);
+      assert.equal(computeCostSatang(entry({ modelId, inputTokens: 50_000 }), 1).costSatang, 1);
+    }
+    assert.deepEqual(resolveAiModelPrices('apac.anthropic.claude-3-haiku-20240307-v1:0').prices,
+      { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 });
+  });
+
   it('prices a realistic Sonnet call against the pinned map at AI_THB_PER_USD=33', () => {
     // (10000·3 + 2000·15 + 50000·0.30 + 8000·3.75) USD/MTok = 105_000
     // 105_000 / 1e6 × 33 × 100 = 346.5 satang → 347 (half up)

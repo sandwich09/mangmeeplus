@@ -1,6 +1,6 @@
 import type { TokenUsage } from '@aws-sdk/client-bedrock-runtime';
 import { AI_BUDGET_DOCUMENT_PAGE_TOKEN_CEILING, AI_BUDGET_IMAGE_TOKEN_CEILING } from '@watchdog-bms/contracts';
-import { currentBudgetEnvelope } from '../../../../common/usage/usage-context';
+import { currentBudgetEnvelope, currentBudgetGrantV2 } from '../../../../common/usage/usage-context';
 import type { ProviderInput, ProviderToolsInput } from './provider.port';
 
 /** Header dimensions only, like sharp.metadata(): no decoding or EXIF auto-orientation. */
@@ -75,11 +75,14 @@ export function pdfPageUpperBound(contentBase64: string): number | undefined {
 export async function conservativeTimeoutUsage(
   input: ProviderInput | ProviderToolsInput,
   bounds: { maxInputTokens: number; maxOutputTokens: number } | undefined = currentBudgetEnvelope()?.bounds,
+  modelId = currentBudgetGrantV2()?.model.modelId ?? currentBudgetEnvelope()?.modelId,
 ): Promise<TokenUsage> {
   const text = JSON.stringify({ systemPrompt: input.systemPrompt ?? '', cacheableContext: input.cacheableContext ?? '',
     messages: input.messages, ...('tools' in input ? { tools: input.tools } : {}),
     ...('outputSchema' in input && input.outputSchema ? { outputSchema: input.outputSchema } : {}) });
-  let estimated = Math.ceil(Buffer.byteLength(text, 'utf8') / 3.14);
+  // Sonnet's measured ratio is not Haiku tokenizer evidence. Retain the full byte ceiling.
+  const haiku55 = modelId === 'global.anthropic.claude-haiku-5-5' || modelId === 'claude-haiku-5-5';
+  let estimated = Math.ceil(Buffer.byteLength(text, 'utf8') / (haiku55 ? 1 : 3.14));
   if ('images' in input) {
     for (const image of input.images ?? []) {
       try {

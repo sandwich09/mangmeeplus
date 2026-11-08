@@ -16,7 +16,7 @@ type ApiResponse = {
   usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
 };
 type ApiMessage = { role: 'user' | 'assistant'; content: Record<string, unknown>[] };
-type ApiRequest = { messages: ApiMessage[]; max_tokens: number; system?: Record<string, unknown>[]; tools?: Record<string, unknown>[]; output_config?: Record<string, unknown> };
+type ApiRequest = { messages: ApiMessage[]; max_tokens: number; system?: Record<string, unknown>[]; tools?: Record<string, unknown>[]; thinking?: { type: 'disabled' }; output_config?: Record<string, unknown> };
 
 /** Only the wire ID changes; approval, pricing, and usage retain the original Bedrock ID. */
 export function anthropicModelId(modelId: string): string {
@@ -133,6 +133,10 @@ export class AnthropicApiProvider implements IModelProvider {
   ): Promise<({ ok: true } & T) | { ok: false; error: ProviderError }> {
     const error = precheck(input);
     if (error) return { ok: false, error };
+    if (anthropicModelId(this.cfg.modelId) === 'claude-haiku-5-5') {
+      body.thinking = { type: 'disabled' };
+      body.output_config = { ...body.output_config, effort: 'low' };
+    }
     const startedAt = Date.now();
     const controller = new AbortController();
     const abortFromCaller = () => controller.abort(input.signal?.reason);
@@ -188,7 +192,7 @@ export class AnthropicApiProvider implements IModelProvider {
                 ? { code: 'PROVIDER_THROTTLED', message: 'Anthropic API throttled the request.', retryable: true }
                 : { code: 'PROVIDER_UNKNOWN', message: err instanceof ApiHttpError ? err.message : 'Anthropic API request failed.', retryable: false };
           if (timedOut) {
-            usage = await conservativeTimeoutUsage(input);
+            usage = await conservativeTimeoutUsage(input, undefined, this.cfg.modelId);
             usageEstimated = true;
           }
           errorCode = error.code;

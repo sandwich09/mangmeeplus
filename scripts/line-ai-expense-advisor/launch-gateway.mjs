@@ -64,7 +64,7 @@ const env = {
   MODEL_PROVIDER: 'bedrock', BEDROCK_REGION: 'ap-southeast-1',
   BEDROCK_MODEL_ID: 'global.anthropic.claude-sonnet-4-6',
   DOCUMENT_AI_MODEL_ID: 'global.anthropic.claude-sonnet-4-6',
-  APPROVED_AI_MODEL_IDS: 'global.anthropic.claude-sonnet-4-6',
+  APPROVED_AI_MODEL_IDS: 'global.anthropic.claude-sonnet-4-6,global.anthropic.claude-haiku-5-5',
   APPROVED_AI_PROVIDERS: 'bedrock', APPROVED_AI_REGIONS: 'ap-southeast-1',
   AI_GLOBAL_INFERENCE_PROFILE_APPROVED: 'true',
   AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF: 'DPO-2026-07-23-bedrock-global',

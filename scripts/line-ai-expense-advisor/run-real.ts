@@ -25,7 +25,7 @@
  *   MANGMEE_EVAL_DETERMINISTIC_RESPONSE_FAMILIES  default matches spec §5 R-L4's family list
  *   AI_GLOBAL_INFERENCE_PROFILE_APPROVED      default true (see note below)
  *   AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF  default 'mangmee-expense-advisor-eval-synthetic-only'
- *   APPROVED_AI_MODEL_IDS                     default adds 'global.anthropic.claude-sonnet-4-6'
+ *   APPROVED_AI_MODEL_IDS                     default adds Sonnet 4.6 and Haiku 5.5
  *   MANGMEE_EVAL_TURN_PAUSE_MS          default 1500 — sleep between turns of the same conversation
  *   MANGMEE_EVAL_CONVERSATION_PAUSE_MS  default 2000 — sleep between conversations
  *   MANGMEE_EVAL_ONLY         comma-separated conversation ids, OR (with ONLY_FAILED=1) a path to a
@@ -100,7 +100,7 @@ process.env['AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF'] ??= 'mangmee-expense-adv
 // Gateway still pinned to an `apac.*` model keeps working too; only applies when nothing already
 // overrode APPROVED_AI_MODEL_IDS (??= never evaluates this when it's already set).
 process.env['APPROVED_AI_MODEL_IDS'] ??=
-  'apac.anthropic.claude-3-5-sonnet-20241022-v2:0,apac.anthropic.claude-3-haiku-20240307-v1:0,global.anthropic.claude-sonnet-4-6';
+  'apac.anthropic.claude-3-5-sonnet-20241022-v2:0,apac.anthropic.claude-3-haiku-20240307-v1:0,global.anthropic.claude-sonnet-4-6,global.anthropic.claude-haiku-5-5';
 // line-ai-reliability-runtime.ts reads these same two names (default 0/off there); this is the
 // one real-mode caller that wants them on by default, to stay under the Bedrock account's
 // throttling — see the file header note.

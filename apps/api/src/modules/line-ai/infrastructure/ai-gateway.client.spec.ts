@@ -1433,7 +1433,7 @@ it('U1b runtime-unavailable and ROUTER_UNREACHABLE after a v2 grant still have z
 });
 
 describe('free company gateway boundary', () => {
-  it('refuses general turns and intake before model calls or budget holds', async () => {
+  it('refuses free-shop classify general turns and intake before model calls or budget holds', async () => {
     let calls = 0;
     let holds = 0;
     const prisma = { client: {
@@ -1446,12 +1446,15 @@ describe('free company gateway boundary', () => {
       $transaction: async () => { holds += 1; throw new Error('unexpected hold'); },
     } } as any;
     const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://synthetic.invalid', aiGatewayInternalSecret: 'synthetic' } as any,
-      { issue: () => 'synthetic' } as any, undefined, prisma);
+      { issue: () => 'synthetic' } as any, undefined, prisma,
+      { issue: async () => { holds++; throw new Error('unexpected authority'); } } as any);
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => { calls += 1; throw new Error('unexpected provider'); };
     try {
       await assert.rejects(client.requestLineTurn(baseTurnRequest), (error: any) => error.getResponse?.().code === 'FREE_CHAT_NOT_INCLUDED');
       await assert.rejects(client.requestLineIntakeRoute({ companyId: 'company-1', userId: 'user-1', requestId: 'free-route', text: 'ถามธุรกิจ' } as any), (error: any) => error.getResponse?.().code === 'FREE_CHAT_NOT_INCLUDED');
+      assert.deepEqual(await client.requestLineWorkflowClassify({ companyId: 'company-1' } as any, {} as any),
+        { status: 'UNAVAILABLE', errorCode: 'AI_CONTRACT_UNSUPPORTED', usage: [] });
       assert.equal(calls, 0);
       assert.equal(holds, 0);
     } finally { globalThis.fetch = originalFetch; }
@@ -1472,9 +1475,9 @@ it('A1 forwards read-only credit state to the budget authority', async () => {
   assert.deepEqual(received, ['company', now]);
 });
 
-it('B4 classify pins Sonnet while the turn keeps its company model and partner policy wins', async () => {
+it('R19 classify pins Haiku 5.5 while the turn keeps its company model and partner policy wins', async () => {
   const original = globalThis.fetch;
-  const sonnet = 'global.anthropic.claude-sonnet-4-6', haiku = SPLIT_FIXTURE_MODEL_ID;
+  const sonnet = 'global.anthropic.claude-sonnet-4-6', haiku = 'global.anthropic.claude-haiku-5-5';
   const policies: any[] = [], issued: any[] = [];
   let partner: string | null = null;
   const prisma = governedPrisma();
@@ -1486,16 +1489,25 @@ it('B4 classify pins Sonnet while the turn keeps its company model and partner p
     const body = JSON.parse(String(init?.body)); policies.push(body.modelPolicy);
     return new Response(JSON.stringify({ ready: true, inputContractVersion: 2, providerOutputVersion: 2, budgetContractVersion: 2,
       profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2,
-      model: { provider: 'bedrock', modelId: body.modelPolicy?.modelId ?? haiku, region: 'ap-southeast-1', contextTokens: 200000, maxOutputTokens: 4096 } }));
+      model: { provider: 'bedrock', modelId: body.modelPolicy?.modelId ?? sonnet, region: 'ap-southeast-1', contextTokens: 100000, maxOutputTokens: 8192 } }));
   };
   try {
     const input = { owner: { owner: { companyId: 'company-1' } } } as any;
     await client.issueLineReliabilityGrant('classify', { ...input, authorityKind: 'webhook_classify' });
     await client.issueLineReliabilityGrant('turn', { ...input, authorityKind: 'webhook_event' });
-    partner = haiku;
+    partner = sonnet;
     await client.issueLineReliabilityGrant('partner', { ...input, authorityKind: 'webhook_classify' });
-    assert.deepEqual(policies, [{ modelId: sonnet }, undefined, { modelId: haiku }]);
-    assert.deepEqual(issued.map(row => row.model.modelId), [sonnet, haiku, haiku]);
+    assert.deepEqual(policies, [{ modelId: haiku }, undefined, { modelId: sonnet }]);
+    assert.deepEqual(issued.map(row => row.model.modelId), [haiku, sonnet, sonnet]);
+    assert.deepEqual(issued[0].tariff.usdPerMTok, { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 });
+    partner = null;
+    for (const patch of [{ contextTokens: 100001 }, { maxOutputTokens: 8193 }, { modelId: 'global.anthropic.unreviewed' }]) {
+      globalThis.fetch = async () => Response.json({ ready: true, inputContractVersion: 2, providerOutputVersion: 2, budgetContractVersion: 2,
+        profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2,
+        model: { provider: 'bedrock', modelId: haiku, region: 'ap-southeast-1', contextTokens: 100000, maxOutputTokens: 8192, ...patch } });
+      assert.equal(await client.issueLineReliabilityGrant('invalid-haiku-capacity', { ...input, authorityKind: 'webhook_classify' }), null);
+    }
+    assert.equal(issued.length, 3, 'invalid capacity never issues authority');
   } finally { globalThis.fetch = original; }
 });
 

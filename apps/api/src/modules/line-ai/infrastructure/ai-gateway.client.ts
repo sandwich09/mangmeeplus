@@ -76,7 +76,7 @@ import { LineAiBudgetAuthorityService, type IssueLineAiBudgetGrant } from '../ap
 import { resolveThbPerUsd } from '../application/ai-fx-rate';
 import { type AiModelPrices, type AiTariffV2 } from '../application/ai-model-pricing';
 
-export const LINE_CLASSIFY_MODEL_ID = 'global.anthropic.claude-sonnet-4-6';
+export const LINE_CLASSIFY_MODEL_ID = 'global.anthropic.claude-haiku-5-5';
 const LINE_TURN_TIMEOUT_MS = 120_000;
 const LINE_INTAKE_TIMEOUT_MS = 30_000;
 /** Outlast a 90s page read and its one timeout retry, retaining both usage entries. */
@@ -118,6 +118,7 @@ const LINE_V2_TARIFFS: Readonly<Record<string, { provider: 'bedrock' | 'openai';
   // Existing Sonnet tariff (ai-model-pricing.ts), exact deployed ID. The capability's conservative
   // 200K context ceiling keeps this grant within the reviewed standard-context price tier.
   'global.anthropic.claude-sonnet-4-6': { provider: 'bedrock', prices: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
+  'global.anthropic.claude-haiku-5-5': { provider: 'bedrock', prices: { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 } },
   'apac.anthropic.claude-3-haiku-20240307-v1:0': { provider: 'bedrock', prices: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } },
 };
 
@@ -178,6 +179,7 @@ export class AiGatewayClient {
       || !this.config.aiGlobalInferenceProfileApprovalRef?.trim())) return null;
     // The authenticated gateway cannot widen the standard-context tariff into a long-context tier.
     if (model.modelId === 'global.anthropic.claude-sonnet-4-6' && model.contextTokens > 200_000) return null;
+    if (model.modelId === 'global.anthropic.claude-haiku-5-5' && (model.contextTokens > 100_000 || model.maxOutputTokens > 8192)) return null;
     const reviewed = LINE_V2_TARIFFS[model.modelId];
     if (!reviewed || reviewed.provider !== model.provider) return null;
     const fx = await resolveThbPerUsd(this.prisma, this.config);

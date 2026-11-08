@@ -1594,3 +1594,92 @@ describe('B1 provider output schema', () => {
     } finally { globalThis.fetch = original; }
   });
 });
+
+describe('R24 Haiku 5.5 routing provider controls', () => {
+  const haiku = 'global.anthropic.claude-haiku-5-5';
+  const sonnet = 'global.anthropic.claude-sonnet-4-6';
+  const outputSchema = { name: 'routing', schema: { type: 'object', additionalProperties: false,
+    required: ['label'], properties: { label: { type: 'string' } } } };
+  for (const transport of ['bedrock', 'anthropic'] as const) {
+    it(`${transport} disables thinking at low effort for Haiku only and pins unchanged Sonnet text and tool bytes`, async () => {
+      const original = globalThis.fetch;
+      const requests: any[] = [];
+      try {
+        for (const modelId of [sonnet, haiku]) {
+          const provider = transport === 'bedrock'
+            ? new BedrockProvider({ region: 'ap-southeast-1', modelId, timeoutMs: 10000 })
+            : new AnthropicApiProvider({ apiKey: 'synthetic', modelId, timeoutMs: 10000 });
+          if (transport === 'bedrock') (provider as any).client = { send: async (command: any) => {
+            requests.push(command.input);
+            return { stopReason: 'end_turn', output: { message: { content: [{ text: '{"label":"read"}' }] } } };
+          } };
+          else globalThis.fetch = async (_url, init) => {
+            requests.push(JSON.parse(String(init?.body)));
+            return Response.json({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"label":"read"}' }] });
+          };
+          const input = { systemPrompt: 'Classify.', messages: [{ role: 'user' as const, text: 'ดูค่าใช้จ่าย' }], maxTokens: 256 };
+          assert.equal((await provider.generateText({ ...input, outputSchema })).ok, true);
+          assert.equal((await provider.generateWithTools({ ...input,
+            tools: [{ name: 'routing', inputSchema: outputSchema.schema, strict: true }] })).ok, true);
+          assert.equal((await provider.generateText(input)).ok, true);
+        }
+        const messages = [{ role: 'user', content: [{ text: 'ดูค่าใช้จ่าย' }] }];
+        // Keep key order as well as values pinned to the pre-change transports.
+        if (transport === 'bedrock') {
+          const base = { modelId: sonnet, messages, system: [{ text: 'Classify.' }], inferenceConfig: { maxTokens: 256 } };
+          assert.equal(JSON.stringify(requests[0]), JSON.stringify({ ...base, outputConfig: { textFormat: { type: 'json_schema',
+            structure: { jsonSchema: { name: 'routing', schema: JSON.stringify(outputSchema.schema) } } } } }));
+          assert.equal(JSON.stringify(requests[2]), JSON.stringify(base));
+          assert.equal(JSON.stringify(requests[1]), JSON.stringify({ modelId: sonnet, messages,
+            toolConfig: { tools: [{ toolSpec: { name: 'routing', inputSchema: { json: outputSchema.schema }, strict: true } }] },
+            system: base.system, inferenceConfig: base.inferenceConfig }));
+          for (const request of requests.slice(3)) assert.deepEqual(request.additionalModelRequestFields,
+            { thinking: { type: 'disabled' }, output_config: { effort: 'low' } });
+        } else {
+          const base = { model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: [{ type: 'text', text: 'ดูค่าใช้จ่าย' }] }],
+            system: [{ type: 'text', text: 'Classify.' }], max_tokens: 256 };
+          assert.equal(JSON.stringify(requests[0]), JSON.stringify({ ...base, output_config: { format: { type: 'json_schema', schema: outputSchema.schema } } }));
+          assert.equal(JSON.stringify(requests[2]), JSON.stringify(base));
+          assert.equal(JSON.stringify(requests[1]), JSON.stringify({ model: base.model, messages: base.messages,
+            tools: [{ name: 'routing', input_schema: outputSchema.schema, strict: true }], system: base.system, max_tokens: 256 }));
+          for (const request of requests.slice(3)) {
+            assert.equal(request.model, 'claude-haiku-5-5');
+            assert.deepEqual(request.thinking, { type: 'disabled' });
+            assert.equal(request.output_config.effort, 'low');
+          }
+          assert.deepEqual(requests[3].output_config.format, { type: 'json_schema', schema: outputSchema.schema });
+          assert.deepEqual(requests[4].output_config, { effort: 'low' });
+        }
+      } finally { globalThis.fetch = original; }
+    });
+  }
+
+  it('admits only the exact approved Haiku capacity and refuses unknown models', async () => {
+    const { LineReliabilityCapabilitiesController } = await import('../../presentation/http/line-reliability-capabilities.controller');
+    const config: any = { aiGatewayInternalSecret: 'synthetic', modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1',
+      bedrockModelId: sonnet, approvedAiProviders: ['bedrock'], approvedAiModelIds: [sonnet, haiku, 'global.anthropic.unknown'],
+      approvedAiRegions: ['ap-southeast-1'], aiGlobalInferenceProfileApproved: true, aiGlobalInferenceProfileApprovalRef: 'synthetic' };
+    const turn = { lineBudgetV2CapabilityEnabled: async () => true } as any;
+    const controller = new LineReliabilityCapabilitiesController(config, turn);
+    const result = await controller.capabilities('synthetic', { modelPolicy: { modelId: haiku } });
+    assert.equal(result.ready, true);
+    assert.deepEqual(result.model, { provider: 'bedrock', modelId: haiku, region: 'ap-southeast-1', contextTokens: 100_000, maxOutputTokens: 8192 });
+    assert.equal((await controller.capabilities('synthetic', { modelPolicy: { modelId: 'global.anthropic.unknown' } })).ready, false);
+    config.approvedAiModelIds = [sonnet];
+    assert.equal((await controller.capabilities('synthetic', { modelPolicy: { modelId: haiku } })).ready, false);
+  });
+
+  it('uses the full byte estimate for Haiku and preserves the Sonnet estimate and declared clamp', async () => {
+    const input = { systemPrompt: 'จำแนกข้อความ', messages: [{ role: 'user' as const, text: 'ค่าอาหาร 100 บาท'.repeat(50) }], maxTokens: 256 };
+    const before = await conservativeTimeoutUsage(input);
+    const sonnetUsage = await conservativeTimeoutUsage(input, undefined, sonnet);
+    const haikuUsage = await conservativeTimeoutUsage(input, undefined, haiku);
+    const byteBound = Buffer.byteLength(JSON.stringify({ systemPrompt: input.systemPrompt, cacheableContext: '', messages: input.messages }));
+    assert.deepEqual(sonnetUsage, before);
+    assert.equal(haikuUsage.inputTokens, byteBound);
+    assert.ok(haikuUsage.inputTokens! >= Math.ceil(sonnetUsage.inputTokens! * 1.3));
+    const bounded = await conservativeTimeoutUsage(input, { maxInputTokens: 1024, maxOutputTokens: 128 }, haiku);
+    assert.equal(bounded.inputTokens, 1024);
+    assert.equal(bounded.outputTokens, 128);
+  });
+});

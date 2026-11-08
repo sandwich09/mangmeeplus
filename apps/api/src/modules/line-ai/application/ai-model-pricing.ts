@@ -26,6 +26,7 @@ export type PricedUsage = Pick<
  */
 export const AI_MODEL_PRICES: ReadonlyArray<readonly [string, AiModelPrices]> = [
   ['sonnet', { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }],
+  ['claude-haiku-5-5', { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 }],
   ['haiku', { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 }],
 ];
 

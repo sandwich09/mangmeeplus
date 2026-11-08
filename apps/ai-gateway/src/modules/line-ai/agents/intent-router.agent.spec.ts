@@ -1779,7 +1779,7 @@ import { resolve } from 'node:path';
 import { LINE_TOOL_REGISTRY, TIER_FEATURE_PRESETS, extractValueCandidatesV2,
   type LineIntakeRouteRequest, type LineAiConversationContext } from '@watchdog-bms/contracts';
 import { v2RenderedInput } from '../../../common/usage/ai-budget-provider';
-import { INTAKE_CONSTANT_CALIBRATIONS, intakeConstantParts, scaleIntakeCalibration, REVIEWED_CATALOGUE_TOKEN_BOUND } from '../../../common/usage/intake-token-calibration';
+import { INTAKE_CONSTANT_CALIBRATIONS, calibratedIntakeTextBound, intakeConstantParts, scaleIntakeCalibration, REVIEWED_CATALOGUE_TOKEN_BOUND } from '../../../common/usage/intake-token-calibration';
 import { ROLE_GRANTS } from '../../../../../api/src/modules/auth/permission-registry';
 import { APPROVED_PREPARED_FAMILY_KEYS } from './prepared-simple-read-formatter';
 import { LINE_INTAKE_CHAT_ACTIONS_CONTEXT as LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-model-context';
@@ -1954,6 +1954,10 @@ it('credit P1/P2: approved-v6 offers stay bounded with the calibrated constant d
       'PRO_999/MANAGER': 50176, 'ENTERPRISE_1999/OWNER': 57344 };
     // R17 adds declared claim/voucher/age filters. Keep the historical evidence and pin the new byte-counted bound.
     const currentBound = v2RenderedInput(input, creditModel).inputTokenBound;
+    const haikuModel = 'global.anthropic.claude-haiku-5-5';
+    assert.equal(calibratedIntakeTextBound(input, haikuModel), undefined, 'Sonnet measurements cannot discount Haiku');
+    assert.deepEqual(v2RenderedInput(input, haikuModel), v2RenderedInput(input, 'unknown-model'), 'Haiku retains the full byte ceiling');
+    assert.ok(v2RenderedInput(input, haikuModel).inputTokenBound >= Math.ceil(currentBound * 1.3));
     assert.equal(currentBound, readFilterBounds[`${row.tier}/${row.role}`]);
     assert.ok(currentBound < row.unboundedV6Bound);
     assert.ok(currentBound <= row.approvedV4BoundAfter);

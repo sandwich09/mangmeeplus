@@ -91,6 +91,10 @@ export class BedrockProvider implements IModelProvider {
         ],
       })),
       ...systemBlocks(input.systemPrompt),
+      // Workflow-first C2/MC5 proposes this Messages shape for Converse; live probe remains required.
+      ...(this.cfg.modelId === 'global.anthropic.claude-haiku-5-5' ? { additionalModelRequestFields: {
+        thinking: { type: 'disabled' }, output_config: { effort: 'low' },
+      } } : {}),
       inferenceConfig: { maxTokens: input.maxTokens ?? 2048 },
       ...(input.outputSchema ? { outputConfig: { textFormat: { type: 'json_schema' as const,
         structure: { jsonSchema: { name: input.outputSchema.name, schema: JSON.stringify(input.outputSchema.schema) } },
@@ -163,6 +167,10 @@ export class BedrockProvider implements IModelProvider {
         })), ...(cache.tools ? [CACHE_POINT] : [])],
       },
       ...systemBlocks(input.systemPrompt),
+      // Workflow-first C2/MC5 proposes this Messages shape for Converse; live probe remains required.
+      ...(this.cfg.modelId === 'global.anthropic.claude-haiku-5-5' ? { additionalModelRequestFields: {
+        thinking: { type: 'disabled' }, output_config: { effort: 'low' },
+      } } : {}),
       inferenceConfig: { maxTokens: input.maxTokens ?? 1024 },
     });
     for (const index of cache.messages) command.input.messages![index]!.content!.push(CACHE_POINT);
@@ -253,7 +261,7 @@ export class BedrockProvider implements IModelProvider {
             ? { code: providerCode, message: 'The provider response was incomplete or invalid.', retryable: false } as ProviderError
             : this.mapError(timedOut ? { name: 'ProviderTimeout' } : err);
           if (timedOut) {
-            usage = await conservativeTimeoutUsage(context);
+            usage = await conservativeTimeoutUsage(context, undefined, this.cfg.modelId);
             usageEstimated = true;
           }
           errorCode = error.code;
