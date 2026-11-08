@@ -762,3 +762,32 @@ Remaining causes are fixed and proven with targeted rechecks only.
   | A voucher vendor name kept trailing particles ("ผู้ขายชื่อซ้ำให้ทีจ้ะ"), and company names (หจก./บจก.) were not read. | — |
   | An accountant naming another member's bill for a substitute receipt got a picker instead of the permission refusal. | 2 tasks; open |
   | The router dropped a person's name and read the caller's approval queue. | 1 conversation; open |
+
+**Fixes after v14 and their targeted rechecks** (owner's API key, 2026-11-08). Fixes landed in rounds 23, 23b and 23c:
+- read grounding;
+- the put-off forms;
+- the "ต้องใส่ A หรือ B" question;
+- voucher vendor names;
+- a substitute side question that kept losing its evidence refs, so the gateway rejected the turn and the member read "เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่".
+
+| Recheck | Code | Scope | Cost |
+|---|---|---|---|
+| 1 | round 23 | 57 of the 58 failed conversations | 111.87 THB |
+| 2 | round 23b | the remaining put-off conversations, plus the one left by the cap | 9.75 THB |
+| 3 | round 23c | the two substitute side-question conversations (no try-again reply left) | 5.13 THB |
+
+**Projected v14 on round 23c** (as-run conversations that passed, plus the rechecked ones):
+
+| Measure | Result |
+|---|---|
+| Workflow tasks | 175/181 (96.7%) |
+| Wrong writes | 0 |
+| Try-again replies | 0 |
+| Advisor tasks | about 81%; 17 web exits remain on claim follow-ups |
+
+**The owner's go/no-go rule is met.** It is a projection from targeted rechecks, not a single full run. Reply time on the Anthropic API does not represent production; the Bedrock path still needs a check on UAT.
+
+Still open:
+- An accountant asking for another member's certificate gets a picker, not the refusal (2 tasks).
+- "ยังไม่ทำ…" and "ไว้ทีหลัง" put-offs; they collide with the decline and negation paths (3 tasks).
+- One claim reject ends in a dead end.
