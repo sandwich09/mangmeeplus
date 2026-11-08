@@ -9445,6 +9445,9 @@ View expenses: ${listLink}` : `ยังไม่พบรายการจา�
         });
         const mixedSubstitute = this.mixedBusinessQuestions?.get(event);
         if (mixedSubstitute) mixedSubstitute.businessStatus = result.status === 'FORBIDDEN' ? 'denied' : result.status === 'READY_FOR_WEB' || result.status === 'CANCELLED' ? 'handled' : 'needs_user';
+        // The model-routed turn records the task the same way as the deterministic one: a pause or cancel declines it.
+        if (['PAUSED', 'CANCELLED'].includes(result.status)) this.workflowTaskOutcomes.set(event, { kind: 'substitute_receipt', status: 'DECLINED' });
+        else if (['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(result.status)) this.workflowTaskOutcomes.set(event, { kind: 'substitute_receipt', status: 'REFUSED' });
         await this.rememberSubstituteDeliverySource(event, continuationCtx, result);
         // PRECEDENCE when BOTH a substitute workflow AND an expense draft are open: the substitute path
         // (semantic route, OR the narrow canonical fallback taken because the provider was UNAVAILABLE)

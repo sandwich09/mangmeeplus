@@ -20304,3 +20304,23 @@ it('R19 controller: the payment method question offers the four methods and read
   assert.match(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
   assert.equal(h.creates(), 0); assert.equal(h.classifyCalls(), 0);
 });
+
+it('R19 controller: ปรับ/เปลี่ยน start the same claim edit as แก้, and รอบแรก names round 1', async () => {
+  for (const [text, field] of [['ปรับยอดใบเบิกค่าทางด่วน รอบแรกเป็น 320 บ.', 'amount'], ['เปลี่ยนเหตุผลใบเบิกค่าทางด่วน รอบ 1 เป็น ไปรับของที่ท่าเรือ', 'reason']] as const) {
+    const h = manualClaimHarness(), now = new Date();
+    const row: any = { id: 'toll-claim', companyId: h.ctx.companyId, requesterUserId: h.ctx.userId, requesterDisplayNameSnapshot: 'สมชัย', branchId: 'branch-1', status: 'DRAFT', title: '', reason: 'ค่าทางด่วน รอบ 1', amount: '150', currency: 'THB', incurredDate: new Date('2026-11-05'), updatedAt: now, categoryKey: 'travel', receiptRequirementStatus: 'WAIVED_BY_POLICY',
+      lines: [{ id: 'line-1', lineNo: 1, incurredDate: new Date('2026-11-05'), description: 'ค่าทางด่วน', amount: '150', categoryKey: 'travel', categoryLabelSnapshot: 'ค่าเดินทาง', updatedAt: now }] };
+    const other: any = { ...row, id: 'office-claim', reason: 'ค่าออฟฟิศ รอบ 7', lines: [{ ...row.lines[0], description: 'ค่าออฟฟิศ' }] };
+    const rows = [row, other];
+    h.repo.listRequests = async ({ skip = 0, take = 100 }: any) => rows.slice(skip, skip + take);
+    h.repo.findRequestById = async (_company: string, id: string) => rows.find(r => r.id === id);
+    const evidence = (await createLineAiInputEvidence({ turnKey: `r19-edit-${field}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const result = await h.adapter.startUpdateFromText({ ...h.input, evidence, text });
+    assert.equal(result?.status, 'preview', JSON.stringify(result));
+    if (result?.status === 'preview') {
+      if (field === 'amount') assert.equal(Number(result.preview.after.amount), 320);
+      else assert.equal(result.preview.after.reason, 'ไปรับของที่ท่าเรือ');
+    }
+    assert.equal(row.amount, '150'); assert.equal(other.amount, '150');
+  }
+});

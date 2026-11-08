@@ -138,8 +138,10 @@ export class LineReimbursementDraftAdapterService {
   ) {}
 
   async startUpdateFromText(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; evidence: LineAiInputEvidenceV2; text: string }): Promise<LineReimbursementDraftResult | null> {
-    const match = /^(แก้ยอด|แก้เหตุผล|แก้หมวด)(?:ของ)?\s*(ใบเบิก.+?)เป็น\s*(.+)$/u.exec(input.text.trim())
-      ?? /^(แก้(?:ไข|ยอด|เหตุผล|หมวด)?|edit)(?:ของ)?\s*(ใบเบิก.+)$/iu.exec(input.text.trim());
+    // "เปลี่ยนยอดใบเบิก…", "ปรับเหตุผลใบเบิก…" are the same edit as "แก้ยอด…".
+    const said = input.text.trim().replace(/^(?:เปลี่ยน|ปรับ)(ยอด|เหตุผล|หมวด)/u, 'แก้$1');
+    const match = /^(แก้ยอด|แก้เหตุผล|แก้หมวด)(?:ของ)?\s*(ใบเบิก.+?)เป็น\s*(.+)$/u.exec(said)
+      ?? /^(แก้(?:ไข|ยอด|เหตุผล|หมวด)?|edit)(?:ของ)?\s*(ใบเบิก.+)$/iu.exec(said);
     if (!match || input.ctx.freeExpenseDrafts || input.evidence.parts.map(part => part.rawText).join('\n') !== input.text
       || lineWorkflowPickerText(input.text).question || !input.ctx.permissions.includes('ai.tool.invoke')) return null;
     const owner = this.actionOwner(input.owner, input.ownerEpoch);

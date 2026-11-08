@@ -563,4 +563,10 @@ Blind set v6 is ready: 219 conversations, 644 turns, overlap 0 with every earlie
   - Bank deposits and statements count as the unsold bank-reconciliation feature.
   - A substitute-receipt start that is waiting on a question is recorded as open.
   - Round 18c is included: a typed command passes the credit gate first, and "เบิกค่า… แล้วส่งใบเบิก…" opens a new claim.
-- **Next:** a recheck of the v10 failures (no longer blind), then blind set v11 as the gate.
+- **Recheck on round 19** (main `74ce79e4e`, the 32 seen conversations with a failed task, 16.77 THB): 33/39 tasks pass, 29/34 workflow. The projection for v10 on round 19 is about 199/204 workflow and 80/81 advisor. It is a seen set, not a gate. Still failing:
+  - a state list ("เปิด…ที่รอยืนยัน") stays a read by design;
+  - one opener's requester wording names no one;
+  - two substitute pauses: the pause worked, but the model-routed path recorded no outcome;
+  - a claim edit typed with "เปลี่ยนยอด…" missed the edit rule, which read only "แก้…".
+- **Round 19b:** the model-routed substitute path records a pause or cancel as declined, and a permission, eligibility or stale result as refused. "เปลี่ยน/ปรับ(ยอด|เหตุผล|หมวด)ใบเบิก…" starts the same claim edit as "แก้…".
+- **Next:** blind set v11 as the gate.
