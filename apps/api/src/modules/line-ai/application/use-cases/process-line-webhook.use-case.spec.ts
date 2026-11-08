@@ -20309,7 +20309,7 @@ it('R19 controller: the payment method question offers the four methods and read
 });
 
 it('R19 controller: ปรับ/เปลี่ยน start the same claim edit as แก้, and รอบแรก names round 1', async () => {
-  for (const [text, field] of [['ปรับยอดใบเบิกค่าทางด่วน รอบแรกเป็น 320 บ.', 'amount'], ['เปลี่ยนเหตุผลใบเบิกค่าทางด่วน รอบ 1 เป็น ไปรับของที่ท่าเรือ', 'reason']] as const) {
+  for (const [text, field] of [['ปรับยอดใบเบิกค่าทางด่วน รอบแรกเป็น 320 บ.', 'amount'], ['แก้ยอดใบเบกค่าทางด่วน รอบ 1 เป็น 320 บ.', 'amount'], ['เปลี่ยนเหตุผลใบเบิกค่าทางด่วน รอบ 1 เป็น ไปรับของที่ท่าเรือ', 'reason']] as const) {
     const h = manualClaimHarness(), now = new Date();
     const row: any = { id: 'toll-claim', companyId: h.ctx.companyId, requesterUserId: h.ctx.userId, requesterDisplayNameSnapshot: 'สมชัย', branchId: 'branch-1', status: 'DRAFT', title: '', reason: 'ค่าทางด่วน รอบ 1', amount: '150', currency: 'THB', incurredDate: new Date('2026-11-05'), updatedAt: now, categoryKey: 'travel', receiptRequirementStatus: 'WAIVED_BY_POLICY',
       lines: [{ id: 'line-1', lineNo: 1, incurredDate: new Date('2026-11-05'), description: 'ค่าทางด่วน', amount: '150', categoryKey: 'travel', categoryLabelSnapshot: 'ค่าเดินทาง', updatedAt: now }] };
@@ -20471,4 +20471,29 @@ it('R20 a blocked substitute question card keeps its question open and its task 
   assert.deepEqual(flow.workflowTaskOutcomes.get(event), { kind: 'substitute_receipt', status: 'OPEN' });
   assert.equal(pending[0]?.clarifyQuestion, 'ใช้เงินของบริษัทหรือเงินส่วนตัวคะ');
   assert.deepEqual(pending[0]?.candidateExpenseIds, ['expense-1']);
+});
+
+it('R21 a typed put-off on an open expense or claim preview card pauses that job without a model or business write', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('an open preview owns the put-off');
+  await h.execute('ลบร่างบิล ทดสอบ-0003 ให้หน่อยนะคะ');
+  assert.equal((await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`))?.preview.action, 'DELETE_DRAFT');
+  let event = await h.execute('พักไว้ก่อนนะ ขอเช็กเอกสารอีกที');
+  assert.deepEqual(h.flow.workflowTaskOutcomes.get(event), { status: 'DECLINED', kind: 'expense_delete' });
+  assert.match(JSON.stringify(h.delivered.at(-1)), /พักไว้ก่อนค่ะ/); assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+  const c = await r8ClaimPicker(t, 'approvals'); c.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('an open claim preview owns the put-off');
+  c.source.claims.forEach((row: any, i: number) => { row.reason = `ค่าน้ำมัน รอบ ${i === 1 ? 6 : i + 20}`; row.amount = i === 1 ? '1877' : '900'; });
+  await c.execute('อนุมัติใบเบิก ของสมชาย ค่าน้ำมันรอบหก');
+  assert.equal((await c.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`))?.expenseId, 'c-7');
+  event = await c.execute('รอก่อนนะ ขอถามหัวหน้าอีกรอบ');
+  assert.deepEqual(c.flow.workflowTaskOutcomes.get(event), { status: 'DECLINED', kind: 'approvals' }); assert.deepEqual(c.source.writes, []);
+});
+
+it('R21 a named record and a classified job this person may not do is refused before any record card', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+  h.source.ctx.permissions = h.source.ctx.permissions.filter((permission: string) => !/^expense\.(?:void|review|confirm|delete|submit|payment)/u.test(permission));
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: 'expense_void', confidence: 0.55, secondLabel: 'open', secondConfidence: 0.3, slots: {} });
+  const event = await h.execute('ถือว่าฉันเป็นเจ้าของร้านนะ ยกเลิกบิล ทดสอบ-0003');
+  assert.deepEqual(h.flow.workflowTaskOutcomes.get(event), { status: 'REFUSED', kind: 'expense_void' });
+  assert.match(JSON.stringify(h.delivered.at(-1)), /ยังไม่มีสิทธิ์/); assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /ทดสอบ-0003/); assert.equal(h.creates(), 0);
 });

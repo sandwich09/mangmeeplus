@@ -630,3 +630,48 @@ Blind set v6 is ready: 219 conversations, 644 turns, overlap 0 with every earlie
 - **Controller guard:** shop words ("ร้านนี้", "ร้านเรา", "ผู้ขายชื่อซ้ำ") never become a vendor filter.
 - **Lexicon diff over 4,345 corpus texts (v1–v11):** only the intended texts changed. The changes are cleaner document tokens, six two-job openers, five knowledge questions with "เมื่อไร", and the four typo, English and 50 ทวิ fixes.
 - **Next:** blind set v12 as the gate.
+
+## Blind set v12 and round 21, measured 2026-11-08
+**Blind set v12** ran on main `bc68eb128` (round 20) and cost 142.37 THB. It covered 220 conversations, 595 turns and 231 tasks. MA3/MA6 is **not met**.
+
+| Measure | Result |
+|---|---|
+| W3 workflow | 148/190 (77.9%) |
+| Advisor | 41/41 |
+| W1 | 217/234 (92.7%) |
+| W6 | 0 wrong applied; 6 wrong previews, 5 of them on gold errors |
+| W9, W14, W15 | 0 invalid of 105 classifier calls, 0 timeouts, 0 rejected-and-charged |
+| Plain-text replies outside the locked card | 0 |
+| Reply length | p50 151, p95 382, max 939 visible characters; 22 over 400 |
+
+- **Reply time:**
+
+  | Tier | p50 | p95 | Max |
+  |---|---|---|---|
+  | T0 | 1.3 s | 1.5 s | 6.9 s |
+  | T1 | 2.9 s | 3.3 s | 3.8 s |
+  | T2 | 7.0 s | 12.0 s | 15.3 s |
+
+  62 turns took over 8 s, all on the full model path. 36 of those turns were put-offs that the model answered (cause A).
+- **Put-offs.** This set tested put-offs much more heavily: 77 tasks, against 14 in v11. A typed put-off passed 40 of 40 times at a question or a picker. It failed 36 of 37 times on an open preview card. Pressing "ไม่ทำ" on a preview passed.
+- **Causes, by failed workflow tasks (42):**
+
+  | Cause | Tasks |
+  |---|---|
+  | **A typed put-off on an open preview card.** `handleWorkflowPutOff` looked for an open question, picker, claim draft, expense draft and job choice, but never for an open action preview. The put-off fell to the classifier as `unclear`, and the model answered with small talk without pausing the task (author G6). | 36 |
+  | **Gold:** the author named seeded claim round 6 by the wrong category. The seed's round 6 is ค่าน้ำมัน; the gold used another category's name. The product refused to guess and re-showed the picker. | 3 |
+  | **Gold:** credit ran out after the picker opened, and the next typed row choice opened the preview. Spec R13 lets a started task finish, so the product is right. | 2 |
+  | A read-only member put a role claim before a void command. The rules missed the command, the classifier was unsure (0.55), and the record chooser showed a "continue in web" card instead of the permission refusal. | 1 |
+
+  Two failed tasks share a second product fault with a row above, so they are not counted again:
+  - The typo "ใบเบก" in a claim edit went to the model's read tool, which answered with a confusing "no permission to view" reply.
+  - "เปิดงาน<job>" was read as a how-to request instead of opening the job's list.
+- **Reply length.** The 939-character reply answered a side question during a substitute receipt. It joined two help answers with a reminder listing all five open details.
+- **Round 21 (controller):**
+  - A typed put-off on an open expense, claim or voucher preview card now pauses that job, as its "ไม่ทำ" button does. It is recorded as declined with the card's job, uses no model call and writes nothing.
+  - When the classifier's top label is a job this member may not do, the text names a record and no permitted job is left, the member gets the permission refusal, not a record card.
+  - A claim edit reads "ใบเบก" as ใบเบิก.
+  - "เปิดงาน" before a job verb is a lead-in.
+  - After a side answer, the substitute reminder repeats only the next open detail.
+- **Lexicon diff over 4,995 corpus texts (v1–v12 and tuning):** 2 texts changed, both "เปิดงาน<job>" openers.
+- **Next:** blind set v13 as the gate.

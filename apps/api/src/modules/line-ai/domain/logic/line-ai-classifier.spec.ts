@@ -487,3 +487,10 @@ it('R20 joined different workflow verbs defer lexical starts while confirm then 
   }
   assert.equal(lineWorkflowCommand('ยืนยันบิล ทดสอบ-0003 แล้วบันทึกจ่ายเงินสด'), 'expense_confirm');
 });
+
+it('R21 controller: "เปิดงาน" before a job verb is a lead-in, not a read', async () => {
+  const { lineWorkflowCommand } = await import('./line-ai-classifier.logic');
+  assert.equal(lineWorkflowCommand('เปิดงานบันทึกจ่ายบิลให้หน่อย'), 'expense_pay');
+  assert.equal(lineWorkflowCommand('ช่วยเปิดงานลบร่างบิลอื่น-0099'), 'expense_delete');
+  assert.equal(lineWorkflowCommand('เปิดงานที่ค้างอยู่ให้ดูหน่อย'), undefined);
+});

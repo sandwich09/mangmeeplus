@@ -6252,3 +6252,19 @@ it('R20 a put-off after a side question closes menu and model waiting entries be
     }
   }
 });
+
+it('R21 a side question re-asks only the next open substitute detail, not the whole batched list', async () => {
+  const h = makeHarness({ permissions: ['expense.review', 'line.ai.query', 'ai.tool.invoke'],
+    routePlan: { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 1 },
+    openWaiting: [{ id: 'sub-question', question: 'ตอบข้อมูลที่ยังขาดรวมในข้อความเดียวได้เลยค่ะ\n• ใช้เงินของบริษัทหรือเงินส่วนตัวคะ\n• ค่าใช้จ่ายนี้ใช้เพื่อธุรกิจเรื่องอะไรคะ?',
+      text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', askedAt: new Date().toISOString(), clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+      entry: { id: 'sub-question', companyId: 'company-1', userId: 'user-1', key: 'lineai:ledger:company-1:line-user-secret', turnId: 'previous', kind: 'sub_request' } }],
+    substituteResult: { handled: true, status: 'BLOCKED', replyText: 'must not collect this question', acceptedFields: [], blockers: [] },
+  });
+  (h.useCase as any).substituteReceiptContinuation.substituteContext = async () => ({ workflowState: 'open', hasPendingQuestion: true, preparedState: 'in_progress', recentCandidateCount: 0 });
+  await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบนี้ต้องให้ใครเซ็นบ้างคะ' });
+  const sent = JSON.stringify(h.sentMessages);
+  assert.equal(h.substituteCalls.length, 0);
+  assert.match(sent, /ต่อจากเมื่อกี้: ใช้เงินของบริษัทหรือเงินส่วนตัวคะ/);
+  assert.doesNotMatch(sent, /ต่อจากเมื่อกี้: ตอบข้อมูลที่ยังขาด|ธุรกิจเรื่องอะไร/);
+});

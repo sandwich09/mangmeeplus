@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "9e7b71bf86fc36c0603fb4fe2362b62692efd179",
+  "sourceRevision": "eed3d40d52c46639fb6d6622e7419d96a994d145",
   "checkoutBranch": null,
   "checkoutDirty": true,
   "sourceHashes": [
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "5de121c1a49ade5f2202c66bb03d46671a47d285d4320d56fd8fb07294971e3e"
+      "sha256": "4cb9756795fb2ba365a27d57a16a7b15cda83a245690b6672d95ca84d49ca6ae"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-message-buffer.service.ts",
@@ -113,7 +113,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-package-tools.use-case.ts",
-      "sha256": "540d326fa57212c75619bb095208bccd0617a6197b9f9c400dbdf37f40038f14"
+      "sha256": "5a8ba7715791b422b2a1668db89f7f97c2b08d3ccc950afb2d64c13122075b2e"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-procurement-ledger-tools.use-case.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "df458e5a65613c5b78f61fd5ee31dcdfb68bfbcd13cdcf585f7e6b8163f06745"
+      "sha256": "249578c42c02b36e59943ffe70efc5b4940520aededaaeb34b81bc609859147d"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -249,7 +249,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "701573f40d5d7e6e926a3fe09b11a2efce2cb5130d83cc53464755214712632c"
+      "sha256": "0498ebb06015a4b34822dcab603858cef9f9b990c893ff1e8d600d5cb6939436"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -10285,6 +10285,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-08T05:18:57.824Z",
-  "manifestDigest": "b7416155415977d7ff28a9f4da542e0de4978fd1a7a36f196c75e2cac1e5f201"
+  "generatedAt": "2026-11-08T07:27:15.205Z",
+  "manifestDigest": "2d2163564c7bfea520b1debd657ab72034170a3caa0292c6d18adb06a6b2d86c"
 }

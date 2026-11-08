@@ -3973,6 +3973,8 @@ export class ProcessLineWebhookUseCase {
     if (!bound) return false;
     const claim = await this.reimbursementDrafts?.active?.({ ctx, owner: bound.owner, ownerEpoch: bound.epoch });
     const question = await this.expenseActions?.collectionQuestion?.(ctx, chatKeyHashOf(event));
+    // A typed put-off ("พักไว้ก่อน ขอเช็กอีกที") on an open preview card pauses that job, as its "ไม่ทำ" button would.
+    const preview = question ? null : await this.expenseActions?.pendingSource?.(ctx, chatKeyHashOf(event));
     const drafts = await this.expenseDraftConversation?.routeContexts?.(ctx, chatKeyHashOf(event), replyLanguage(event)) ?? [];
     const openDrafts = drafts.filter(draft => draft.status === 'OPEN');
     const picker = await this.latestWorkflowPicker(event);
@@ -3982,7 +3984,7 @@ export class ProcessLineWebhookUseCase {
     const storedChoice = choice?.owner?.userId === ctx.userId
       ? await this.workflowChoices().load(ctx.companyId, `wf-choice:${chatKeyHashOf(event)}:${choice.token}`) : null;
     const activeChoice = storedChoice?.ownerEpoch === bound.epoch ? storedChoice : null;
-    if (!activeChoice && !claim && !question && !picker && !openDrafts.length) return false;
+    if (!activeChoice && !claim && !question && !preview && !picker && !openDrafts.length) return false;
     if (openDrafts.length) await this.expenseDraftConversation!.execute(ctx, { messageText: 'พัก', chatKeyHash: chatKeyHashOf(event), webhookEventId: event.webhookEventId, language: replyLanguage(event) });
     if (picker) await this.closeWorkflowPicker(picker);
     if (activeChoice) await this.workflowChoices().claimCurrent(ctx.companyId, activeChoice.chatKeyHash, activeChoice.previewId);
@@ -3990,11 +3992,12 @@ export class ProcessLineWebhookUseCase {
     const task = projection && [...projection.tasks].reverse().find(task => ['active', 'waiting_user'].includes(task.state));
     if (task && projection?.lifecycleEpoch === bound.epoch) await this.contextV2.save(bound.owner, projection.stateVersion, bound.epoch, { version: 2,
       tasks: projection.tasks.map(item => item !== task ? item : { ...item, revision: item.revision + 1, state: 'paused' as const }) });
-    const action = question && 'action' in question ? question.action : undefined;
+    const action = question && 'action' in question ? question.action : preview?.action;
     const workflow = picker?.workflow ?? (claim ? 'reimbursement_claim' : action?.startsWith('VOUCHER_') ? 'payment_voucher'
       : Object.entries({ ...EXPENSE_WORKFLOW_ACTIONS, ...CLAIM_WORKFLOW_ACTIONS }).find(([, value]) => value === action)?.[0]);
     this.workflowTaskOutcomes.set(event, { status: 'DECLINED', ...(workflow ? { kind: workflow as LineWorkflowId } : {}) });
-    if (action && question && 'sourceId' in question && question.sourceId) this.taskActionSources.set(event, { action, id: question.sourceId });
+    const sourceId = question && 'sourceId' in question ? question.sourceId : preview?.id;
+    if (action && sourceId) this.taskActionSources.set(event, { action, id: sourceId });
     await this.deliverReply(event, replyLanguage(event) === 'en' ? 'Paused for now. Continue when ready.' : 'พักไว้ก่อนค่ะ พร้อมแล้วกลับมาทำต่อได้', lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
     return true;
@@ -4229,6 +4232,12 @@ export class ProcessLineWebhookUseCase {
     }
     const options = [...new Set([decision.label, decision.secondLabel].filter((id): id is LineWorkflowId => LINE_WORKFLOW_IDS.includes(id as LineWorkflowId)
       && this.mayStartWorkflow(id as LineWorkflowId, ctx, features)))];
+    // "ถือว่าฉันเป็นเจ้าของ ลบบิล …": a named record and a job this person may not do is refused, not opened as a record.
+    if (!options.length && LINE_WORKFLOW_IDS.includes(decision.label as LineWorkflowId) && decision.confidence >= 0.5
+      && decision.confidence > decision.secondConfidence && parsed.explicit && !parsed.question) {
+      await this.refuseWorkflowStart(event, ctx, features, decision.label as LineWorkflowId);
+      return true;
+    }
     if (!options.length) return false;
     const token = randomUUID();
     const saved: StoredWorkflowChoice = { previewId: token, companyId: ctx.companyId, userId: ctx.userId,
@@ -6885,8 +6894,10 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     try { substitute = (await this.ledger?.openWaitingUser(ctx.companyId, (event as LineTextEvent).pushTargetId ?? (event as LineTextEvent).lineUserId, ctx.userId) ?? [])
       .filter(item => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION'); }
     catch (error) { if (!(error instanceof ConsumptionMarkerUnavailableError)) throw error; return; }
+    // After a side answer, re-ask only the next open detail; the whole batched list made the reply a wall of text.
+    const asked = substitute[0]?.question?.split('\n').filter(line => /^•\s*/u.test(line)) ?? [];
     if (substitute.length === 1 && await this.clarificationSourceCurrent(event as LineTextEvent, ctx, substitute[0]!)
-      && !JSON.stringify(messages).includes(substitute[0]!.question)) return { type: 'text', text: lead + substitute[0]!.question };
+      && !JSON.stringify(messages).includes(substitute[0]!.question)) return { type: 'text', text: lead + (asked.length > 1 ? asked[0]!.replace(/^•\s*/u, '') : substitute[0]!.question) };
     const action = await this.expenseActions?.collectionQuestion?.(ctx, chatKeyHashOf(event as LineTextEvent), language);
     if (action) {
       if (JSON.stringify(messages).includes(action.reply)) return;

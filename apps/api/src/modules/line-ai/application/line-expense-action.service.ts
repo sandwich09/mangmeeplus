@@ -1095,6 +1095,12 @@ export class LineExpenseActionService {
     const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher).catch(() => null);
     return record?.updatedAt.toISOString() === entry.revision && record.digest === entry.digest ? entry.preview : null;
   }
+  /** The job and record of the open preview card, so a typed put-off can pause it like its "ไม่ทำ" button. */
+  async pendingSource(ctx: RequestContext, chat: string): Promise<{ action: ExpenseAction; id: string } | null> {
+    const preview = await this.pending(ctx, chat);
+    const entry = preview && await this.store.load(ctx.companyId, this.key(chat));
+    return entry?.previewId === preview?.previewId && entry ? { action: entry.preview.action, id: entry.voucher?.id ?? entry.expenseId } : null;
+  }
   async quoteRecords(ctx: RequestContext, chat: string, token: string) {
     const pending = await this.store.load(ctx.companyId, this.key(chat));
     const entry = pending?.preview.token === token ? pending : await this.store.loadApplied(ctx.companyId, this.key(chat));

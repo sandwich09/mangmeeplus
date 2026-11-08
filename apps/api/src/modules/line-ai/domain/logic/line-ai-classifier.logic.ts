@@ -182,7 +182,7 @@ export function lineWorkflowCommand(rawText: string): import('@watchdog-bms/cont
     .replace(/\s*(?:คอนเฟิร์ม|คอนเฟิม|คอนเฟริ์ม|\bconfirm\b)\s*/giu, 'ยืนยัน').replace(/\s*คชจ\.?/gu, 'ค่าใช้จ่าย')
     .replace(/\bapprove\s*(?:claim|ใบเบิก)/giu, 'อนุมัติใบเบิก').replace(/\bcancel\s*(?:claim|ใบเบิก)/giu, 'ยกเลิกใบเบิก')
     .replace(/\breject\s*(?:claim|ใบเบิก)/giu, 'ไม่อนุมัติใบเบิก').replace(/\bsubmit\s*(?:claim|ใบเบิก)/giu, 'ส่งใบเบิกอนุมัติ')
-    .replace(/\bpay\s*(?:claim|ใบเบิก)/giu, 'จ่ายคืนใบเบิก').replace(/\s+(?=ใบเบิก)/gu, '').trim().replace(/^(?:หมายถึง|ขอทำอย่างเดียวก่อน)[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ|อยาก(?:จะ)?|จะ|ต้องการ)\s*)+/u, '');
+    .replace(/\bpay\s*(?:claim|ใบเบิก)/giu, 'จ่ายคืนใบเบิก').replace(/\s+(?=ใบเบิก)/gu, '').trim().replace(/^(?:หมายถึง|ขอทำอย่างเดียวก่อน)[\s,]*/u, '').replace(/^(?:(?:ช่วย|ขอ|อยาก(?:จะ)?|จะ|ต้องการ|เปิดงาน)\s*)+/u, '');
   // R20 lane B: separate workflow verbs must reach the multi chooser before a lexical start.
   const clauses = text.split(/แล้ว|จากนั้น|กับ|และ/u);
   if (clauses.length > 1) {
