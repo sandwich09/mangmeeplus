@@ -524,6 +524,10 @@ function bindRequestedReadFilters(meta: ToolMeta, item: NonNullable<LineAiTurnRe
   if (!filters) return undefined;
   const fields = new Set([...(meta.requiredInputFields ?? []), ...(meta.optionalInputFields ?? [])]);
   const bound = { ...normalizedControl };
+  // Match the API's company > related > own precedence before dropping a redundant own filter.
+  const ownExpenseScope = meta.name === 'expense.list_recent' && req.userContext.permissions.includes('expense.read_own')
+    && !['expense.read', 'expense.review', 'expense.read_related'].some(permission => req.userContext.permissions.includes(permission));
+  if (ownExpenseScope && bound.requester === 'me') delete bound.requester;
   if (meta.name === 'expense.list_recent') delete bound['groupBy'];
   // H2 (tuning-7, T-107-b/T-111-b root cause): a why-question's unfiltered ranking call (E5) is
   // grouped by vendor/category ON PURPOSE, to keep that dimension's share and rank visible — re-
@@ -536,6 +540,7 @@ function bindRequestedReadFilters(meta: ToolMeta, item: NonNullable<LineAiTurnRe
     && typeof bound['groupBy'] === 'string' ? BREAKDOWN_NAME_KEYS_BY_DIMENSION[bound['groupBy']] : undefined;
   for (const [key, value] of Object.entries(filters)) {
     if (value === null) return undefined;
+    if (ownExpenseScope && key === 'requester' && value === 'me') continue;
     if (suppressedNameKeys?.includes(key)) continue;
     if (!fields.has(key)) {
       // Item 3 root cause: a business-level period hint (e.g. "เดือนนี้"/"เดือนนี้มีกี่รายการ") is
@@ -996,14 +1001,22 @@ export async function runSemanticTurnV2(input: {
         let normalizedInput = meta ? bindRequestedReadFilters(meta, item, plannedInput, bindingReq, retained?.candidates, readCandidateValues,
           results.filter(entry => entry.index === index).map(entry => entry.result)) : undefined;
         // A claim or voucher read whose chosen tool cannot hold the asked filters uses the subject's filterable list tool.
-        const fallbackName = meta?.name.startsWith('reimbursement.') ? 'reimbursement.get_summary' : meta?.name.startsWith('voucher.') ? 'voucher.list_recent' : undefined;
+        const ownApprovalQueue = meta?.name === 'reimbursement.list_pending_approvals' && object(plannedInput)
+          && plannedInput.approver === 'me'
+          && /(?:รอ(?:ให้)?|ที่)?(?:ฉัน|ผม|หนู|ดิฉัน|เรา)(?:ต้อง)?อนุมัติ|(?:รอ|ค้าง)(?:การ)?อนุมัติ(?:จาก|โดย)(?:ฉัน|ผม|หนู|ดิฉัน|เรา)|(?:my approval|for me to approve)/iu.test(itemText.get(index) ?? req.messageText);
+        const fallbackInput = object(plannedInput) ? { ...plannedInput } : undefined;
+        if (meta?.name === 'reimbursement.list_pending_approvals' && fallbackInput) {
+          delete fallbackInput.approver;
+          if (item.requestedFilters.status === undefined && fallbackInput.status === undefined) fallbackInput.status = 'PENDING_APPROVAL';
+        }
+        const fallbackName = !ownApprovalQueue && meta?.name.startsWith('reimbursement.') ? 'reimbursement.get_summary' : meta?.name.startsWith('voucher.') ? 'voucher.list_recent' : undefined;
         const summary = fallbackName && meta?.name !== fallbackName ? offered.find(tool => tool.name === fallbackName) : undefined;
         const fallbackKeys: readonly string[] = fallbackName === 'reimbursement.get_summary' ? CLAIM_READ_FILTER_KEYS : [...(summary?.optionalInputFields ?? [])];
         const chosenFields = [...(meta?.requiredInputFields ?? []), ...(meta?.optionalInputFields ?? [])];
         if (item.kind === 'read' && summary
           && (!normalizedInput || Object.keys(item.requestedFilters).some(key => !chosenFields.includes(key)))
-          && object(plannedInput) && Object.keys({ ...(fallbackName === 'voucher.list_recent' ? {} : plannedInput), ...item.requestedFilters }).every(key => fallbackKeys.includes(key))) {
-          const replacement = bindRequestedReadFilters(summary, item, fallbackName === 'voucher.list_recent' ? {} : plannedInput, bindingReq, retained?.candidates, readCandidateValues);
+          && object(plannedInput) && Object.keys({ ...(fallbackName === 'voucher.list_recent' ? {} : fallbackInput), ...item.requestedFilters }).every(key => fallbackKeys.includes(key))) {
+          const replacement = bindRequestedReadFilters(summary, item, fallbackName === 'voucher.list_recent' ? {} : fallbackInput, bindingReq, retained?.candidates, readCandidateValues);
           if (replacement) { meta = summary; call.toolName = summary.name; normalizedInput = replacement; }
         }
         const key = canonical([call.toolName, normalizedInput]);

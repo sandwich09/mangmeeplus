@@ -100,6 +100,20 @@ describe('extractValueCandidates – amounts (golden set)', () => {
   });
 });
 
+describe('R23 spoken Thai amounts', () => {
+  for (const [text, value] of [
+    ['พันแปด', '1800'], ['สองพันห้า', '2500'], ['หมื่นสอง', '12000'],
+    ['แสนห้า', '150000'], ['พันสอง', '1200'], ['สามพันกว่า', '3000'],
+    ['พันแปดร้อย', '1800'], ['สองพันห้าร้อย', '2500'], ['ร้อยห้า', '105'],
+    ['ห้าร้อยหกสิบเอ็ด', '561'], ['one thousand five', '1005'],
+  ]) {
+    it(`R23.2 ${text} selects ${value} in legacy and exact candidates`, () => {
+      assert.deepEqual(extractValueCandidates(text!, TODAY).amounts.map(item => item.value), [value]);
+      assert.deepEqual(extractValueCandidates(text!, TODAY, { scan: { observe() {}, datePositions: new WeakMap() } }).amounts.map(item => item.value), [value]);
+    });
+  }
+});
+
 describe('extractValueCandidates – dates (golden set)', () => {
   it('grounds spoken months only between a day and year without duplicating full names (A1)', () => {
     for (const text of ['วันที่ 10 ตุลา 2569', '10 ตุลา 69', '10 ตุลาคม 2569', '10 ตุลาคม 69']) {

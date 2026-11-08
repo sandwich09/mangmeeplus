@@ -718,3 +718,47 @@ Blind set v6 is ready: 219 conversations, 644 turns, overlap 0 with every earlie
   | "คชจ." was not read in a list opener; "ขอดู…ที่ยังรอจ่ายคืนทั้งหมด" opened the repay picker; a "ควร…" knowledge question that named sales got the package refusal. | 1 task each |
   | **Three classifier calls hit the 4 s deadline** while every other call finished within 2.6 s, and the fallback path made those turns take 12–27 s. | 3 turns |
 - **Transport change.** The owner asked that local exams use his Claude API key, never Bedrock. From v14 on, exams run on the Anthropic API, so their reply times are not production Bedrock times. The API-key provider gains Messages API structured output (`output_config.format`) and strict tools, which the workflow classifier needs.
+
+## Blind set v14 (final full exam), measured 2026-11-08
+The owner made v14 the last full exam and set the go/no-go rule in advance:
+- workflow tasks at least 95%;
+- no wrong write;
+- no "ลองส่งข้อความเดิม" reply.
+
+Remaining causes are fixed and proven with targeted rechecks only.
+
+**Blind set v14** ran on main `df0b45a30` (round 22 and 22b), on the owner's Claude API key. It cost 228.17 THB. The run first stopped at the 200 THB run cap after 169 conversations and was resumed to all 210. It covered 601 turns and 391 tasks. **The rule is not met.**
+
+| Measure | Result |
+|---|---|
+| Workflow tasks | 156/181 (86.2%) as run; 162/181 (89.5%) after the gold correction below |
+| Advisor tasks | 149/210; 35 answers were the web exit |
+| W1 | 448/484 (92.6%) |
+| W2 | 172/181 |
+| W6 | 12 wrong applied as scored, 0 after the gold correction |
+| W9 | 0 invalid of 75 classifier calls |
+| W14 | 1 timeout of 75 calls |
+| W15 | 0 |
+| Plain-text replies outside the locked card | 0 |
+| Reply length | p50 136, p95 382, max 612; 13 over 400 |
+
+- **Gold correction.** The 6 voucher-create tasks (12 "wrong applied") target the two seeded bills with 30 THB withholding. The product prepared a 970 THB voucher, the net payable. The gold expected 1,000. The right bill and payee were used, so these are gold errors, not wrong writes.
+- **Reply time on the Anthropic API.** This is not the production Bedrock path, so AC14 cannot be judged from it.
+
+  | Tier | p50 | p95 | Max |
+  |---|---|---|---|
+  | T0 | 1.3 s | 1.5 s | 6.9 s |
+  | T1 | 3.8 s | 5.0 s | 5.8 s |
+  | T2 | 7.3 s | 19.6 s | 35.7 s |
+
+  94 turns took over 8 s.
+- **Causes:**
+
+  | Cause | Effect |
+  |---|---|
+  | Read filters refused by grounding: a category typed without "ค่า", spoken amounts ("พันแปด"), a round as a Thai word, the approval-queue tool chosen for a person's waiting claims, and "my" bills on the expense list. | 35 web exits |
+  | Typed put-offs in the form "พัก<task>ก่อน" or "รอทำ…ทีหลัง" were not recognised. | 14 tasks |
+  | A side question "ต้องใส่ A หรือ B" was not seen as a question, so it was captured as the payee (one wrong preview). | — |
+  | A voucher vendor name kept trailing particles ("ผู้ขายชื่อซ้ำให้ทีจ้ะ"), and company names (หจก./บจก.) were not read. | — |
+  | An accountant naming another member's bill for a substitute receipt got a picker instead of the permission refusal. | 2 tasks; open |
+  | The router dropped a person's name and read the caller's approval queue. | 1 conversation; open |

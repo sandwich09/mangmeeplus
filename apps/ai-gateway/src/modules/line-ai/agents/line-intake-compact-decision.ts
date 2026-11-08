@@ -245,7 +245,7 @@ function isGroundedFilterValue(
   const literal = String(value);
   if (literal && messageText.includes(literal)) return true;
   if (key === 'round' || key === 'olderThanMonths') return canonicalizeReadToolEnums(tool, { [key]: value }, messageText, recentReads) !== undefined;
-  if (typeof value === 'string' && NAME_FILTER_GROUNDING_FIELDS.has(key) && nameFilterGroundedInText(value, messageText)) return true;
+  if (typeof value === 'string' && NAME_FILTER_GROUNDING_FIELDS.has(key) && nameFilterGroundedInText(value, messageText, key === 'categoryName')) return true;
   // Item 1: paymentStatus needs its own word-level check — see paymentStatusGroundedInText — before
   // the generic enum-membership fallback below, which would otherwise wave through ANY listed value.
   // tuning-3 item 2: that word-level check only ever sees THIS message's text, so a value inherited

@@ -138,7 +138,8 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   const questionText = text.replace(/(?:อะไร|ใคร|ที่ไหน)ก็ได้|ไม่ต้อง(?:ถาม)?อะไร|เดี๋ยวบอก(?:ว่า)?ใบไหน|เดี๋ยวบอกใบที่จะทำ|บอกทีหลัง/gu, '');
   const questionTail = text.replace(/[.!?,…ๆ]+$/u, '').trim();
   // "A หรือ B" ending in a question particle asks; amount alternatives and "…ก็ได้" are statements.
-  const alternativeQuestion = /หรือ/u.test(text) && /(?:คะ|จ๊ะ|ครับ|คับ|ฮะ|งับ)[าะ]*$/u.test(questionTail)
+  // "ต้องใส่ A หรือ B" asks which one, whatever particle closes it.
+  const alternativeQuestion = /ต้อง(?:ใส่|กรอก|เลือก|เขียน|ใช้|เป็น)\S*หรือ/u.test(text) && !/ก็ได้/u.test(text) || /หรือ/u.test(text) && /(?:คะ|จ๊ะ|ครับ|คับ|ฮะ|งับ)[าะ]*$/u.test(questionTail)
     && stripLineFieldParticles(questionTail) !== questionTail && !/\d[\d,.]*\s*(?:บาท|บ\.?)?\s*หรือ\s*\d|\d[\d,.]*\s*(?:บาท|บ\.)\s*หรือ/u.test(text)
     && !/ก็ได้/u.test(text) && !/^(?:เงินสด|โอน|บัตร|เช็ค)/u.test(text);
   const question = /^(?:(?:ช่วย|ขอ)\s*)*(?:บอก|แสดง|ทราบ)|สถานะ|ถึงไหนแล้ว|อยู่ขั้นไหน|ใครถืออยู่|ไหน\s*(?:คะ|ค่ะ|ครับ|จ้ะ|จ๊ะ|นะ|แล้ว)?[.!ๆ]*$/u.test(questionText) || alternativeQuestion || /[?？]|(?<!ผ้า)ไหม(?!้|พรม|ขัด)|มั้ย|ปะ(?=$|\s|คะ|ค่ะ|ครับ|นะ)|(?:หรือ|รึ|ไหม)เปล่า|(?<!น้ำ)เปล่า(?=\s*(?:คะ|ค่ะ|ครับ|จ๊ะ|จ้ะ|นะ)?\s*$)|รึยัง|หรือยัง|(?<!เ)กี่|เท่าไร|เท่าไหร่|แค่ไหน|เมื่อไร|เมื่อไหร่|ตอนไหน|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน|ตรงไหน|ช่องไหน|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu

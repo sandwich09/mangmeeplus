@@ -2105,7 +2105,7 @@ it('R6 planner and compose acceptance reuses shape, source and number grounding 
 import { parseLineIntakeCompactDecision } from './line-intake-compact-decision';
 
 describe('R22 claim read binding', () => {
-  async function claimRead(text: string, filters: Record<string, any>, tool = 'reimbursement.list_pending_approvals', permissions = ['reimbursement.read'], memory?: any[]) {
+  async function claimRead(text: string, filters: Record<string, any>, tool = 'reimbursement.list_pending_approvals', permissions = ['reimbursement.read'], memory?: any[], plannedInput: Record<string, unknown> = {}) {
     const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
     const req: LineAiTurnRequest = { requestId: 'r22', webhookEventId: 'r22', messageText: text, messagePreviewHash: 'a'.repeat(16),
       valueCandidates: extractValueCandidates(text, '2026-11-08'),
@@ -2113,12 +2113,83 @@ describe('R22 claim read binding', () => {
       semanticSubrequests: [{ index: 0, kind: 'read', goal: text, requestedFilters: filters, requiredEvidence: [], dependsOn: [] }],
       ...(memory ? { conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: memory } } : {}) };
     const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
-      provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: tool, input: {} }] }) }) },
+      provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: tool, input: plannedInput }] }) }) },
       invoke: async (meta, _ctx, input) => { calls.push({ tool: meta.name, input }); return { toolName: meta.name, status: 'ok', asOf: '2026-11-08T00:00:00Z',
         sourceRefs: [{ id: 'claims', label: 'ใบเบิก', module: 'reimbursements', entityType: 'reimbursement_summary', permissionChecked: true, asOf: '2026-11-08T00:00:00Z' }],
         data: { matchedCount: 0, matchedItems: [], matchedTotalsByCurrency: [], appliedFilters: input } }; } });
     return { calls, result };
   }
+  it('R23.1 grounds a category without ค่า and rejects invented or short aliases', async () => {
+    for (const [text, categoryName] of [['ใบเบิกออฟฟิศที่ยังค้างคืน', 'ค่าออฟฟิศ'], ['ใบเดินทางรอบสี่', 'ค่าเดินทาง']]) {
+      const { calls } = await claimRead(text!, { categoryName }, 'reimbursement.get_summary');
+      assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: { categoryName } }]);
+    }
+    for (const categoryName of ['ค่าน้ำมัน', 'ค่ารถ']) {
+      const { calls } = await claimRead('ใบเบิกรถของฉัน', { categoryName }, 'reimbursement.get_summary');
+      assert.deepEqual(calls, []);
+    }
+  });
+  it('R23.1 keeps the person and category together from a permission-checked read', async () => {
+    const filters = { requesterName: 'สมชัย', categoryName: 'ค่าเดินทาง' };
+    const memory = [{ tool: 'reimbursement.get_summary', answerShape: 'single_metric', asOf: '2026-11-08T00:00:00Z', claimFilters: filters }];
+    for (const text of ['หมวดนี้ของเขารวมเท่าไร', 'หมวดที่เปิดให้ของคนนี้']) {
+      const { calls } = await claimRead(text, filters, 'reimbursement.get_summary', ['reimbursement.read'], memory);
+      assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: filters }]);
+    }
+  });
+  it('R23.2 binds colloquial thresholds and refuses an invented amount', async () => {
+    for (const [word, amount] of [['พันแปด', '1800'], ['สองพันห้า', '2500'], ['หมื่นสอง', '12000'], ['แสนห้า', '150000'], ['พันสอง', '1200'], ['สามพันกว่า', '3000']]) {
+      const { calls } = await claimRead(`ใบเบิก${word === 'สามพันกว่า' ? '' : 'เกิน'}${word}บาท`, { amountGt: amount }, 'reimbursement.get_summary');
+      assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: { amountGt: amount } }]);
+    }
+    const { calls } = await claimRead('ใบเบิกเกินพันแปดบาท', { amountGt: '1801' }, 'reimbursement.get_summary');
+    assert.deepEqual(calls, []);
+  });
+  it('R23.3 canonicalizes a spoken round only when the text supports it', async () => {
+    for (const [text, round, expected] of [['ใบเบิกรอบแปด', 'แปด', '8'], ['ใบเบิกรอบที่สาม', 'สาม', '3']]) {
+      const { calls } = await claimRead(text!, { round }, 'reimbursement.get_summary');
+      assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: { round: expected } }]);
+    }
+    const { calls } = await claimRead('ใบเบิกรอบสาม', { round: 'แปด' }, 'reimbursement.get_summary');
+    assert.deepEqual(calls, []);
+  });
+  it('R23.4 drops a queue approver on fallback and retains pending status when omitted', async () => {
+    for (const plannedInput of [{ approver: 'all' }, { approver: 'me' }, {}]) {
+      const { calls } = await claimRead('ใบเบิกของสมชัยที่ยังรออนุมัติ', { requesterName: 'สมชัย' }, 'reimbursement.list_pending_approvals', ['reimbursement.read'], undefined, plannedInput);
+      assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: { requesterName: 'สมชัย', status: 'PENDING_APPROVAL' } }]);
+    }
+  });
+  it('R23.4 keeps the caller approval queue instead of falling back', async () => {
+    const { calls } = await claimRead('ใบเบิกที่รอฉันอนุมัติ', {}, 'reimbursement.list_pending_approvals', ['reimbursement.read', 'reimbursement.approve'], undefined, { approver: 'me' });
+    assert.deepEqual(calls, [{ tool: 'reimbursement.list_pending_approvals', input: { approver: 'me' } }]);
+    const { calls: unsupported } = await claimRead('ใบเบิกของสมชัยที่รอฉันอนุมัติ', { requesterName: 'สมชัย' }, 'reimbursement.list_pending_approvals', ['reimbursement.read', 'reimbursement.approve'], undefined, { approver: 'me' });
+    assert.deepEqual(unsupported, [], 'a summary cannot silently discard the caller approval queue');
+  });
+  it('R23.5 drops my-bills requester only for own-only expense scope', async () => {
+    for (const permissions of [['expense.read_own'], ['expense.read_own', 'expense.read_related'], ['expense.read_own', 'expense.read'], ['expense.read_own', 'expense.review']]) {
+      for (const plannedInput of [{}, { requester: 'me' }]) {
+        const { calls } = await claimRead('บิลค้างจ่ายของฉัน', { requester: 'me', paymentStatus: 'UNPAID' }, 'expense.list_recent', permissions, undefined, plannedInput);
+        assert.deepEqual(calls, permissions.length === 1 ? [{ tool: 'expense.list_recent', input: { paymentStatus: 'UNPAID' } }] : []);
+      }
+    }
+  });
+  it('R23 compact prepared reads retain the category alias and canonical spoken round', async () => {
+    const text = 'ใบเบิกออฟฟิศรอบแปด';
+    const { createLineAiInputEvidence } = await import('@watchdog-bms/contracts');
+    const evidence = await createLineAiInputEvidence({ turnKey: 'r23-compact', parts: [{ partId: 'p0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] });
+    assert.ok(evidence);
+    const parsed = parseLineIntakeCompactDecision({ raw: {
+      subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: { categoryName: 'ค่าออฟฟิศ', round: 'แปด' } }],
+      simpleRead: { subrequest: 0, tool: 'reimbursement.get_summary', answerShape: 'single_metric', confidence: 0.99 },
+    }, messageText: text, inputEvidence: evidence.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: new Set(['reimbursement.get_summary::single_metric']), language: 'th', valueCandidates: extractValueCandidates(text) });
+    assert.ok(parsed?.preparedPlan);
+    assert.deepEqual(parsed.preparedPlan.proposedCalls[0]?.input, { categoryName: 'ค่าออฟฟิศ', round: '8' });
+  });
+  it('R23 free source-drafts permissions cannot read claims using the widened words', async () => {
+    const { calls } = await claimRead('ใบเบิกออฟฟิศเกินพันแปด', { categoryName: 'ค่าออฟฟิศ', amountGt: '1800' }, 'reimbursement.get_summary', ['expense.read', 'expense.read_own', 'expense.read_related']);
+    assert.deepEqual(calls, []);
+  });
   it('R22.1 replaces an incompatible claim tool without losing category, person or status', async () => {
     for (const [text, filters] of [
       ['ใบเบิกหมวดค่าเดินทางรออนุมัติกี่ใบ', { categoryName: 'ค่าเดินทาง', status: 'PENDING_APPROVAL' }],
@@ -2149,7 +2220,7 @@ describe('R22 claim read binding', () => {
   it('R22.3 preserves a deterministic Thai amount threshold even if the planner omits it', async () => {
     for (const [phrase, key, amount] of [['เกินพัน', 'amountGt', '1000'], ['ไม่เกินหมื่น', 'amountLte', '10000'], ['ไม่ถึงพัน', 'amountLt', '1000'], ['ต่ำกว่าพัน', 'amountLt', '1000'], ['อย่างน้อยพัน', 'amountGte', '1000']] as const) {
       const { calls } = await claimRead(`ใบเบิกของสมชาย${phrase}บาทกี่ใบ`, { requesterName: 'สมชาย' });
-      assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: { requesterName: 'สมชาย', [key]: amount } }]);
+      assert.deepEqual(calls, [{ tool: 'reimbursement.get_summary', input: { requesterName: 'สมชาย', status: 'PENDING_APPROVAL', [key]: amount } }]);
     }
   });
   it('R22.3 rejects invented amounts and names an unsupported amount filter in the answer', async () => {

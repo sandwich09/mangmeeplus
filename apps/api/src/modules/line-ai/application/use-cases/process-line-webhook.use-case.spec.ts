@@ -20763,3 +20763,12 @@ it('R22 reviewed product help records howto and preserves an already recorded jo
   flow.deliverySources.set(event, { ids: ['read-id'], requestId: 'read' });
   assert.deepEqual(await r22TaskObservation(flow, event, flow.deliveryAccess.get(event), 'completed'), { kind: 'expense_pay', status: 'OPEN' });
 });
+
+it('R23 controller: a voucher vendor name stops before particles, and shop words name no vendor', async () => {
+  const { voucherVendorName } = await import('./process-line-webhook.use-case');
+  assert.equal(voucherVendorName('ทำใบเตรียมจ่ายให้ บจก. สายน้ำ เทรดดิ้ง หน่อยจ้ะ'), 'บจก. สายน้ำ เทรดดิ้ง');
+  assert.equal(voucherVendorName('สร้างใบเตรียมจ่ายร้านแสงทองให้ทีครับ'), 'ร้านแสงทอง');
+  assert.equal(voucherVendorName('ทำใบเตรียมจ่ายของผู้ขายชื่อซ้ำหน่อยค่ะ'), 'ผู้ขายชื่อซ้ำ');
+  assert.equal(voucherVendorName('สร้างใบเตรียมจ่ายของร้านเราจ้ะ'), undefined);
+  assert.equal(voucherVendorName('สร้างใบเตรียมจ่ายจากบิล ทดสอบ-0004 ให้หน่อย'), undefined);
+});

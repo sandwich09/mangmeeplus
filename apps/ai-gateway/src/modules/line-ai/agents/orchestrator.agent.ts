@@ -600,7 +600,7 @@ function sanitizeToolInput(meta: ToolMeta, raw: unknown, guard?: PeriodGuard, me
     // period key is dropped above — the rest of the call still proceeds, just without that filter.
     // Spec §4 R-M5: a value equal to the SAME field on a recentReads entry is grounded too — this is
     // what lets a follow-up that names no new category/vendor keep the inherited one.
-    if (NAME_FILTER_GROUNDING_FIELDS.has(key) && messageText !== undefined && !nameFilterGroundedInText(value, messageText)
+    if (NAME_FILTER_GROUNDING_FIELDS.has(key) && messageText !== undefined && !nameFilterGroundedInText(value, messageText, key === 'categoryName')
       && !(recentReads ?? []).some((entry) => (entry as unknown as Record<string, unknown>)[key] === value)) continue;
     // Spec §4 R-M5: expenseId/reimbursementId are accepted ONLY when the exact id appears in some
     // recentReads shownItems or API-issued capture/draft references — never message text.

@@ -696,6 +696,12 @@ export function extractValueCandidates(
       cursor += 1;
       continue;
     }
+    // A final digit after a large Thai magnitude names its next lower place (พันแปด = 1,800).
+    const [magnitude, digit] = scanned.tokens.slice(-2);
+    if (magnitude?.kind === 'multiplier' && magnitude.value >= 1_000
+      && digit?.kind === 'unit' && digit.value > 0 && digit.value < 10) {
+      scanned.tokens.push({ kind: 'multiplier', value: magnitude.value / 10 });
+    }
     const value = options.scan ? evaluateWordTokensExact(scanned.tokens) : evaluateWordTokens(scanned.tokens);
     if (value !== null && BigInt(value) > 0n && !overlaps(dateRanges, cursor, scanned.end)) {
       pushAmount(amounts, text, mapped, cursor, scanned.end, value, options.scan);

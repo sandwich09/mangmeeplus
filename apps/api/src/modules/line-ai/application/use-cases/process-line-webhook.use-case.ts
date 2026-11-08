@@ -1410,6 +1410,13 @@ export function pendingWorkReply(text: string): 'cancel' | 'review' | null {
   return null;
 }
 
+/** "ใบเตรียมจ่ายของร้านสมใจ", "…ให้ หจก. ออฟฟิศ ซัพพลาย นะคะ": the vendor a voucher names, without the closing particles.
+ *  "ร้านนี้", "ร้านเรา" speak of the shop, not a vendor. */
+export function voucherVendorName(text: string): string | undefined {
+  const name = /(?:ร้าน|ผู้ขาย|บริษัท|บจก\.?|หจก\.?)\s*.+?(?=\s*(?:จากบิล|จากเลข|ยอด|จำนวน|ให้(?:หน่อย|ที|ด้วย)|หน่อย|นะ|ค่ะ|คะ|ครับ|คับ|จ้ะ|จ้า|จ๊ะ|ฮะ|ด้วย)|\s*$)/u.exec(text)?.[0]?.trim();
+  return name && !/^(?:ร้าน|ผู้ขาย)\s*(?:นี้|เรา|ที่|เดิม|เอง)/u.test(name) && name.replace(/^(?:ร้าน|ผู้ขาย|บริษัท|บจก\.?|หจก\.?)\s*/u, '').length >= 2 ? name : undefined;
+}
+
 export function isLineReadFollowUp(text: string): boolean {
   const value = mapThaiDigits(text.trim());
   const parsed = lineWorkflowPickerText(value, true);
@@ -4799,7 +4806,7 @@ export class ProcessLineWebhookUseCase {
         const vendorWord = ['expense_delete', 'expense_submit'].includes(expenseWorkflow) && !slots.vendorName && !lineWorkflowPickerText(event.messageText).documents.length
           ? /(?:ร้าน|ผู้ขาย)\s*([^\s]+?)(?=ของ|ที่|ให้|หน่อย|ที(?=จ|$|\s)|นะ|จ้|จ๊|ฮะ|คะ|ค่ะ|ครับ|คับ|ด้วย|ไปเลย|\s|$)/u.exec(event.messageText)?.[1] : undefined;
         const vendorName = expenseWorkflow === 'payment_voucher' && !slots.vendorCounterpartyId
-          ? slots.vendorName ?? /(?:ร้าน|ผู้ขาย)\s*.+?(?=\s*(?:จากบิล|จากเลข|ยอด|จำนวน|ให้หน่อย|ค่ะ|ครับ)|$)/u.exec(event.messageText)?.[0]?.trim()
+          ? slots.vendorName ?? voucherVendorName(event.messageText)
           : ['expense_delete', 'expense_submit'].includes(expenseWorkflow) && !slots.vendorCounterpartyId
             ? slots.vendorName ?? (vendorWord && vendorWord.length >= 2 && !/^(?:นี้|เรา|เอง|ค้า|ไป|ยัง|จ่าย|ให้|ที่|ชื่อซ้ำ|ของ|ผม|ฉัน|หนู)/u.test(vendorWord) ? vendorWord : undefined) : undefined;
         const records = await this.workflowTargets.pick(ctx, chatKeyHashOf(event), expenseWorkflow, { ...slots, ...(vendorName ? { vendorName } : {}), ...(latestPaid ? { latestPaid: true } : {}) }, 1);

@@ -414,3 +414,36 @@ describe('M4: a why/compare question implies the previous calendar month as its 
     assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'READ_FILTER_NOT_UNDERSTOOD');
   });
 });
+
+
+describe('R23 v2 read words keep deterministic filter authority', () => {
+  const cases: Array<{ name: string; text: string; filters: Record<string, unknown>; input?: Record<string, unknown>;
+    tool?: string; expected: Record<string, unknown>; permissions?: string[]; memory?: any[] }> = [
+    { name: 'R23.1 category alias', text: 'ใบเบิกออฟฟิศ', filters: { categoryName: 'ค่าออฟฟิศ' }, expected: { categoryName: 'ค่าออฟฟิศ' } },
+    { name: 'R23.1 person and this category', text: 'หมวดที่เปิดให้ของเขา', filters: { requesterName: 'สมชัย', categoryName: 'ค่าเดินทาง' },
+      memory: [{ tool: 'reimbursement.get_summary', answerShape: 'single_metric', asOf: '2026-09-28T00:00:00Z', claimFilters: { requesterName: 'สมชัย', categoryName: 'ค่าเดินทาง' } }],
+      expected: { requesterName: 'สมชัย', categoryName: 'ค่าเดินทาง' } },
+    { name: 'R23.2 colloquial amount', text: 'ใบเบิกเกินพันแปด', filters: { amountGt: '1800' }, expected: { amountGt: '1800' } },
+    { name: 'R23.2 trailing comparison', text: 'ใบเบิกสามพันกว่า', filters: {}, expected: { amountGt: '3000' } },
+    { name: 'R23.3 spoken round', text: 'ใบเบิกรอบที่สาม', filters: { round: 'สาม' }, expected: { round: '3' } },
+    { name: 'R23.4 approval queue fallback', text: 'ใบเบิกของสมชัยที่ยังรออนุมัติ', filters: { requesterName: 'สมชัย' },
+      tool: 'reimbursement.list_pending_approvals', input: { approver: 'me' }, expected: { requesterName: 'สมชัย', status: 'PENDING_APPROVAL' } },
+    { name: 'R23.5 own-only bills', text: 'บิลค้างจ่ายของฉัน', filters: { requester: 'me', paymentStatus: 'UNPAID' }, input: { requester: 'me' },
+      tool: 'expense.list_recent', permissions: ['expense.read_own'], expected: { paymentStatus: 'UNPAID' } },
+  ];
+  for (const item of cases) it(item.name, async () => {
+    const request: LineAiTurnRequest = {
+      requestId: item.name, webhookEventId: item.name, messageText: item.text, messagePreviewHash: 'a'.repeat(16),
+      valueCandidates: await candidatesV2(item.text, `r23-${cases.indexOf(item)}`), userContext: baseUserContext(item.permissions ?? ['reimbursement.read']),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: item.text, requestedFilters: item.filters as any, requiredEvidence: [], dependsOn: [] }],
+      ...(item.memory ? { conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: item.memory } } : {}),
+    };
+    const tool = item.tool ?? 'reimbursement.get_summary';
+    const expectedTool = tool === 'reimbursement.list_pending_approvals' ? 'reimbursement.get_summary' : tool;
+    const { invokedInputs } = await run({ request,
+      controlCall: { calls: [{ index: 0, toolName: tool, input: item.input ?? {} }] },
+      invokeResult: { toolName: expectedTool, status: 'ok', asOf: '2026-09-28T00:00:00Z', sourceRefs: [], data: {} },
+    });
+    assert.deepEqual(invokedInputs, [{ tool: expectedTool, input: item.expected }]);
+  });
+});

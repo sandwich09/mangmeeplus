@@ -57,8 +57,9 @@ export function claimAmountFilters(text: string, candidates?: LineAiTurnRequest[
   for (const candidate of candidates?.amounts ?? []) {
     const escapedSpan = candidate.span.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
     const comparison = new RegExp(`(ไม่เกิน|ไม่ถึง|ต่ำกว่า|อย่างน้อย|มากกว่า|เกิน)\\s*${escapedSpan}`, 'u').exec(text)?.[1];
+    const above = new RegExp(`${escapedSpan}\\s*กว่า`, 'u').test(text);
     const key = comparison === 'ไม่เกิน' ? 'amountLte' : comparison === 'ไม่ถึง' || comparison === 'ต่ำกว่า' ? 'amountLt'
-      : comparison === 'อย่างน้อย' ? 'amountGte' : comparison ? 'amountGt' : undefined;
+      : comparison === 'อย่างน้อย' ? 'amountGte' : comparison || above ? 'amountGt' : undefined;
     if (key) filters[key] = candidate.value;
   }
   return filters;
@@ -141,15 +142,19 @@ function normalizeForNameGrounding(text: string): string {
  * Spec item 2(b): a categoryName/vendorName the model sends as a tool filter is only trustworthy when
  * the user actually typed it this turn — otherwise the model can invent a plausible-looking name and
  * the tool would silently filter (or mis-resolve) by something nobody asked for. `name` must appear as
- * a substring of `messageText` after normalization.
+ * a substring of `messageText` after normalization. A category may omit its leading ค่า when
+ * its remaining Thai word has at least three characters.
  *
  * P3 hook: this only grounds against the CURRENT message. `conversationReadCandidates` above is where
  * recent-turn text would be pulled in to also ground a name the user typed earlier in the conversation
  * — pass its turns' `userMessagePreview` text through this same normalize-and-include check.
  */
-export function nameFilterGroundedInText(name: string, messageText: string): boolean {
+export function nameFilterGroundedInText(name: string, messageText: string, categoryName = false): boolean {
   const needle = normalizeForNameGrounding(name);
-  return needle.length > 0 && normalizeForNameGrounding(messageText).includes(needle);
+  const text = normalizeForNameGrounding(messageText);
+  const distinctive = categoryName && needle.startsWith('ค่า') ? needle.slice(3) : '';
+  return needle.length > 0 && text.includes(needle)
+    || /^[ก-๙]{3,}$/u.test(distinctive) && text.includes(distinctive);
 }
 
 /** Item 1 (223-turn eval batch 2, T-001#0): "จ่ายไป/ใช้ไป/ใช้จ่ายไป/เสียไปเท่าไหร่" is a plain TOTAL
@@ -201,13 +206,16 @@ export function canonicalizeReadToolEnums(
   if (meta.name?.startsWith('reimbursement.')) {
     for (const key of CLAIM_AMOUNT_FILTER_KEYS) if (typeof canonical[key] === 'number' && Number.isFinite(canonical[key])) canonical[key] = String(canonical[key]);
     for (const key of ['requesterName', 'categoryName']) {
-      if (canonical[key] !== undefined && (typeof canonical[key] !== 'string' || !nameFilterGroundedInText(canonical[key] as string, messageText ?? '') && !recentReads?.some(entry => entry.tool.startsWith('reimbursement.') && entry.claimFilters?.[key as 'requesterName' | 'categoryName'] === canonical[key]))) return undefined;
+      if (canonical[key] !== undefined && (typeof canonical[key] !== 'string' || !nameFilterGroundedInText(canonical[key] as string, messageText ?? '', key === 'categoryName') && !recentReads?.some(entry => entry.tool.startsWith('reimbursement.') && entry.claimFilters?.[key as 'requesterName' | 'categoryName'] === canonical[key]))) return undefined;
     }
     if (canonical.round !== undefined) {
       const spoken = /รอบ\s*(?:ที่\s*)?([0-9๐-๙]+|[ก-๙]+)/u.exec(messageText ?? '')?.[1];
-      if ((!spoken || extractValueCandidates(spoken).amounts[0]?.value !== String(canonical.round))
-        && !recentReads?.some(entry => entry.tool.startsWith('reimbursement.') && entry.claimFilters?.round === String(canonical.round))) return undefined;
-      canonical.round = String(canonical.round);
+      const rawRound = String(canonical.round);
+      const round = /^\d+$/u.test(rawRound) ? rawRound
+        : extractValueCandidates(rawRound).amounts.find(candidate => candidate.span === rawRound)?.value;
+      if (!round || (!spoken || extractValueCandidates(spoken).amounts[0]?.value !== round)
+        && !recentReads?.some(entry => entry.tool.startsWith('reimbursement.') && entry.claimFilters?.round === round)) return undefined;
+      canonical.round = round;
     }
     if (canonical.status === 'APPROVED' && /อนุมัติแล้ว.*(?:ยังไม่จ่าย|ยังไม่ได้จ่าย|รอจ่าย)/u.test(messageText ?? '')) canonical.status = 'APPROVED_UNPAID';
   }
