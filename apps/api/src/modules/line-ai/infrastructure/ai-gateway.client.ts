@@ -76,7 +76,9 @@ import { LineAiBudgetAuthorityService, type IssueLineAiBudgetGrant } from '../ap
 import { resolveThbPerUsd } from '../application/ai-fx-rate';
 import { type AiModelPrices, type AiTariffV2 } from '../application/ai-model-pricing';
 
-export const LINE_CLASSIFY_MODEL_ID = 'global.anthropic.claude-haiku-5-5';
+// Haiku 5.5 is admitted (tariff, capacity, thinking off) but not pinned: on the v14 rerun it disagreed with
+// Sonnet on 11 of 70 classified turns, Sonnet right each time, for about 0.3 s at the reply p50.
+export const LINE_CLASSIFY_MODEL_ID = 'global.anthropic.claude-sonnet-4-6';
 const LINE_TURN_TIMEOUT_MS = 120_000;
 const LINE_INTAKE_TIMEOUT_MS = 30_000;
 /** Outlast a 90s page read and its one timeout retry, retaining both usage entries. */

@@ -4101,7 +4101,8 @@ export class ProcessLineWebhookUseCase {
         if (!saved || !bound || saved.ownerEpoch !== bound.epoch || saved.userId !== ctx.userId) return false;
         const evidence = await this.textEvidenceV2(event);
         if (!evidence) return false;
-        const ordinal = lineWorkflowPickerText(event.messageText).ordinal;
+        // "ต้องการทำเรื่องนี้ใช่ไหมคะ" takes a typed "ใช่ค่ะ" as its one button.
+        const ordinal = lineWorkflowPickerText(event.messageText).ordinal ?? (saved.options.length === 1 && isAffirmativeText(event.messageText) ? 1 : undefined);
         if (ordinal && saved.options[ordinal - 1]) {
           event.workflowControl = { action: 'wf_choice', token: meta.token, pick: saved.options[ordinal - 1]! };
           try { return await this.handleWorkflowChoice(event, ctx, features); } finally { delete event.workflowControl; }
@@ -4120,7 +4121,9 @@ export class ProcessLineWebhookUseCase {
         }
         if (!named) {
           const detailJobs = saved.options.filter(workflow => ['expense_void', 'expense_pay', 'reimbursement_cancel', 'reimbursement_reject'].includes(workflow));
-          if (detailJobs.length === 1 && await this.mayChooseWorkflow(detailJobs[0]!, ctx, features)) {
+          // A bare "ไม่ใช่ค่ะ" answers no; a reason that starts with ไม่ ("ไม่ได้ใช้แล้ว") is still the job's detail.
+          const bareNo = /^(?:ไม่ใช่|ไม่เอา|ไม่ทำ|ไม่ต้อง|ยังไม่|ไม่|เปล่า|no|nope)(?:\s*(?:ค่ะ|คะ|ครับ|คับ|จ้ะ|จ้า|นะ|ฮะ))*[.!]*$/iu.test(event.messageText.trim());
+          if (!bareNo && detailJobs.length === 1 && await this.mayChooseWorkflow(detailJobs[0]!, ctx, features)) {
             const workflow = detailJobs[0]!;
             const reason = workflow !== 'expense_pay';
             const built = await createLineAiInputEvidence({ turnKey: deliveryHash(event.webhookEventId), parts: [

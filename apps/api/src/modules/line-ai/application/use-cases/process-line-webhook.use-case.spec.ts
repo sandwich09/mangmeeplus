@@ -20625,6 +20625,25 @@ it('R22 paid typed choice detail preserves the bill and unrelated text repeats t
   }
 });
 
+it('R24 a typed yes answers the one-job question like its button; a typed no does not start it', async t => {
+  for (const text of ['ใช่ค่ะ', 'ไม่ใช่ค่ะ']) {
+    const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+    h.source.records.forEach(row => { row.status = 'CONFIRMED'; });
+    let classifierCalls = 0;
+    h.flow.aiGateway.requestLineWorkflowClassify = async () => { classifierCalls++; return ({ status: 'CLASSIFIED', label: 'expense_pay', secondLabel: 'none', confidence: .6, secondConfidence: 0, slots: {} }); };
+    await h.execute('ช่วยจัดการบิล ทดสอบ-0006 ให้หน่อย');
+    assert.match(JSON.stringify(h.delivered.at(-1)), /ต้องการทำเรื่องนี้ใช่ไหมคะ/);
+    await h.execute(text);
+    const reply = JSON.stringify(h.delivered.at(-1));
+    if (text === 'ใช่ค่ะ') {
+      assert.doesNotMatch(reply, /เลือกงานจากปุ่มด้านล่างก่อนนะคะ|ต้องการทำเรื่องนี้ใช่ไหมคะ/);
+      assert.match(reply, /บันทึกจ่ายค่าใช้จ่าย/); assert.match(reply, /จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ/);
+    } else assert.match(reply, /เลือกงานจากปุ่มด้านล่างก่อนนะคะ/);
+    assert.equal(classifierCalls, 1);
+    assert.equal(h.intakeRequests.length, 0); assert.equal(h.aiGatewayRequests.length, 0); assert.deepEqual(h.applied, []); assert.equal(h.creates(), 0);
+  }
+});
+
 it('R22 paid vendor-list reader gets an exhaustive honest vendor miss', async t => {
   const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
   h.source.ctx.permissions.push('accounting.counterparty.read');

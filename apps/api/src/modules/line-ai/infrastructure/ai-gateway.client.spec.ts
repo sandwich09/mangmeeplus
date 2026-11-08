@@ -1475,7 +1475,7 @@ it('A1 forwards read-only credit state to the budget authority', async () => {
   assert.deepEqual(received, ['company', now]);
 });
 
-it('R19 classify pins Haiku 5.5 while the turn keeps its company model and partner policy wins', async () => {
+it('B4 classify pins Sonnet while the turn keeps its company model and a partner Haiku 5.5 policy wins', async () => {
   const original = globalThis.fetch;
   const sonnet = 'global.anthropic.claude-sonnet-4-6', haiku = 'global.anthropic.claude-haiku-5-5';
   const policies: any[] = [], issued: any[] = [];
@@ -1495,12 +1495,11 @@ it('R19 classify pins Haiku 5.5 while the turn keeps its company model and partn
     const input = { owner: { owner: { companyId: 'company-1' } } } as any;
     await client.issueLineReliabilityGrant('classify', { ...input, authorityKind: 'webhook_classify' });
     await client.issueLineReliabilityGrant('turn', { ...input, authorityKind: 'webhook_event' });
-    partner = sonnet;
+    partner = haiku;
     await client.issueLineReliabilityGrant('partner', { ...input, authorityKind: 'webhook_classify' });
-    assert.deepEqual(policies, [{ modelId: haiku }, undefined, { modelId: sonnet }]);
-    assert.deepEqual(issued.map(row => row.model.modelId), [haiku, sonnet, sonnet]);
-    assert.deepEqual(issued[0].tariff.usdPerMTok, { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 });
-    partner = null;
+    assert.deepEqual(policies, [{ modelId: sonnet }, undefined, { modelId: haiku }]);
+    assert.deepEqual(issued.map(row => row.model.modelId), [sonnet, sonnet, haiku]);
+    assert.deepEqual(issued[2].tariff.usdPerMTok, { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 });
     for (const patch of [{ contextTokens: 100001 }, { maxOutputTokens: 8193 }, { modelId: 'global.anthropic.unreviewed' }]) {
       globalThis.fetch = async () => Response.json({ ready: true, inputContractVersion: 2, providerOutputVersion: 2, budgetContractVersion: 2,
         profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2,
