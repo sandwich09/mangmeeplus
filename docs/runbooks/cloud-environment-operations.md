@@ -10,6 +10,18 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current UAT — demo chat quota header + complete demo purge, 2026-11-09 21:49 Bangkok
+
+UAT serves exact main `eae5297e66745194dabb12442881c13af7c37652` (same tree as develop `0ae4c247f`): the
+21:24 release below plus two sales-demo fixes — the open chat header shows the link's own document quota,
+and clearing/deleting/expiring a demo shop also erases its LINE chat logs and pending outbox events. No
+migration. Owner's words: "เสร็จแล้วเอาเข้า main+develop และ promote ขึ้น uat เลย". Fresh controller
+worktree `release-uat-20261109d`; cached MFA session valid. Prepare `20261109T143805Z-eb0ebd47`
+`PREPARED_NO_DEPLOYMENT` in 353.875 s; apply `20261109T144359Z-c00d9deb` signed/verified
+`ACCEPTED_LINE_DEFERRED` in 289.182 s, 12/12 phases. Production untouched (`884ba5307`). Workflow
+UAT/READY/PROD IDs `NOT_DISPATCHED`; native LINE not exercised. Rows orphaned by earlier demo purges on UAT
+are not back-cleaned.
+
 ## Current UAT — demo-link management + accountant export pack, 2026-11-09 21:24 Bangkok
 
 UAT serves exact main `976971d8a8041d5a08b00547a5a659dad53630de` (same tree as develop `e44765620`): the
