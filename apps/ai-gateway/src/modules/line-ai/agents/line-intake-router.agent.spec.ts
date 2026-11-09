@@ -1233,9 +1233,20 @@ describe('B3 workflow classifier', () => {
       'reimbursement_reject', 'reimbursement_pay', 'expense_submit', 'expense_confirm', 'expense_delete', 'expense_void',
       'expense_pay', 'payment_voucher', 'wht_certificate', 'substitute_receipt', 'read', 'howto', 'open', 'smalltalk', 'multi', 'unclear']);
     assert.equal(WORKFLOW_CLASSIFIER_SCHEMA.additionalProperties, false);
-    assert.deepEqual(WORKFLOW_CLASSIFIER_SCHEMA.required, Object.keys(WORKFLOW_CLASSIFIER_SCHEMA.properties));
+    assert.deepEqual(WORKFLOW_CLASSIFIER_SCHEMA.required, ['label', 'second_label', 'confidence', 'second_confidence', 'reference', 'ordinal']);
     assert.deepEqual(WORKFLOW_CLASSIFIER_SCHEMA.properties.confidence, { type: 'number' });
     assert.deepEqual(WORKFLOW_CLASSIFIER_SCHEMA.properties.ordinal, { type: 'integer' });
+  });
+
+  it('R25 an answer that omits its empty text slots classifies with empty slots', async () => {
+    const request = await workflowClassifyRequest();
+    const { label, second_label, confidence, second_confidence, reference, ordinal } = workflowAnswer();
+    const { response } = await runWorkflowClassifier(request, async () => workflowOutput({ label, second_label, confidence, second_confidence, reference, ordinal } as never));
+    assert.equal(response.status, 'CLASSIFIED', JSON.stringify(response));
+    if (response.status !== 'CLASSIFIED') return;
+    assert.deepEqual(response.slots, { reference: 'this', ordinal: 0, personName: '', vendorName: '', descriptionText: '',
+      amountText: '', dateText: '', reasonText: '', categoryText: '' });
+    assert.match(WORKFLOW_CLASSIFIER_SYSTEM_PROMPT, /Omit a slot that was not supplied/);
   });
 
   it('normalizes only exact message and candidate spans and retains the raw decision', async () => {
