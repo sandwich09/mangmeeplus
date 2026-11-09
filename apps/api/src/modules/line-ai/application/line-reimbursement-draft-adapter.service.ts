@@ -287,7 +287,7 @@ export class LineReimbursementDraftAdapterService {
     } catch { return null; }
     const rows = await this.repo.listReimbursementSources(input.ctx.companyId, String(branch.raw['id']), String(requester.raw['id']), '', input.expenseId);
     const source = rows.find(row => row.expenseId === input.expenseId);
-    if (!source) return { sourceRefusal: 'ทำใบเบิกจากบิลนี้ในแชทไม่ได้ค่ะ' };
+    if (!source) return { sourceRefusal: 'ทำใบเบิกจากบิลนี้ไม่ได้ค่ะ' };
     if (!source.eligible) {
       const sentences: Record<string, string> = {
         expense_already_claimed: 'บิลนี้อยู่ในใบเบิกอื่นแล้วค่ะ',
@@ -295,7 +295,7 @@ export class LineReimbursementDraftAdapterService {
         reimbursement_source_tax_review_required: 'บิลนี้ต้องให้ผู้ตรวจรายจ่ายตรวจ VAT หรือหัก ณ ที่จ่ายก่อนค่ะ',
         reimbursement_source_fields_mismatch: 'บิลนี้ข้อมูลยังไม่ครบ แก้วันที่หรือยอดในเว็บก่อนค่ะ',
       };
-      return { sourceRefusal: sentences[source.reason ?? ''] ?? 'ทำใบเบิกจากบิลนี้ในแชทไม่ได้ค่ะ' };
+      return { sourceRefusal: sentences[source.reason ?? ''] ?? 'ทำใบเบิกจากบิลนี้ไม่ได้ค่ะ' };
     }
     const control = await this.sourceChoiceControl(input);
     return control ? this.choose({ ...input, control }) : null;

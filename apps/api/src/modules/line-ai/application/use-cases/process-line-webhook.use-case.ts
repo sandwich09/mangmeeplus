@@ -1,6 +1,6 @@
 import { canPrepareSubstituteReceipt } from '../../../expenses/application/use-cases/substitute-receipt.use-case';
 import { LINE_VOUCHER_WORKFLOW_STATUS } from '../line-voucher-action.service';
-import { DISBURSEMENT_VOUCHER_STATUS_LABELS } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_STATUS_LABELS, expenseEvidenceAssessment } from '@watchdog-bms/contracts';
 import { lineDocumentNumberMatches, lineVoucherWorkflowAction } from '../../domain/logic/line-ai-classifier.logic';
 import { isLineWorkflowPutOff } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_STATUS_LABELS } from '@watchdog-bms/contracts';
@@ -6560,7 +6560,12 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     if (!verb) return false;
     const status = EXPENSE_STATUS_LABELS[bill.status];
     const facts = [scrubRecordText(bill.vendorNameSnapshot ?? '', 100), formatClaimMoney(bill.grandTotalAmount, bill.currency)].filter(Boolean).join(' ');
-    const text = `${verb}บิลนี้ในแชทไม่ได้ตอนนี้ค่ะ${facts || status ? ` (${[facts, status ? `สถานะ ${status}` : ''].filter(Boolean).join(' ')})` : ''}`;
+    // The candidate list's own rule: a bill that already serves as its receipt needs no substitute (web offers none either).
+    const assessment = expenseEvidenceAssessment(bill as never);
+    const hasReceipt = workflow === 'substitute_receipt' && (assessment ? assessment.route === 'SOURCE_DOCUMENT' && assessment.receiptProblem === 'NONE'
+      : (bill.attachments ?? []).some((file: { purpose?: string | null; status?: string | null }) => ['expense.receipt.primary', 'expense.receipt.supporting'].includes(file.purpose ?? '') && (!file.status || file.status === 'ACTIVE')));
+    const lead = hasReceipt ? 'บิลนี้ใช้เป็นใบเสร็จได้อยู่แล้ว ไม่ต้องทำใบรับรองแทนใบเสร็จค่ะ' : `${verb}บิลนี้ไม่ได้ค่ะ`;
+    const text = `${lead}${facts || status ? ` (${[facts, status ? `สถานะ ${status}` : ''].filter(Boolean).join(' ')})` : ''}`;
     this.workflowTaskOutcomes.set(event, { status: 'REFUSED', kind: workflow });
     await this.deliverRequiredMessages(event, [buildWorkflowExitMessage(text, `/companies/${ctx.companyId}/expenses/${id}`, ctx.companyId, this.config.webBaseUrl, replyLanguage(event))]);
     await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);

@@ -21191,7 +21191,7 @@ it('R29 f an ineligible recent bill shows its status and web exit instead of oth
   h.source.actions.repo.listRecentLineCaptures = async (input: any) => { assert.equal(input.includeAllStatuses, true); return [h.source.records[1]]; };
   await h.execute('ยืนยันบิลเมื่อกี้');
   const text = JSON.stringify(h.delivered.at(-1));
-  assert.match(text, /ยืนยันบิลนี้ในแชทไม่ได้ตอนนี้ค่ะ/); assert.match(text, /ร้านทดสอบ/); assert.match(text, /501.00/);
+  assert.match(text, /ยืนยันบิลนี้ไม่ได้ค่ะ/); assert.match(text, /ร้านทดสอบ/); assert.match(text, /501.00/);
   assert.match(text, /ยืนยันแล้ว/); assert.match(text, /expenses\/expense-company-c-10/);
   // Only the focus bill is checked (its own card action refuses it); no other bill is offered or previewed.
   assert.doesNotMatch(text, /wf_open/); assert.deepEqual(h.source.previewed, ['expense-company-c-10']);
@@ -21329,7 +21329,7 @@ it('R29 every source refusal names the bill and manual collection remains open',
     ['expense_already_claimed', 'บิลนี้อยู่ในใบเบิกอื่นแล้วค่ะ'],
     ['reimbursement_source_tax_review_required', 'บิลนี้ต้องให้ผู้ตรวจรายจ่ายตรวจ VAT หรือหัก ณ ที่จ่ายก่อนค่ะ'],
     ['reimbursement_source_fields_mismatch', 'บิลนี้ข้อมูลยังไม่ครบ แก้วันที่หรือยอดในเว็บก่อนค่ะ'],
-    ['reimbursement_source_unavailable', 'ทำใบเบิกจากบิลนี้ในแชทไม่ได้ค่ะ'],
+    ['reimbursement_source_unavailable', 'ทำใบเบิกจากบิลนี้ไม่ได้ค่ะ'],
   ]) {
     const h = await r29FocusClaim('เบิกบิลเมื่อกี้', undefined, reason); await h.start();
     assert.ok(h.messages().includes(sentence!)); assert.match(h.messages(), /ครัวบ้านนุ้ย/); assert.match(h.messages(), /expenses\/source-expense/);
