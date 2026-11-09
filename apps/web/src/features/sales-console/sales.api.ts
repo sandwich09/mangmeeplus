@@ -1,5 +1,7 @@
 'use client';
 import type {
+  SalesDemoLinkItem,
+  SalesDemoLinkUpdate,
   SalesAgentCreateBody,
   SalesAgentCreateResult,
   SalesAgentCredentialHandoff,
@@ -72,6 +74,22 @@ export function createSalesDemoLink(aiCredit = 50): Promise<SalesDemoLink> {
   return apiFetch<SalesDemoLink>('/v1/sales/demo-links', {
     method: 'POST', body: JSON.stringify({ aiCredit }), suppressErrorToast: true,
   });
+}
+
+export function listSalesDemoLinks(init?: { signal?: AbortSignal }): Promise<SalesDemoLinkItem[]> {
+  return apiFetch<SalesDemoLinkItem[]>('/v1/sales/demo-links', { ...init, suppressErrorToast: true });
+}
+
+export function updateSalesDemoLink(id: string, body: SalesDemoLinkUpdate): Promise<SalesDemoLinkItem> {
+  return apiFetch<SalesDemoLinkItem>(`/v1/sales/demo-links/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body), suppressErrorToast: true });
+}
+
+export function resetSalesDemoLink(id: string): Promise<void> {
+  return apiFetch<void>(`/v1/sales/demo-links/${encodeURIComponent(id)}/reset`, { method: 'POST', suppressErrorToast: true });
+}
+
+export function deleteSalesDemoLink(id: string): Promise<void> {
+  return apiFetch<void>(`/v1/sales/demo-links/${encodeURIComponent(id)}`, { method: 'DELETE', suppressErrorToast: true });
 }
 
 export function saveSalesDeal(id: string, body: SalesDealSaveBody): Promise<SalesDealView> {

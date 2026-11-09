@@ -22,3 +22,15 @@ it('mint defaults to 50, persists product units and validates integer bounds 1�
   assert.throws(() => controller.mint({ aiCredit: 80, companyId: 'other' } as any, req));
   assert.equal(saved.length, 4);
 });
+
+// Owner 2026-11-09 (spec §11): the edit body is checked by hand so a typo refuses instead of saving nothing.
+it('demo link edits accept only credit 1–300, reads 1–50 and expiry 10 minutes to 30 days ahead', () => {
+  const { validateUpdate } = require('../application/demo-link-manage');
+  const now = new Date('2026-11-09T12:00:00Z');
+  assert.deepEqual(validateUpdate({ aiCredit: 120, readLimit: 8 }, now), { aiCredit: 120, readLimit: 8 });
+  assert.equal(validateUpdate({ expiresAt: '2026-11-16T12:00:00Z' }, now).expiresAt.toISOString(), '2026-11-16T12:00:00.000Z');
+  for (const body of [{}, { aiCredit: 0 }, { aiCredit: 301 }, { readLimit: 51 }, { readLimit: 1.5 }, { aiCredits: 10 },
+    { expiresAt: '2026-11-09T12:05:00Z' }, { expiresAt: '2026-12-10T12:00:00Z' }, { expiresAt: 'soon' }, null, []]) {
+    assert.throws(() => validateUpdate(body, now), (e: any) => e.getStatus() === 400, JSON.stringify(body));
+  }
+});

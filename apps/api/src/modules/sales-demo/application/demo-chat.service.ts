@@ -123,7 +123,7 @@ export class DemoChatService {
     ]);
     return { items: rows.map(row => ({ id: row.id, direction: row.direction, createdAt: row.createdAt.toISOString(), messages: row.messagesJson })),
       cursor: rows.at(-1)?.id ?? after ?? '', waiting: !!(turn || capture || qa),
-      credit: { remaining: Math.floor(balance.totalRemainingUnits / 100), total: link.aiCreditUnits }, reads: { used, limit: 3 } };
+      credit: { remaining: Math.floor(balance.totalRemainingUnits / 100), total: link.aiCreditUnits }, reads: { used, limit: link.readLimit } };
   }
 
   private async waitingCapture(companyId: string): Promise<boolean> {

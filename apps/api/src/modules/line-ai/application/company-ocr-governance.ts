@@ -328,7 +328,8 @@ export async function admitCompanyOcr(
       });
       const demo = (await tx.company.findUnique({ where: { id: input.companyId }, select: { reportClassification: true } }))?.reportClassification === 'DEMO';
       const usedCount = demo ? await tx.companyOcrUsageEvent.count({ where: { companyId: input.companyId } }) : current?.usedCount ?? 0;
-      const monthlyLimit = demo ? Math.min(3, configuration?.ocrMonthlyLimit ?? 3) : configuration?.ocrMonthlyLimit ?? null;
+      // A demo link's read quota is set per link (1–50, owner 2026-11-09); never unbounded.
+      const monthlyLimit = demo ? Math.min(50, configuration?.ocrMonthlyLimit ?? 3) : configuration?.ocrMonthlyLimit ?? null;
       if (monthlyLimit !== null && usedCount >= monthlyLimit) {
         return { allowed: false, reason: 'exceeded', usedCount, monthlyLimit, ...(demo ? { isDemo: true } : {}) } as const;
       }

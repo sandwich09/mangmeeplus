@@ -145,6 +145,7 @@ test('send guard covers in-flight, expired and exhausted credit states', () => {
   assert.equal(demoSendBlocked(false, false, 0), true);
 });
 
-test('read-limit API copy names the limit and opening a real shop', () => {
-  assert.equal(apiErrorMessage({ status: 403, code: 'demo_read_limit_reached' }), 'ลิงก์ทดลองนี้อ่านเอกสารครบ 3 ใบแล้วค่ะ เปิดร้านจริงฟรีเพื่อส่งต่อได้เลยนะคะ');
+// Owner 2026-11-09: the quota is set per link, so the copy no longer names 3.
+test('read-limit API copy says the quota is used up and points to a real shop', () => {
+  assert.equal(apiErrorMessage({ status: 403, code: 'demo_read_limit_reached' }), 'ลิงก์ทดลองนี้อ่านเอกสารครบจำนวนแล้วค่ะ เปิดร้านจริงฟรีเพื่อส่งต่อได้เลยนะคะ');
 });

@@ -11120,6 +11120,7 @@ model DemoChatMessage {
 
 model SalesDemoLink {
   aiCreditUnits   Int      @default(80)
+  readLimit       Int      @default(3)
   id              String   @id @default(cuid())
   tokenHash       String   @unique
   createdByUserId String

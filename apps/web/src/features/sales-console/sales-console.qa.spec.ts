@@ -15,7 +15,7 @@ import { apiErrorMessage } from '../../common/api/api-error-message';
 const PAGES = [
   'SalesCompaniesPage.tsx', 'SalesConsoleParts.tsx', 'SalesDealFormPage.tsx', 'SalesDealsPage.tsx',
   'SalesEventBatchForm.tsx', 'SalesEventBatchPage.tsx', 'SalesEventsPage.tsx',
-  'SalesDemoLinkDialog.tsx', 'SalesMyWorkPage.tsx', 'SalesMyProfilePage.tsx', 'SalesProfileEditor.tsx', 'SalesReportsPage.tsx', 'SalesTeamPage.tsx',
+  'SalesDemoLinkDialog.tsx', 'SalesDemoLinksPage.tsx', 'SalesMyWorkPage.tsx', 'SalesMyProfilePage.tsx', 'SalesProfileEditor.tsx', 'SalesReportsPage.tsx', 'SalesTeamPage.tsx',
   // Sales-event report view of /sales/reports (SD-E).
   'SalesEventReportSection.tsx',
 ];
@@ -234,5 +234,18 @@ describe('sales console theme and copy', () => {
         );
       }
     }
+  });
+});
+
+// Owner 2026-11-09: the demo-link page validates before it saves and pre-fills the expiry in local time.
+describe('demo link management form', () => {
+  const { demoLinkDraftErrors, localInputValue } = require('./demo-links.logic');
+  it('refuses out-of-range values and accepts a valid draft', () => {
+    const now = Date.parse('2026-11-09T12:00:00Z');
+    const inTwoDays = localInputValue('2026-11-11T12:00:00Z');
+    assert.deepEqual(demoLinkDraftErrors({ aiCredit: '120', readLimit: '8', expiresAt: inTwoDays }, now), {});
+    const bad = demoLinkDraftErrors({ aiCredit: '0', readLimit: '51', expiresAt: localInputValue('2026-12-20T12:00:00Z') }, now);
+    assert.deepEqual(Object.keys(bad).sort(), ['aiCredit', 'expiresAt', 'readLimit']);
+    assert.equal(new Date(inTwoDays).toISOString(), '2026-11-11T12:00:00.000Z');
   });
 });

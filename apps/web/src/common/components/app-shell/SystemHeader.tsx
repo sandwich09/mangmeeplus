@@ -54,6 +54,7 @@ const SECTIONS = [
   { href: '/system/executive-users', label: EXECUTIVE_USERS_TITLE, group: 'ตั้งค่าระบบ' },
   { href: '/system/wht-income-categories', label: WHT_CATALOG_WORDS.title, group: 'ตั้งค่าระบบ' },
   { href: '/system/sales-team', label: 'ทีมขาย', group: 'ตั้งค่าระบบ' },
+  { href: '/system/demo-links', label: 'ลิงก์เดโม่', group: 'ตั้งค่าระบบ' },
   { href: '/system/home-theme', label: 'ธีมหน้าแรก', group: 'ตั้งค่าระบบ' },
   { href: '/system/line-settings', label: 'ตั้งค่า LINE', group: 'ตั้งค่าระบบ' },
   { href: '/system/ai-budget', label: 'เพดานความปลอดภัยค่า AI', group: 'ตั้งค่าระบบ' },

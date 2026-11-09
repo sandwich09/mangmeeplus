@@ -1,4 +1,4 @@
-import { BadRequestException, GoneException, HttpException, HttpStatus, Injectable, InternalServerErrorException } from '@nestjs/common';
+import { BadRequestException, GoneException, HttpException, HttpStatus, Inject, Injectable, InternalServerErrorException, Optional } from '@nestjs/common';
 import { TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
@@ -12,6 +12,8 @@ import { assertPlatformTenant } from '../../sales-console/application/sales-cont
 import { createHash } from 'node:crypto';
 import { applyAiCreditGrant } from '../../line-ai/application/ai-credit-ledger';
 import { populateDemoCompany } from './demo-sample-data';
+import { DemoLinkManager } from './demo-link-manage';
+import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../data-model-core/domain/ports/attachment-storage.port';
 
 export const DEMO_LINK_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 
@@ -27,7 +29,12 @@ export class SalesDemoService {
     private readonly rateLimits: RedisRateLimitService,
     private readonly onboarding: CreateCompanyOnboardingUseCase,
     private readonly issueToken: IssueTokenUseCase,
+    @Optional() @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort | null = null,
   ) {}
+
+  get links(): DemoLinkManager {
+    return new DemoLinkManager(this.prisma.client, this.storage);
+  }
 
   async mint(context: RequestContext, aiCredit = 50): Promise<{ url: string; expiresAt: string; aiCredit: number }> {
     if (!Number.isInteger(aiCredit) || aiCredit < 1 || aiCredit > 300) throw new BadRequestException('เครดิตทดลองต้องเป็นจำนวนเต็มตั้งแต่ 1 ถึง 300 ลองใส่ใหม่อีกครั้ง');
@@ -75,8 +82,8 @@ export class SalesDemoService {
         await tx.externalIdentity.create({ data: { userId: created.ownerId, provider: 'LINE', providerChannelId: 'demo-web', providerUserId: `Vdemo${companyId}`, status: 'ACTIVE' } });
         await tx.lineChannelBinding.create({ data: { companyId, messagingChannelId: 'demo-web', status: 'ACTIVE' } });
         await tx.companyAiConfiguration.upsert({ where: { companyId },
-          create: { companyId, ocrMonthlyLimit: 3, aiCreditCutoverAt: now },
-          update: { ocrMonthlyLimit: 3, aiCreditCutoverAt: now } });
+          create: { companyId, ocrMonthlyLimit: link.readLimit, aiCreditCutoverAt: now },
+          update: { ocrMonthlyLimit: link.readLimit, aiCreditCutoverAt: now } });
         await applyAiCreditGrant(tx, { companyId, billingAccountId: null, sourceKind: 'SALES_EVENT',
           units: link.aiCreditUnits * 100, sourceKey: `sales-demo:${link.id}`,
           sourceHash: createHash('sha256').update(JSON.stringify([link.id, companyId, link.aiCreditUnits * 100])).digest('hex'), at: now });

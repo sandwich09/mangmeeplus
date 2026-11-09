@@ -2,7 +2,8 @@ import type { PrismaClient } from '../../../generated/prisma/client';
 import type { AttachmentStoragePort } from '../../data-model-core/domain/ports/attachment-storage.port';
 
 /** Owner 2026-11-06: an expired demo shop is erased. The link row stays as sales history. */
-export async function purgeDemoCompany(db: PrismaClient, storage: AttachmentStoragePort | null, companyId: string, now: Date): Promise<boolean> {
+/** `force` (sales reset/delete, owner 2026-11-09) erases a demo shop before its term ends. */
+export async function purgeDemoCompany(db: PrismaClient, storage: AttachmentStoragePort | null, companyId: string, now: Date, force = false): Promise<boolean> {
   // Files first: if the row delete then fails, the next sweep retries and a missing file is fine.
   const files = await db.attachmentObject.findMany({
     where: { companyId, storageProvider: { not: 'db' } },
@@ -13,7 +14,7 @@ export async function purgeDemoCompany(db: PrismaClient, storage: AttachmentStor
   }
   return db.$transaction(async tx => {
     const company = await tx.company.findUnique({ where: { id: companyId }, select: { reportClassification: true, planTerm: { select: { termEndsAt: true } } } });
-    if (company?.reportClassification !== 'DEMO' || !company.planTerm || company.planTerm.termEndsAt > now) return false;
+    if (company?.reportClassification !== 'DEMO' || (!force && (!company.planTerm || company.planTerm.termEndsAt > now))) return false;
     const members = await tx.companyMembership.findMany({ where: { companyId }, select: { userId: true } });
     const userIds = members.map(member => member.userId);
     const shared = await tx.companyMembership.findMany({ where: { userId: { in: userIds }, companyId: { not: companyId } }, select: { userId: true } });

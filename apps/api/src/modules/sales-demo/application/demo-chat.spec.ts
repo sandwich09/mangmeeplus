@@ -13,10 +13,10 @@ import { assertDemoReadAvailable } from './demo-read-limit';
 const ctx: any = { companyId: 'one', userId: 'owner', isDemo: true, roles: ['OWNER'], sessionId: 'session' };
 function world() {
   const messages: any[] = [], envelopes: any[] = [], rates: any[] = [], objects: any[] = [];
-  const link: any = { aiCreditUnits: 80, expiresAt: new Date(Date.now() + 100000), revokedAt: null,
+  const link: any = { aiCreditUnits: 80, readLimit: 3, expiresAt: new Date(Date.now() + 100000), revokedAt: null,
     company: { reportClassification: 'DEMO', status: 'ACTIVE', planTerm: { termEndsAt: new Date(Date.now() + 100000), termDisabledAt: null } } };
   const db: any = { salesDemoLink: { findUnique: async () => link }, company: { findUnique: async () => ({ reportClassification: 'DEMO' }) },
-    companyOcrUsageEvent: { count: async () => 0 }, demoChatMessage: { create: async ({ data }: any) => { messages.push(data); return { id: 'in', ...data }; } },
+    companyOcrUsageEvent: { count: async () => 0 }, companyAiConfiguration: { findUnique: async () => ({ ocrMonthlyLimit: link.readLimit }) }, demoChatMessage: { create: async ({ data }: any) => { messages.push(data); return { id: 'in', ...data }; } },
     attachmentObject: { create: async ({ data }: any) => { objects.push(data); return { id: 'attachment', ...data }; } } };
   const service = new DemoChatService({ client: db } as any, { lineAiDraftEditEnabled: true, uploadMaxBytes: 10 * 1024 * 1024 } as any,
     { consume: async (...args: any[]) => { rates.push(args); return { allowed: true }; } } as any,
@@ -101,4 +101,12 @@ it('company rate limits reject before writing or enqueueing', async () => {
   await assert.rejects(w.service.message(ctx, 'one', { text: 'hi' }), (e: any) => e.getStatus() === 429);
   await assert.rejects(w.service.file(ctx, 'one', undefined), (e: any) => e.getStatus() === 429);
   assert.equal(w.messages.length, 0); assert.equal(w.objects.length, 0); assert.equal(w.envelopes.length, 0);
+});
+// Owner 2026-11-09: a link's read quota is editable; the preflight follows the shop's limit, not a fixed 3.
+it('a raised read quota lets a fourth upload through and a lowered one stops it earlier', async () => {
+  const w = world(); w.db.companyOcrUsageEvent.count = async () => 3;
+  w.link.readLimit = 5;
+  await assertDemoReadAvailable(w.db, { companyId: 'one', isDemo: true });
+  w.link.readLimit = 2; w.db.companyOcrUsageEvent.count = async () => 2;
+  await assert.rejects(assertDemoReadAvailable(w.db, { companyId: 'one', isDemo: true }), (e: any) => e.getStatus() === 403);
 });
