@@ -1,9 +1,14 @@
-import { isVirtualDemoTarget } from '@watchdog-bms/contracts';
 /**
  * Notification Delivery Adapters (Item 06)
  * Web and LINE delivery adapters.
  * LINE delivery requires linked ExternalIdentity and active LineChannelBinding.
  */
+
+// Same rule as isVirtualDemoTarget in packages/contracts/src/demo-chat.ts. The workers image ships
+// only @watchdog-bms/config, so the reserved virtual demo coordinates are repeated here; keep both equal.
+function isVirtualDemoTarget(target?: string, channelId?: string): boolean {
+  return channelId === 'demo-web' || !!target && (target.startsWith('Vdemo') || target.startsWith('vreply:'));
+}
 
 export type DeliveryResult = {
   status: 'sent' | 'failed' | 'skipped' | 'suppressed';

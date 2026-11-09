@@ -6,7 +6,7 @@ it('worker drops DEMO company/channel/target before credentials or fetch; real d
   const original = globalThis.fetch; let calls = 0;
   try {
     globalThis.fetch = async () => { calls++; return new Response('{}', { status: 200 }); };
-    for (const input of [{ lineUserId: 'Vdemocompany' }, { lineUserId: 'real', channelId: 'demo-web' }, { lineUserId: 'real', reportClassification: 'DEMO' }]) {
+    for (const input of [{ lineUserId: 'Vdemocompany' }, { lineUserId: 'vreply:demo-turn' }, { lineUserId: 'real', channelId: 'demo-web' }, { lineUserId: 'real', reportClassification: 'DEMO' }]) {
       assert.equal((await processLineDelivery({ ...input, channelAccessToken: '', message: 'text' })).status, 'suppressed');
     }
     assert.equal(calls, 0);
