@@ -54,3 +54,7 @@ Demo-link management 2026-11-09 (owner: "ขอระบบจัดการล
   its version are gone; reopening a deleted link returns 410.
 - Open chat header had "/3" hard-coded; it now shows `reads.limit`, and a poll clears a stale read-limit refusal.
 - Rows orphaned by purges before this fix are not back-cleaned.
+- Back-clean check 2026-11-09 22:10 (owner: "Clean them up"): UAT read through the running api-web container
+  (SSM port 22 + ssh, `pg` from `/app/api-runtime`, no secret leaves the host) found 2 links, 2 live demo shops,
+  no reset/delete audits and 0 LINE logs or outbox rows of missing companies — nothing to clean. Production
+  does not run the demo-link feature. Only the local stack had orphans; they were deleted.
