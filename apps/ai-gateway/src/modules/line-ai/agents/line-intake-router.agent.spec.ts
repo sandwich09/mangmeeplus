@@ -1259,6 +1259,22 @@ describe('B3 workflow classifier', () => {
     assert.deepEqual(WORKFLOW_CLASSIFIER_SCHEMA.properties.ordinal, { type: 'integer' });
   });
 
+  it('R28 an ordinal outside one to nine (a claim round number) is no selection and keeps the decision', async () => {
+    const request = await workflowClassifyRequest('เปิดดูใบเบิกค่าน้ำมัน รอบ 11 ให้หน่อยฮะ');
+    const { response } = await runWorkflowClassifier(request, async () => workflowOutput({ label: 'read', second_label: 'reimbursement_claim',
+      confidence: 0.88, second_confidence: 0.08, reference: 'none', ordinal: 11, description_text: 'ค่าน้ำมัน' } as never));
+    assert.equal(response.status, 'CLASSIFIED', JSON.stringify(response));
+    if (response.status !== 'CLASSIFIED') return;
+    assert.equal(response.label, 'read');
+    assert.equal(response.slots.ordinal, 0);
+    assert.equal(response.slots.descriptionText, 'ค่าน้ำมัน');
+    for (const ordinal of [-1, 10]) {
+      const other = await runWorkflowClassifier(await workflowClassifyRequest(), async () => workflowOutput(workflowAnswer({ ordinal })));
+      assert.equal(other.response.status, 'CLASSIFIED', String(ordinal));
+      if (other.response.status === 'CLASSIFIED') assert.equal(other.response.slots.ordinal, 0);
+    }
+  });
+
   it('R25 an answer that omits its empty text slots classifies with empty slots', async () => {
     const request = await workflowClassifyRequest();
     const { label, second_label, confidence, second_confidence, reference, ordinal } = workflowAnswer();
@@ -1312,7 +1328,8 @@ describe('B3 workflow classifier', () => {
 
   it('refuses invalid confidence, ordinal, labels or schema before settlement with no repair', async () => {
     for (const invalid of [{ confidence: 1.1 }, { confidence: -0.1 }, { second_confidence: -0.1 },
-      { confidence: 0.5, second_confidence: 0.6 }, { ordinal: -1 }, { ordinal: 10 }, { ordinal: 1.5 },
+      // R28: an integer ordinal outside 1–9 now means no selection (see the R28 test); a non-integer stays a schema refusal.
+      { confidence: 0.5, second_confidence: 0.6 }, { ordinal: 1.5 },
       { label: 'sales' }, { second_label: 'invented' }, { extra: 'not in schema' }, { person_name: null }]) {
       const { response, inputs, settled } = await runWorkflowClassifier(await workflowClassifyRequest(), async () => workflowOutput(workflowAnswer(invalid)));
       assert.equal(response.status, 'UNAVAILABLE', JSON.stringify(invalid));

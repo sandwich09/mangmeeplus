@@ -94,9 +94,11 @@ export class WorkflowClassifierAgent {
         || output.schemaEnforcement !== 'output_config' && output.schemaEnforcement !== 'strict_tool'
         || !validateProviderStructuredText(output.text, WORKFLOW_CLASSIFIER_SCHEMA)) return false;
       const raw = JSON.parse(output.text) as WorkflowClassifierOutput;
-      if (raw.confidence < 0 || raw.confidence > 1 || raw.second_confidence < 0 || raw.second_confidence > raw.confidence
-        || raw.ordinal < 0 || raw.ordinal > 9) return false;
+      if (raw.confidence < 0 || raw.confidence > 1 || raw.second_confidence < 0 || raw.second_confidence > raw.confidence) return false;
       const normalized = { ...raw };
+      // "รอบ 11" is a claim round, not a selection: an ordinal outside 1–9 means none was given (exam v14
+      // read-22 lost its whole decision to ordinal 11 twice; the API reads selection numbers from the text).
+      if (!Number.isInteger(normalized.ordinal) || normalized.ordinal < 0 || normalized.ordinal > 9) normalized.ordinal = 0;
       for (const slot of TEXT_SLOTS) {
         if (typeof normalized[slot] !== 'string' || !request.messageText.includes(normalized[slot])) normalized[slot] = '';
       }
