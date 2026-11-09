@@ -10,6 +10,17 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current UAT — admin demo-link button, 2026-11-09 17:51 Bangkok
+
+UAT serves exact main `c14b429599221454326f85136470482871b9b62d`: the 17:14 release below plus the admin
+ทีมขาย page's "สร้างลิงก์เดโม่" button (one web file) and two runbook notes. API, gateway, workers, packages,
+infra and `infra/kamal/config.json` are identical to `737fa2ef0`; no migration. Owner's words: "เอาขึ้นเลย",
+then "ไปต่อ". Fresh controller worktree `release-uat-20261109b` from origin/main (`.env.kamal` symlinked);
+the cached MFA session from the 17:14 release was still valid. Prepare `20261109T104107Z-184921e3`
+(`--publish-images --uat-smoke-acceptance`) `PREPARED_NO_DEPLOYMENT` in 348.325 s; apply
+`20261109T104704Z-3eb87dfb` signed/verified `ACCEPTED_LINE_DEFERRED` in 282.239 s, 12/12 phases.
+Production untouched (`884ba5307`). Workflow UAT/READY/PROD IDs `NOT_DISPATCHED`; native LINE not exercised.
+
 ## Current UAT — LINE speed rounds 25–28, 2026-11-09 17:14 Bangkok
 
 UAT serves exact main `737fa2ef0bdd7d7af2e73c16884638017f8a93ba`; Production still serves
