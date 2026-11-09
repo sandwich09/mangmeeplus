@@ -97,7 +97,8 @@ export function validateReliabilityRun(value: unknown): asserts value is Reliabi
     assert.ok(Number.isInteger(row.repeat) && row.repeat >= 0 && row.repeat < run.repeats, 'INVALID_REPEAT');
     assert.ok(!seen.has(attemptKey(row)), 'DUPLICATE_ATTEMPT');
     seen.add(attemptKey(row));
-    assert.ok(['1000', '1500', '2000'].includes(row.cohort), 'INVALID_COHORT');
+    // Speed r26d: an eval run may pin any whole-millisecond debounce (MANGMEE_EVAL_DEBOUNCE_MS); the summary still groups the three cohorts.
+    assert.ok(/^[1-9]\d{1,4}$/.test(row.cohort), 'INVALID_COHORT');
     assert.ok(['cold', 'warm', 'unknown'].includes(row.cache), 'INVALID_CACHE_STATE');
     for (const key of ['semanticCorrect', 'factsCorrect', 'effectsCorrect', 'completed', 'falseRefusalOrHandoff'] as const) {
       assert.equal(typeof row[key], 'boolean', `INVALID_${key}`);

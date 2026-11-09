@@ -11248,6 +11248,128 @@ it('7B W3: a committed substitute attachment survives a failed continuation refr
   assert.equal(attached, 1); assert.equal(f.expenseInitializations(), 0); assert.match(delivered[0], /แนบหลักฐานในรายการเดิม/);
 });
 
+async function composeModelAuthorityFixture() {
+  const { LineAiBudgetAuthorityService } = await import('../line-ai-budget-authority.service');
+  const { splitPrisma } = await import('../company-ai-budget-prisma.fixture');
+  const now = new Date();
+  const row: any = { id: 'r26c-event', companyId: 'r26c-company', status: 'received', budgetAuthorityRevision: 0 };
+  const money = splitPrisma({ total: 100000, chat: 50000, ocr: 50000 }, {
+    lineWebhookEventLog: { findUnique: async () => structuredClone(row), updateMany: async ({ where, data }: any) => {
+      if (where.budgetAuthorityRevision !== row.budgetAuthorityRevision) return { count: 0 };
+      row.budgetAuthorityJson = structuredClone(data.budgetAuthorityJson); row.budgetAuthorityRevision += 1;
+      return { count: 1 };
+    } },
+    lineChannelBinding: { findFirst: async () => ({ id: 'channel' }) },
+    companyMembership: { findFirst: async () => ({ id: 'member' }) },
+    aiConversation: { findFirst: async () => ({ id: 'conversation', taskStateJson: null }) },
+    billingAccount: { findMany: async () => [] }, companyPlanTerm: { findUnique: async () => null },
+  });
+  const sonnet = { provider: 'bedrock' as const, modelId: 'global.anthropic.claude-sonnet-4-6', region: 'ap-southeast-1' };
+  const haiku = { ...sonnet, modelId: 'global.anthropic.claude-haiku-5-5' };
+  const tariff = { ...sonnet, version: 'r26c-test:1', thbPerUsd: 33,
+    usdPerMTok: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } };
+  const answerModel = { model: haiku, contextTokens: 100000, maxOutputTokens: 8192,
+    tariff: { ...tariff, ...haiku, usdPerMTok: { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 } } };
+  const authority = new LineAiBudgetAuthorityService(money.prisma, { approvedAiModelIds: [sonnet.modelId, haiku.modelId],
+    aiGatewayInternalSecret: 'r26c-test-authority', aiMonthlyBudgetSatang: 100000 } as any);
+  const input = { authorityKind: 'webhook_event' as const, authorityId: row.id,
+    owner: { kind: 'PRIVATE' as const, epoch: 1, owner: { companyId: row.companyId, userId: 'user', membershipId: 'member',
+      channel: 'line' as const, channelKind: 'USER' as const, messagingChannelId: 'channel', chatKeyHash: 'a'.repeat(64) } },
+    turnKey: 'r26c-turn', attemptKey: 'r26c-attempt', inputDigest: 'a'.repeat(64), requestKind: 'TEXT' as const,
+    admittedAtMs: now.getTime(), coalescingExtraMs: 0, lane: 'public' as const, model: sonnet,
+    modelContextTokens: 200000, modelMaxOutputTokens: 64000, tariff, answerModel, allowedProfileIds: ['line-intake-text/2' as const] };
+  const invocation = (grant: import('@watchdog-bms/contracts').AiBudgetGrantV2, ordinal: number,
+    profileId: import('@watchdog-bms/contracts').AiBudgetProfileIdV2) => ({ grant, ordinal, profileId,
+    inputTokenBound: 2048, requestedOutputTokens: 1024, estimatorVersion: 'utf8-split-prefix-v4' as const, promptVersion: 'r26c-test:1',
+    inputDigest: input.inputDigest, payloadDigest: 'b'.repeat(64), schemaDigest: 'c'.repeat(64) });
+  return { authority, input, row, now, money, invocation };
+}
+
+it('R26c general narrow switches the real authority to Haiku and reserves its tariff without changing replay', async () => {
+  const { authority, input, row, now, money, invocation } = await composeModelAuthorityFixture();
+  const intake = await authority.issue(input, now); assert.ok(intake);
+  assert.deepEqual(intake.model, input.model);
+  assert.equal('answerModel' in intake, false, 'the candidate stays outside the signed grant');
+  assert.ok((await authority.reserve(invocation(intake, 0, 'line-intake-text/2'), false, now)).ok);
+  const answer = await authority.narrow(intake, 'general', ['line-answer/2'], now); assert.ok(answer);
+  assert.deepEqual(answer.model, input.answerModel.model);
+  assert.deepEqual(row.budgetAuthorityJson.tariff, input.answerModel.tariff);
+  assert.equal(row.budgetAuthorityJson.modelContextTokens, 100000);
+  assert.equal(row.budgetAuthorityJson.modelMaxOutputTokens, 8192);
+  const reserved = await authority.reserve(invocation(answer, 1, 'line-answer/2'), false, now); assert.ok(reserved.ok);
+  assert.deepEqual(money.reservations.get(reserved.envelope.reservationId)!.pricingSnapshot.usdPerMTok, input.answerModel.tariff.usdPerMTok);
+  const beforeReplay = structuredClone(row);
+  assert.deepEqual(await authority.narrow(intake, 'general', ['line-answer/2'], now), answer);
+  assert.deepEqual(await authority.narrow(answer, 'general', ['line-answer/2'], now), answer);
+  assert.deepEqual(row, beforeReplay);
+});
+
+for (const lane of ['mixed', 'simple', 'public'] as const) it(`R26c ${lane} narrow keeps the Sonnet model and tariff`, async () => {
+  const { authority, input, row, now, invocation } = await composeModelAuthorityFixture();
+  const intake = await authority.issue(input, now); assert.ok(intake);
+  assert.ok((await authority.reserve(invocation(intake, 0, 'line-intake-text/2'), false, now)).ok);
+  const answer = await authority.narrow(intake, lane, ['line-answer/2'], now); assert.ok(answer);
+  assert.deepEqual(answer.model, input.model);
+  assert.deepEqual(row.budgetAuthorityJson.tariff, input.tariff);
+  assert.equal(row.budgetAuthorityJson.modelContextTokens, input.modelContextTokens);
+  assert.equal(row.budgetAuthorityJson.modelMaxOutputTokens, input.modelMaxOutputTokens);
+});
+
+it('R26c intake reserved before the Haiku narrow still settles at the pinned Sonnet tariff', async () => {
+  const { settleAiBudgetStep } = await import('../company-ai-budget-reservation');
+  const { authority, input, now, money, invocation } = await composeModelAuthorityFixture();
+  const intake = await authority.issue(input, now); assert.ok(intake);
+  const reserved = await authority.reserve(invocation(intake, 0, 'line-intake-text/2'), false, now); assert.ok(reserved.ok);
+  const answer = await authority.narrow(intake, 'general', ['line-answer/2'], now); assert.ok(answer);
+  assert.equal(await settleAiBudgetStep(money.prisma, { invocationKey: reserved.envelope.invocationKey,
+    meta: { sourceRoute: 'line-ai-v2' }, now, entry: { tag: 'line.intake', modelId: intake.model.modelId, ok: true,
+      inputTokens: 1000, outputTokens: 1000, cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+      usageBasis: 'PROVIDER_REPORTED', durationMs: 1 } }), 'settled');
+  const settled = money.reservations.get(reserved.envelope.reservationId)!;
+  assert.deepEqual(settled.pricingSnapshot.usdPerMTok, input.tariff.usdPerMTok);
+  assert.equal(settled.settledCostSatang, 59, 'Sonnet costs 59 satang for this usage, Haiku would cost 2');
+  assert.deepEqual(answer.model, input.answerModel.model);
+});
+
+it('R26c issue refuses an unapproved, mismatched or invalid answer model before storing authority', async () => {
+  for (const change of [
+    { model: { modelId: 'unapproved' }, tariff: { modelId: 'unapproved' } },
+    { model: { modelId: 'global.anthropic.claude-sonnet-4-6' } },
+    { model: { provider: 'openai' }, tariff: { provider: 'openai' } },
+    { model: { region: 'other-region' }, tariff: { region: 'other-region' } },
+    { tariff: { thbPerUsd: 0 } },
+    ...[0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].map(contextTokens => ({ contextTokens })),
+    ...[0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].map(maxOutputTokens => ({ maxOutputTokens })),
+  ] as Array<Record<string, any>>) {
+    const { authority, input, row, now } = await composeModelAuthorityFixture();
+    const answerModel = { ...input.answerModel, ...change,
+      model: { ...input.answerModel.model, ...change.model }, tariff: { ...input.answerModel.tariff, ...change.tariff } };
+    assert.equal(await authority.issue({ ...input, answerModel } as any, now), null, JSON.stringify(change));
+    assert.equal(row.budgetAuthorityRevision, 0);
+  }
+});
+
+it('R26c an older authority without an answer model keeps Sonnet on general narrow', async () => {
+  const { authority, input, row, now, invocation } = await composeModelAuthorityFixture();
+  const { answerModel: _, ...legacy } = input;
+  const intake = await authority.issue(legacy, now); assert.ok(intake);
+  assert.ok((await authority.reserve(invocation(intake, 0, 'line-intake-text/2'), false, now)).ok);
+  const answer = await authority.narrow(intake, 'general', ['line-answer/2'], now); assert.ok(answer);
+  assert.deepEqual(answer.model, input.model);
+  assert.deepEqual(row.budgetAuthorityJson.tariff, input.tariff);
+});
+
+it('R26c a general Haiku answer above its context or output capacity is refused before a second hold', async () => {
+  const { authority, input, now, money, invocation } = await composeModelAuthorityFixture();
+  const intake = await authority.issue(input, now); assert.ok(intake);
+  assert.ok((await authority.reserve(invocation(intake, 0, 'line-intake-text/2'), false, now)).ok);
+  const answer = await authority.narrow(intake, 'general', ['line-answer/2'], now); assert.ok(answer);
+  for (const bounds of [{ inputTokenBound: 99328, requestedOutputTokens: 1024 }, { requestedOutputTokens: 8193 }]) {
+    assert.equal((await authority.reserve({ ...invocation(answer, 1, 'line-answer/2'), ...bounds }, false, now)).ok, false);
+  }
+  assert.equal(money.reservations.size, 1);
+});
+
 it('R10 Q1: webhook counterparty command consumes intake before the REAL authority can narrow', async () => {
   const { LineAiBudgetAuthorityService } = await import('../line-ai-budget-authority.service');
   const text = 'เพิ่มผู้ขาย บริษัท ทดสอบ จำกัด เลขผู้เสียภาษี 0105556000011';

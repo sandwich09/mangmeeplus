@@ -1271,7 +1271,7 @@ describe('AnthropicApiProvider (local eval)', () => {
     if (!result.ok) assert.equal(result.error.budgetCode, 'AI_BUDGET_UNAVAILABLE');
   });
 
-  it('launcher selects key files or AWS, trims keys, refuses missing credentials, and never prints keys (spawn stubbed)', () => {
+  it('launcher selects key files, trims keys, refuses without a key even with an AWS profile, passes no AWS credential, and never prints keys (spawn stubbed)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'anthropic-eval-launch-'));
     const launcher = resolve(__dirname, '../../../../../../../scripts/line-ai-expense-advisor/launch-gateway.mjs');
     const secretsPath = join(dir, 'secrets.json');
@@ -1289,6 +1289,9 @@ describe('AnthropicApiProvider (local eval)', () => {
         assert.equal(options.env.ANTHROPIC_API_KEY, expectedKey || undefined);
         assert.equal(options.env.APP_ENV, 'local');
         assert.equal(options.env.MODEL_PROVIDER, 'bedrock');
+        // Owner 2026-11-09: no real Bedrock or AgentCore from local runs; no AWS credential reaches the gateway.
+        for (const name of ['AWS_PROFILE', 'AWS_DEFAULT_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN']) assert.equal(options.env[name], undefined, name);
+        assert.equal(options.env.AWS_CONFIG_FILE, '/dev/null'); assert.equal(options.env.AWS_SHARED_CREDENTIALS_FILE, '/dev/null');
         return { on: (_event, callback) => callback(0) };
       };
       syncBuiltinESMExports();
@@ -1302,8 +1305,8 @@ describe('AnthropicApiProvider (local eval)', () => {
         { profile: '', file: keyPath, contents: ` ${key}\n`, expected: key },
         { profile: 'test-profile', file: keyPath, contents: key, expected: key },
         { profile: '', file: undefined, expected: key },
-        { profile: 'test-profile', file: join(dir, 'absent'), expected: '' },
-        { profile: 'test-profile', file: dir, expected: '' },
+        { profile: 'test-profile', file: join(dir, 'absent'), expected: '', refused: true },
+        { profile: 'test-profile', file: dir, expected: '', refused: true, unreadable: true },
         { profile: '', file: keyPath, contents: ' \n', expected: '', refused: true },
         { profile: '', file: join(dir, 'absent'), expected: '', refused: true },
         { profile: '', file: dir, expected: '', refused: true, unreadable: true },
@@ -1320,8 +1323,8 @@ describe('AnthropicApiProvider (local eval)', () => {
         assert.ok(!`${child.stdout}${child.stderr}`.includes('ambient-key-must-be-ignored'));
         const line = JSON.parse((testCase.refused ? child.stderr : child.stdout).trim());
         assert.equal(line.event, testCase.refused ? 'gateway_launch_refused' : 'gateway_launch');
-        if (testCase.refused) assert.equal(line.reason, testCase.unreadable ? 'ANTHROPIC_KEY_FILE_UNREADABLE' : 'AWS_PROFILE_OR_ANTHROPIC_KEY_FILE_REQUIRED');
-        else assert.equal(line.transport, testCase.expected ? 'anthropic-api' : 'bedrock');
+        if (testCase.refused) assert.equal(line.reason, testCase.unreadable ? 'ANTHROPIC_KEY_FILE_UNREADABLE' : 'ANTHROPIC_KEY_FILE_REQUIRED_REAL_BEDROCK_FORBIDDEN');
+        else assert.equal(line.transport, 'anthropic-api');
       }
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });

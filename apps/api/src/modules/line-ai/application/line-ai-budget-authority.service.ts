@@ -18,6 +18,7 @@ import { readCompanyAiCreditState, reserveAiBudgetStep, type AiBudgetReserveOutc
 type PublicOwner = { companyId: string; channel: 'line'; channelKind: 'USER' | 'GROUP' | 'ROOM'; messagingChannelId: string; chatKeyHash: string };
 export type AuthorityOwner = { kind: 'PRIVATE'; owner: LineConversationOwner; epoch: number; taskId?: string; taskRevision?: number }
   | { kind: 'PUBLIC_GENERAL'; owner: PublicOwner };
+type AnswerModel = { model: AiBudgetGrantV2['model']; contextTokens: number; maxOutputTokens: number; tariff: AiTariffV2 };
 type BudgetAuthority = {
   version: 2; grant: AiBudgetGrantV2; owner: AuthorityOwner; tariff: AiTariffV2;
   requestKind: 'TEXT' | 'IMAGE' | 'OTHER';
@@ -29,6 +30,7 @@ type BudgetAuthority = {
   /** Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): work accepted before the credit ran out. Every call
    *  under this authority passes the cap (never a cap of 0). API-side only, like `fundingContext`. */
   admitOverCap?: true;
+  answerModel?: AnswerModel;
   serverRoute?: 'fixed_read';
   decision?: LineWorkflowClassifyResponse;
 };
@@ -37,6 +39,7 @@ export type IssueLineAiBudgetGrant = {
   turnKey: string; attemptKey: string; inputDigest: string; requestKind: 'TEXT' | 'IMAGE' | 'OTHER';
   admittedAtMs: number; coalescingExtraMs: number; lane: 'general' | 'simple' | 'mixed' | 'public' | 'document_qa' | 'classify';
   model: AiBudgetGrantV2['model']; modelContextTokens: number; modelMaxOutputTokens: number; tariff: AiTariffV2;
+  answerModel?: AnswerModel;
   allowedProfileIds: AiBudgetProfileIdV2[];
   /** See `BudgetAuthority.admitOverCap`; decided by the admitted webhook producer only. */
   admitOverCap?: boolean;
@@ -152,6 +155,12 @@ export class LineAiBudgetAuthorityService {
       || !Number.isSafeInteger(input.modelMaxOutputTokens) || input.modelMaxOutputTokens < 1
       || !Number.isSafeInteger(input.coalescingExtraMs) || input.coalescingExtraMs < 0 || input.coalescingExtraMs > 6000
       || !/^[0-9a-f]{64}$/.test(input.inputDigest) || !baseCeilings[input.lane]) return null;
+    const answerModel = input.answerModel;
+    if (answerModel && (!validAiTariffV2(answerModel.tariff) || !sameModel(answerModel.model, answerModel.tariff)
+      || !this.config.approvedAiModelIds.includes(answerModel.model.modelId)
+      || answerModel.model.provider !== input.model.provider || answerModel.model.region !== input.model.region
+      || !Number.isSafeInteger(answerModel.contextTokens) || answerModel.contextTokens <= 0
+      || !Number.isSafeInteger(answerModel.maxOutputTokens) || answerModel.maxOutputTokens < 1)) return null;
     // A private webhook turn starts at intake. The one exception is the server-decided fixed read
     // (the standing "ค่าใช้จ่ายเดือนนี้" button), which answers directly on the simple lane.
     const fixedRead = input.serverRoute === 'fixed_read' && input.lane === 'simple'
@@ -198,6 +207,7 @@ export class LineAiBudgetAuthorityService {
       const authority: BudgetAuthority = { version: 2, grant, owner: input.owner, tariff: structuredClone(input.tariff),
         requestKind: input.requestKind, inputDigest: input.inputDigest, modelContextTokens: input.modelContextTokens, modelMaxOutputTokens: input.modelMaxOutputTokens,
         coalescingExtraMs: input.coalescingExtraMs, nextOrdinal: 0, profileCounts: {}, repairCount: 0,
+        ...(answerModel ? { answerModel: structuredClone(answerModel) } : {}),
         ...(input.admitOverCap ? { admitOverCap: true as const } : {}),
         ...(input.serverRoute === 'fixed_read' ? { serverRoute: input.serverRoute } : {}) };
       if (Buffer.byteLength(JSON.stringify(authority)) > MAX_AUTHORITY_BYTES) return null;
@@ -369,10 +379,13 @@ export class LineAiBudgetAuthorityService {
       if (state.grant.workDeadlineAtMs <= now.getTime()) throw new LineAiBudgetDeadlineExceededError();
       const maxTurnSlots = lane === 'general' || lane === 'simple' ? 2 : 4;
       const { signature: _, ...unsigned } = state.grant;
-      const nextUnsigned = { ...unsigned, nextOrdinal: state.nextOrdinal, allowedProfileIds: [...allowedProfileIds], maxTurnSlots: maxTurnSlots as 2 | 4 };
+      const answerModel = lane === 'general' ? state.answerModel : undefined;
+      const nextUnsigned = { ...unsigned, ...(answerModel ? { model: answerModel.model } : {}),
+        nextOrdinal: state.nextOrdinal, allowedProfileIds: [...allowedProfileIds], maxTurnSlots: maxTurnSlots as 2 | 4 };
       const nextGrant = parseAiBudgetGrantV2({ ...nextUnsigned, signature: this.sign(nextUnsigned) });
       if (!nextGrant) return null;
-      const next = { ...state, grant: nextGrant, narrowedLane: lane };
+      const next = { ...state, grant: nextGrant, narrowedLane: lane,
+        ...(answerModel ? { tariff: answerModel.tariff, modelContextTokens: answerModel.contextTokens, modelMaxOutputTokens: answerModel.maxOutputTokens } : {}) };
       const changed = await delegate.updateMany({ where: { id: row.id, budgetAuthorityRevision: row.budgetAuthorityRevision },
         data: { budgetAuthorityJson: next as unknown as Prisma.InputJsonValue, budgetAuthorityRevision: { increment: 1 } } });
       return changed.count === 1 ? nextGrant : null;

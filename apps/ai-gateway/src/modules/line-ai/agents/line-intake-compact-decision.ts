@@ -474,9 +474,13 @@ export function parseLineIntakeCompactDecision(input: {
     if (!SEMANTIC_KINDS.has(item['kind'] as LineAiSemanticSubrequestV2['kind'])) return reject('clause_kind_invalid');
     if (typeof item['goal'] !== 'string' || !item['goal'].trim() || item['goal'].length > 800) return reject('clause_goal_invalid');
     const originals = ['read', 'general', 'help'].includes(String(item['kind'])) ? input.originalClarifications ?? [] : [];
-    const refs = sourceRefs(item['sources'], inputEvidence, reject, originals);
+    // Speed r26a: the router writes ~22 ms per output token, so a lone clause may omit sources (it cites every
+    // current part whole, as it always did) and an empty filters object; a multi-clause decision still cites.
+    const sources = item['sources'] ?? (raw['subrequests'].length === 1
+      ? inputEvidence.parts.flatMap((part, at) => part.rawText ? [{ part: at, whole: true }] : []) : undefined);
+    const refs = sourceRefs(sources, inputEvidence, reject, originals);
     if (!refs) return undefined;
-    const filters = boundedFilters(item['filters'], item['kind'], reject);
+    const filters = boundedFilters(item['filters'] ?? {}, item['kind'], reject);
     if (!filters) return undefined;
     const requiredEvidence = item['requiredEvidence'] === undefined ? [] : item['requiredEvidence'];
     const dependsOn = item['dependsOn'] === undefined ? [] : item['dependsOn'];
@@ -485,7 +489,7 @@ export function parseLineIntakeCompactDecision(input: {
     const entity = item['entity'];
     if (entity !== undefined && (typeof entity !== 'string' || !entity || entity.length > 160)) return reject('entity_shape_invalid');
     if (typeof entity === 'string' && !messageText.includes(entity) && !originals.some(entry => entry.text.includes(entity)
-      && (item['sources'] as Array<{ quote?: string }>).every(source => !source.quote || messageText.includes(source.quote) || entry.text.includes(source.quote)))) return reject('entity_not_in_text');
+      && (sources as Array<{ quote?: string }>).every(source => !source.quote || messageText.includes(source.quote) || entry.text.includes(source.quote)))) return reject('entity_not_in_text');
     // The one defect actually observed in production (4/4 repair attempts): the model copies the bare
     // taskId string instead of the {taskId,taskRevision,subrequestIndex} object. Verify every field's
     // presence and type here (not just the key set) so that specific mistake gets its own reason code

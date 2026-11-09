@@ -1947,8 +1947,8 @@ it('credit P1/P2: approved-v6 offers stay bounded with the calibrated constant d
     const entry = INTAKE_CONSTANT_CALIBRATIONS.find(entry => entry.digest === parts?.digest);
     assert.ok(entry, `Uncalibrated current intake constant digest ${parts?.digest}. Recalibrate: pnpm --filter @watchdog-bms/ai-gateway exec node --import tsx ../../scripts/recalibrate-line-intake.cjs ${INTAKE_CONSTANT_CALIBRATIONS[0].digest}; review character mix/semantic changes, update table and contract pins. Large changes or different models require paired live measurement.`);
     assert.equal(entry.bytes, parts!.bytes);
-    // Historical role-reach evidence keeps its measured reservation; C72 has this reviewed constant digest.
-    assert.equal(parts!.digest, '10a36aeb41e500cbac41dc6e4237b95ced82879366d6c2622e9fcbeab308f691');
+    // Historical role-reach evidence keeps its measured reservation; speed r26a has this reviewed constant digest.
+    assert.equal(parts!.digest, '7ffa9fef0a867a083ff541cab7ed60990cf2933072174af8f7ae0c98a06a9d29');
     const readFilterBounds: Record<string, number> = { 'STARTER_249/OWNER': 56320, 'STARTER_249/STAFF': 47104,
       'STARTER_249/ACCOUNTANT': 51200, 'STARTER_249/AUDITOR_READONLY': 49152, 'PRO_999/OWNER': 56320,
       'PRO_999/MANAGER': 50176, 'ENTERPRISE_1999/OWNER': 57344 };

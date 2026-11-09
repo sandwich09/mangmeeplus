@@ -1492,13 +1492,14 @@ it('B4 classify pins Sonnet while the turn keeps its company model and a partner
       model: { provider: 'bedrock', modelId: body.modelPolicy?.modelId ?? sonnet, region: 'ap-southeast-1', contextTokens: 100000, maxOutputTokens: 8192 } }));
   };
   try {
-    const input = { owner: { owner: { companyId: 'company-1' } } } as any;
+    const input = { owner: { kind: 'PRIVATE', owner: { companyId: 'company-1' } } } as any;
     await client.issueLineReliabilityGrant('classify', { ...input, authorityKind: 'webhook_classify' });
     await client.issueLineReliabilityGrant('turn', { ...input, authorityKind: 'webhook_event' });
     partner = haiku;
     await client.issueLineReliabilityGrant('partner', { ...input, authorityKind: 'webhook_classify' });
-    assert.deepEqual(policies, [{ modelId: sonnet }, undefined, { modelId: haiku }]);
+    assert.deepEqual(policies, [{ modelId: sonnet }, undefined, { modelId: haiku }, { modelId: haiku }]);
     assert.deepEqual(issued.map(row => row.model.modelId), [sonnet, sonnet, haiku]);
+    assert.deepEqual(issued.map(row => row.answerModel?.model.modelId), [undefined, haiku, undefined]);
     assert.deepEqual(issued[2].tariff.usdPerMTok, { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 });
     for (const patch of [{ contextTokens: 100001 }, { maxOutputTokens: 8193 }, { modelId: 'global.anthropic.unreviewed' }]) {
       globalThis.fetch = async () => Response.json({ ready: true, inputContractVersion: 2, providerOutputVersion: 2, budgetContractVersion: 2,
@@ -1507,6 +1508,108 @@ it('B4 classify pins Sonnet while the turn keeps its company model and a partner
       assert.equal(await client.issueLineReliabilityGrant('invalid-haiku-capacity', { ...input, authorityKind: 'webhook_classify' }), null);
     }
     assert.equal(issued.length, 3, 'invalid capacity never issues authority');
+  } finally { globalThis.fetch = original; }
+});
+
+it('R26c private webhook probes intake and compose in parallel and issues the approved Haiku candidate', async () => {
+  const original = globalThis.fetch;
+  const sonnet = 'global.anthropic.claude-sonnet-4-6', haiku = 'global.anthropic.claude-haiku-5-5';
+  const probes: Array<{ policy: unknown; resolve: (response: Response) => void }> = [];
+  let issued: any;
+  const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://gateway.test/v1', aiGatewayInternalSecret: 'secret',
+    approvedAiModelIds: [sonnet, haiku], aiGlobalInferenceProfileApproved: true, aiGlobalInferenceProfileApprovalRef: 'reviewed', aiThbPerUsd: 33 } as any,
+    {} as any, undefined, governedPrisma(), { issue: async (input: any) => { issued = input; return { signature: 'issued' }; } } as any);
+  globalThis.fetch = (_url, init) => new Promise(resolve => probes.push({ policy: JSON.parse(String(init?.body)).modelPolicy, resolve }));
+  try {
+    const pending = client.issueLineReliabilityGrant('r26c', { authorityKind: 'webhook_event',
+      owner: { kind: 'PRIVATE', owner: { companyId: 'company-1' } } } as any);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(probes.map(probe => probe.policy), [undefined, { modelId: haiku }]);
+    for (const [index, probe] of probes.entries()) probe.resolve(Response.json({ ready: true, inputContractVersion: 2, providerOutputVersion: 2,
+      budgetContractVersion: 2, profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2,
+      model: { provider: 'bedrock', modelId: index === 0 ? sonnet : haiku, region: 'ap-southeast-1',
+        contextTokens: index === 0 ? 200000 : 100000, maxOutputTokens: index === 0 ? 64000 : 8192 } }));
+    assert.deepEqual(await pending, { signature: 'issued' });
+    assert.equal(issued.model.modelId, sonnet);
+    assert.deepEqual(issued.answerModel, { model: { provider: 'bedrock', modelId: haiku, region: 'ap-southeast-1' },
+      contextTokens: 100000, maxOutputTokens: 8192, tariff: { version: 'line-v2:2026-09-27', provider: 'bedrock', modelId: haiku,
+        region: 'ap-southeast-1', thbPerUsd: 33, usdPerMTok: { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 } } });
+  } finally {
+    for (const probe of probes) probe.resolve(Response.json({ ready: false }));
+    globalThis.fetch = original;
+  }
+});
+
+it('R26c an unavailable or incompatible compose probe issues the original intake authority', async () => {
+  const original = globalThis.fetch;
+  const sonnet = 'global.anthropic.claude-sonnet-4-6', haiku = 'global.anthropic.claude-haiku-5-5';
+  const capability = (modelId: string) => ({ ready: true, inputContractVersion: 2, providerOutputVersion: 2, budgetContractVersion: 2,
+    profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2,
+    model: { provider: 'bedrock', modelId, region: 'ap-southeast-1', contextTokens: 100000, maxOutputTokens: 8192 } });
+  try {
+    for (const scenario of ['throws', 'unready', 'unapproved', 'wrong-model', 'wrong-provider', 'different-provider', 'wrong-region', 'context', 'output', 'same-model']) {
+      let issued: any;
+      const policies: unknown[] = [];
+      const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://gateway.test/v1', aiGatewayInternalSecret: 'secret',
+        approvedAiModelIds: scenario === 'unapproved' ? [sonnet] : [sonnet, haiku, 'gpt-4.1-mini'], aiGlobalInferenceProfileApproved: true,
+        aiGlobalInferenceProfileApprovalRef: 'reviewed', aiThbPerUsd: 33 } as any, {} as any, undefined, governedPrisma(),
+        { issue: async (input: any) => { issued = input; return { signature: 'issued' }; } } as any);
+      globalThis.fetch = async (_url, init) => {
+        const policy = JSON.parse(String(init?.body)).modelPolicy; policies.push(policy);
+        if (!policy) {
+          const intake = capability(scenario === 'same-model' ? haiku : sonnet);
+          if (scenario === 'different-provider') Object.assign(intake.model, { provider: 'openai', modelId: 'gpt-4.1-mini' });
+          return Response.json(intake);
+        }
+        if (scenario === 'throws') throw new Error('compose probe failed');
+        const response = capability(haiku);
+        if (scenario === 'unready') response.ready = false;
+        if (scenario === 'wrong-model') response.model.modelId = sonnet;
+        if (scenario === 'wrong-provider') response.model.provider = 'openai';
+        if (scenario === 'wrong-region') response.model.region = 'other-region';
+        if (scenario === 'context') response.model.contextTokens = 100001;
+        if (scenario === 'output') response.model.maxOutputTokens = 8193;
+        return Response.json(response);
+      };
+      assert.deepEqual(await client.issueLineReliabilityGrant(scenario, { authorityKind: 'webhook_event',
+        owner: { kind: 'PRIVATE', owner: { companyId: 'company-1' } } } as any), { signature: 'issued' }, scenario);
+      assert.deepEqual(policies, [undefined, { modelId: haiku }], scenario);
+      assert.equal('answerModel' in issued, false, scenario);
+      assert.equal(issued.model.modelId, scenario === 'different-provider' ? 'gpt-4.1-mini' : scenario === 'same-model' ? haiku : sonnet);
+    }
+  } finally { globalThis.fetch = original; }
+});
+
+it('R26c partner, classify, public and ledger grants never probe an additional compose model', async () => {
+  const original = globalThis.fetch;
+  const sonnet = 'global.anthropic.claude-sonnet-4-6', haiku = 'global.anthropic.claude-haiku-5-5';
+  try {
+    for (const scenario of [
+      { authorityKind: 'webhook_event', kind: 'PRIVATE', partner: sonnet, modelId: sonnet },
+      { authorityKind: 'webhook_event', kind: 'PRIVATE', partner: haiku, modelId: haiku },
+      { authorityKind: 'webhook_classify', kind: 'PRIVATE', partner: null, modelId: sonnet },
+      { authorityKind: 'webhook_event', kind: 'PUBLIC_GENERAL', partner: null, modelId: sonnet },
+      { authorityKind: 'ledger_entry', kind: 'PRIVATE', partner: null, modelId: sonnet },
+    ]) {
+      const policies: unknown[] = []; let issued: any;
+      const prisma = governedPrisma();
+      prisma.client.companyAiConfiguration.findUnique = async () => ({ modelId: scenario.partner });
+      const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://gateway.test/v1', aiGatewayInternalSecret: 'secret',
+        approvedAiModelIds: [sonnet, haiku], aiGlobalInferenceProfileApproved: true, aiGlobalInferenceProfileApprovalRef: 'reviewed', aiThbPerUsd: 33 } as any,
+        {} as any, undefined, prisma, { issue: async (input: any) => { issued = input; return { signature: 'issued' }; } } as any);
+      globalThis.fetch = async (_url, init) => {
+        policies.push(JSON.parse(String(init?.body)).modelPolicy);
+        return Response.json({ ready: true, inputContractVersion: 2, providerOutputVersion: 2, budgetContractVersion: 2,
+          profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2,
+          model: { provider: 'bedrock', modelId: scenario.modelId, region: 'ap-southeast-1', contextTokens: 100000, maxOutputTokens: 8192 } });
+      };
+      await client.issueLineReliabilityGrant('r26c-preserved', { authorityKind: scenario.authorityKind,
+        owner: { kind: scenario.kind, owner: { companyId: 'company-1' } } } as any);
+      assert.deepEqual(policies, [scenario.partner ? { modelId: scenario.partner }
+        : scenario.authorityKind === 'webhook_classify' ? { modelId: sonnet } : undefined]);
+      assert.equal(issued.model.modelId, scenario.modelId);
+      assert.equal('answerModel' in issued, false);
+    }
   } finally { globalThis.fetch = original; }
 });
 

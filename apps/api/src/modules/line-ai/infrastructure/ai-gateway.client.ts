@@ -79,6 +79,8 @@ import { type AiModelPrices, type AiTariffV2 } from '../application/ai-model-pri
 // Haiku 5.5 is admitted (tariff, capacity, thinking off) but not pinned: on the v14 rerun it disagreed with
 // Sonnet on 11 of 70 classified turns, Sonnet right each time, for about 0.3 s at the reply p50.
 export const LINE_CLASSIFY_MODEL_ID = 'global.anthropic.claude-sonnet-4-6';
+// Speed r26c, general/help answers only.
+export const LINE_COMPOSE_MODEL_ID = 'global.anthropic.claude-haiku-5-5';
 const LINE_TURN_TIMEOUT_MS = 120_000;
 const LINE_INTAKE_TIMEOUT_MS = 30_000;
 /** Outlast a 90s page read and its one timeout retry, retaining both usage entries. */
@@ -161,10 +163,25 @@ export class AiGatewayClient {
   /** Producer-only authority issuance, after access/legal/AI admission. Probe the serving runtime
    * before making any provider hold; an old Gateway cannot silently ignore this contract. */
   async issueLineReliabilityGrant(requestId: string,
-    input: Omit<IssueLineAiBudgetGrant, 'model' | 'modelContextTokens' | 'modelMaxOutputTokens' | 'tariff'>): Promise<AiBudgetGrantV2 | null> {
+    input: Omit<IssueLineAiBudgetGrant, 'model' | 'modelContextTokens' | 'modelMaxOutputTokens' | 'tariff' | 'answerModel'>): Promise<AiBudgetGrantV2 | null> {
     if (!this.budgetAuthority) return null;
-    const modelPolicy = await resolveCompanyAiModelPolicy(this.prisma, input.owner.owner.companyId, this.config.approvedAiModelIds)
+    const companyModelPolicy = await resolveCompanyAiModelPolicy(this.prisma, input.owner.owner.companyId, this.config.approvedAiModelIds);
+    const modelPolicy = companyModelPolicy
       ?? (input.authorityKind === 'webhook_classify' ? { modelId: LINE_CLASSIFY_MODEL_ID } : undefined);
+    const [intake, compose] = await Promise.all([
+      this.probeLineReliabilityModel(requestId, modelPolicy),
+      input.authorityKind === 'webhook_event' && input.owner.kind === 'PRIVATE' && !companyModelPolicy
+        ? this.probeLineReliabilityModel(requestId, { modelId: LINE_COMPOSE_MODEL_ID }).catch(() => null) : null,
+    ]);
+    if (!intake) return null;
+    const answerModel = compose && compose.model.provider === intake.model.provider && compose.model.region === intake.model.region
+      && compose.model.modelId !== intake.model.modelId ? compose : undefined;
+    return this.budgetAuthority.issue({ ...input, model: intake.model,
+      modelContextTokens: intake.contextTokens, modelMaxOutputTokens: intake.maxOutputTokens, tariff: intake.tariff,
+      ...(answerModel ? { answerModel } : {}) });
+  }
+
+  private async probeLineReliabilityModel(requestId: string, modelPolicy?: { modelId: string }): Promise<NonNullable<IssueLineAiBudgetGrant['answerModel']> | null> {
     const capability = await this.postInternal<{
       ready: boolean; inputContractVersion: number; providerOutputVersion: number; budgetContractVersion: number;
       profileTableDigest: string; estimatorVersion: string;
@@ -188,8 +205,8 @@ export class AiGatewayClient {
     const tariff: AiTariffV2 = { version: 'line-v2:2026-09-27', provider: model.provider, modelId: model.modelId,
       region: model.region, usdPerMTok: { ...reviewed.prices }, thbPerUsd: fx.rate,
       ...(reviewed.externalUsdPerUnit !== undefined ? { externalUsdPerUnit: reviewed.externalUsdPerUnit, searchContentInputTokensPerUnit: reviewed.searchContentInputTokensPerUnit } : {}) };
-    return this.budgetAuthority.issue({ ...input, model: { provider: model.provider, modelId: model.modelId, region: model.region },
-      modelContextTokens: model.contextTokens, modelMaxOutputTokens: model.maxOutputTokens, tariff });
+    return { model: { provider: model.provider, modelId: model.modelId, region: model.region },
+      contextTokens: model.contextTokens, maxOutputTokens: model.maxOutputTokens, tariff };
   }
 
   async requestLineWorkflowClassify(request: Omit<LineWorkflowClassifyRequest, 'budgetGrantV2' | 'contractCapabilities'>,

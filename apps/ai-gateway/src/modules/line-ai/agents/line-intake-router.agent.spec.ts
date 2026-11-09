@@ -63,6 +63,26 @@ describe('LINE intake router – routeIntake', () => {
       assert.equal((await new IntentRouterAgent(modelAnswer(wrong)).routeIntake(request)).status, 'UNAVAILABLE');
     }
   });
+  it('R26a a lone clause may omit sources; filters stay required; two clauses still cite their own sources', async () => {
+    const text = 'ใบเบิกค่าน้ำมันที่รออนุมัติมีกี่ใบ';
+    const built = (await createLineAiInputEvidence({ turnKey: 'r26a-router', parts: [{ partId: 'part-0', eventIdHash: 'c'.repeat(64), acceptedAtMs: 1, rawText: text }] }))!;
+    const request = baseRequest({ messageText: text, inputEvidence: built.inputEvidence, capabilities: { reimbursementSemantic: true } });
+    const capture: { input?: ProviderInput } = {};
+    const plan = await new IntentRouterAgent(modelAnswer({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9,
+      decisionV1: { subrequests: [{ kind: 'read', goal: 'ใบเบิกค่าน้ำมันรออนุมัติ', filters: { categoryName: 'ค่าน้ำมัน' } }] } }, capture)).routeIntake(request);
+    assert.equal(plan.status, 'ROUTED', JSON.stringify(plan));
+    assert.equal(plan.semanticOutcome, 'AMBIGUOUS'); assert.equal(plan.fundingSource, 'UNKNOWN');
+    assert.deepEqual(plan.semanticSubrequests?.[0]?.evidenceRefs, [{ partId: 'part-0', startUtf16: 0, endUtf16: text.length, rawSha256: built.inputEvidence.parts[0]!.rawSha256 }]);
+    assert.deepEqual(plan.semanticSubrequests?.[0]?.requestedFilters, { categoryName: 'ค่าน้ำมัน' });
+    const prompt = capture.input!.systemPrompt!;
+    assert.match(prompt, /REQUIRED only on EXPENSE_DOCUMENT_CAPTURE and REIMBURSEMENT_REQUEST_START\./);
+    assert.match(prompt, /"AMBIGUOUS", \/\/ ONLY on the two routes in the semantic rules\n/);
+    assert.match(prompt, /"filters": \{\}, "sources": \[\{ "part": 0, "whole": true \}\] \/\* 2\+ clauses or a quote only \*\//);
+    assert.match(prompt, /MUST contain kind, goal and filters; sources only with 2\+ clauses or a quote\./);
+    const two = await new IntentRouterAgent(modelAnswer({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9,
+      decisionV1: { subrequests: [{ kind: 'read', goal: 'ใบเบิกค่าน้ำมัน', filters: {} }, { kind: 'read', goal: 'รออนุมัติ', filters: {} }] } })).routeIntake(request);
+    assert.equal(two.status, 'UNAVAILABLE');
+  });
   it('X2: payment preview is a valid write clause without an invented writeIntent', async () => {
     const text = 'จ่ายแล้ว';
     const built = (await createLineAiInputEvidence({ turnKey: 'fx5-router-payment', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: 1, rawText: text }] }))!;
@@ -512,7 +532,8 @@ describe('LINE intake router – routeIntake', () => {
     const prompt = intakeRouterSystemPrompt({}, false, true);
     assert.ok(prompt.includes('"tool": "exact catalog read tool name"'),
       'the compact JSON skeleton spells out the optional tool-hint field');
-    assert.match(prompt, /"tool" is an OPTIONAL string, the single best read tool for THIS clause/);
+    // Speed r26a: the skeleton comment points to the full rule below; the bare-id guard stays in both places.
+    assert.match(prompt, /"tool" is an OPTIONAL string, see below; taskRef is an OPTIONAL object copied verbatim from resumableTaskRefs, never a bare id string/);
     assert.match(prompt, /For a read clause, "tool" MAY name the single best read tool from the offered catalog for that clause — omit it when unsure/);
     assert.match(prompt, /why\/compare clause whose tool is expense\.get_breakdown/);
   });

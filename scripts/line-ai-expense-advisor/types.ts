@@ -115,6 +115,8 @@ export type WorkflowFixtureOp =
 export type WorkflowPreview = { action: string; target: string; amount?: string; reason?: string; payeeName?: string; paymentMethod?: string; paidDate?: string };
 export type WorkflowTurn = {
   as?: ActorRef; user?: string; press?: string; pressFrom?: { turn: number; actor?: ActorRef }; fixture?: WorkflowFixtureOp[];
+  /** Speed r26d: send `user` as one LINE bubble per line; bubble i+1 goes bubbleGapsMs[i] ms after bubble i. */
+  bubbleGapsMs?: number[];
   expect: { tier?: 0 | 1 | 2; label?: string; card?: 'picker' | 'choice' | 'question' | 'preview' | 'applied' | 'declined' | 'refusal' | 'answer' | 'credit_refusal' | 'expired';
     target?: string; preview?: WorkflowPreview; maxModelCalls?: number; mustNotCaptureAsField?: boolean; tags?: TurnTags;
     knowledge?: KnowledgeGold; dueDate?: DueDateGold; refusal?: { reason: 'permission' | 'package' | 'free' | 'record'; wayOut: readonly string[] } };
@@ -190,6 +192,9 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
         assert.ok(isPlainObject(from) && Number.isInteger(from['turn']) && (from['turn'] as number) >= 0 && (from['turn'] as number) < ti, `${path}.turns[${ti}].pressFrom`);
         if (from['actor'] !== undefined) assert.ok(isPlainObject(from['actor']) && actorKeys.has(from['actor']['key'] as string), `${path}.turns[${ti}].pressFrom.actor`);
       }
+      if (turn['bubbleGapsMs'] !== undefined) assert.ok(nonEmptyString(turn['user']) && Array.isArray(turn['bubbleGapsMs'])
+        && turn['bubbleGapsMs'].length === (turn['user'] as string).split('\n').length - 1 && turn['bubbleGapsMs'].length > 0
+        && turn['bubbleGapsMs'].every(gap => Number.isInteger(gap) && gap >= 0 && gap <= 10_000), `${path}.turns[${ti}].bubbleGapsMs`);
       const expect = turn['expect']; assert.ok(isPlainObject(expect), `${path}.turns[${ti}].expect`);
       const answerPath = `${path} (${raw['id']}).turns[${ti}]`;
       if (expect['knowledge'] !== undefined) {

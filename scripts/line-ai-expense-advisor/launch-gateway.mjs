@@ -10,9 +10,9 @@
  * values beyond passing `gatewaySecret`/`delegationSigningKey` straight into the child's env.
  *
  * Usage: node scripts/line-ai-expense-advisor/launch-gateway.mjs
- * Requires AWS_PROFILE or a local Anthropic key file (real model calls once a conversation reaches it).
+ * Requires the local Anthropic key file (real model calls on the API key once a conversation reaches it). Real Bedrock and AgentCore are forbidden (owner 2026-11-09): no AWS credential is passed to the gateway.
  * Optional env:
- *   MANGMEE_EVAL_ANTHROPIC_KEY_FILE      default ~/.config/mangmee/anthropic-api-key (takes precedence over AWS_PROFILE)
+ *   MANGMEE_EVAL_ANTHROPIC_KEY_FILE      default ~/.config/mangmee/anthropic-api-key (required)
  *   MANGMEE_EVAL_SECRETS_PATH            default /tmp/mangmee-latency-pilot-20260927/runtime-secrets.json
  *   MANGMEE_EVAL_GATEWAY_PORT            default 19205
  *   MANGMEE_EVAL_API_PORT                default 19291 (must match run-real.ts's MANGMEE_EVAL_API_PORT)
@@ -40,13 +40,15 @@ let anthropicApiKey;
 try {
   anthropicApiKey = readFileSync(keyFile, 'utf8').trim() || undefined;
 } catch (err) {
-  if (err.code !== 'ENOENT' && !process.env.AWS_PROFILE) {
+  if (err.code !== 'ENOENT') {
     console.error(JSON.stringify({ event: 'gateway_launch_refused', reason: 'ANTHROPIC_KEY_FILE_UNREADABLE', keyFile }));
     process.exit(1);
   }
 }
-if (!process.env.AWS_PROFILE && !anthropicApiKey) {
-  console.error(JSON.stringify({ event: 'gateway_launch_refused', reason: 'AWS_PROFILE_OR_ANTHROPIC_KEY_FILE_REQUIRED', keyFile }));
+// Owner 2026-11-09: never call real Bedrock or AgentCore from this machine. Local runs use the
+// Anthropic API key only; without it the gateway refuses to start instead of falling back to Bedrock.
+if (!anthropicApiKey) {
+  console.error(JSON.stringify({ event: 'gateway_launch_refused', reason: 'ANTHROPIC_KEY_FILE_REQUIRED_REAL_BEDROCK_FORBIDDEN', keyFile }));
   process.exit(1);
 }
 
@@ -55,8 +57,11 @@ const databaseUrl = new URL(secrets.databaseUrl);
 databaseUrl.pathname = `/${DB_NAME}`;
 databaseUrl.searchParams.set('schema', 'public');
 
+// No AWS credential reaches the gateway, so no code path can reach real Bedrock or AgentCore.
+const { AWS_PROFILE: _p, AWS_DEFAULT_PROFILE: _dp, AWS_ACCESS_KEY_ID: _ak, AWS_SECRET_ACCESS_KEY: _sk, AWS_SESSION_TOKEN: _st, ...inheritedEnv } = process.env;
 const env = {
-  ...process.env,
+  ...inheritedEnv,
+  AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null',
   ANTHROPIC_API_KEY: anthropicApiKey,
   APP_ENV: 'local', NODE_ENV: 'test', SERVICE_NAME: 'line-ai-expense-advisor-eval-gateway',
   PORT, HOST: '127.0.0.1',
@@ -94,7 +99,7 @@ if (!OUTPUT_DIR) {
   process.exit(1);
 }
 mkdirSync(OUTPUT_DIR, { recursive: true });
-const transport = anthropicApiKey ? 'anthropic-api' : 'bedrock';
+const transport = 'anthropic-api';
 const gatewayManifestPath = resolve(OUTPUT_DIR, 'gateway.manifest.json');
 writeFileSync(gatewayManifestPath, JSON.stringify({ transport, modelId: env.BEDROCK_MODEL_ID, region: env.BEDROCK_REGION,
   recordedAt: new Date().toISOString(), gatewayUrl: env.AI_GATEWAY_INTERNAL_URL }, null, 2));

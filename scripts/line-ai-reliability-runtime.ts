@@ -48,7 +48,8 @@ export type RuntimeReplayAction =
   | { type: 'message'; label: string; text: string; pressFrom?: string }
   | { type: 'uri'; label: string; uri: string; pressFrom?: string }
   | { type: 'camera'; label: string; assetId: string; pressFrom?: string };
-export type RuntimeReplayTurn = { action?: RuntimeReplayAction; pressFrom?: string; pressOrigin?: { turn: number; actor?: string }; fixture?: WorkflowFixtureOp[] };
+// Speed r26d: a typed turn may arrive as several LINE bubbles (one per line of `user`), bubble i+1 sent bubbleGapsMs[i] ms after bubble i.
+export type RuntimeReplayTurn = { action?: RuntimeReplayAction; pressFrom?: string; pressOrigin?: { turn: number; actor?: string }; fixture?: WorkflowFixtureOp[]; bubbleGapsMs?: number[] };
 export type RuntimeReplayFixture = ReliabilityFixture & { turns: Array<ReliabilityFixture['turns'][number] & RuntimeReplayTurn>; evidenceRecords?: GoldRecord[] };
 export type RuntimeReplayCorpus = Omit<ReliabilityCorpus, 'fixtures'> & { fixtures: RuntimeReplayFixture[] };
 export type ReliabilityRuntimeManifest = {
@@ -742,7 +743,10 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       }
       const assetIds = action?.type === 'camera' ? [action.assetId] : turn.attachmentIds;
       const messageText = selection?.text ?? (action?.type === 'message' ? action.text : turn.user);
+      const bubbles = replayTurn.bubbleGapsMs && messageText && !action && !assetIds.length ? messageText.split('\n') : undefined;
+      if (bubbles) assert.equal(bubbles.length, replayTurn.bubbleGapsMs!.length + 1, 'REPLAY_BUBBLE_GAPS_MISMATCH');
       const inputs = action?.type === 'postback' && !selection?.text ? [{ type: 'postback', label: action.label }]
+        : bubbles ? bubbles.map((text, index) => ({ type: 'text', text, id: `${prefix}-text-${index}` }))
         : [...assetIds.map(id => runtimeAttachmentMessage(runtimeAssetMessageId(attemptId, turnIndex, id), snapshot!.assets[id], repoRoot)), ...(messageText ? [{ type: 'text', text: messageText, id: `${prefix}-text` }] : [])];
       const before = await readEffects(), usageIds = new Set<string>((await client.aiUsageEvent.findMany({ select: { id: true } })).map((item: any) => item.id));
       const at = Date.now();
@@ -750,11 +754,15 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         tools: [], results: [], responses: [], deliveryCoverage: null, missing: [], requests: [], completedAt: null, errors: [], critical: [], receipts: [], toolResults: [], gatewayResponses: [], reviewBefore: await readReviewState(),
         inputKind: selection?.text ? 'message' : action?.type ?? (assetIds.length ? 'camera' : 'message'), action, pressFrom: actorKey, previewEntries: [], lineUserId: actorContext.lineUserId };
       turnStates.push(active);
-      const body = { destination: row.fixture.messagingChannelId, events: inputs.map((message, index) => ({
+      const events = inputs.map((message, index) => ({
         ...(postbackData ? { type: 'postback', postback: { data: postbackData } } : { type: 'message', message }),
-        webhookEventId: active!.eventIds[index], replyToken: `${prefix}-${index}-token`, timestamp: at, source })) };
-      const rawBody = Buffer.from(JSON.stringify(body));
-      await app.get(LineWebhookController).lineWebhook({ body, rawBody, headers: { 'x-line-signature': createHmac('sha256', secret).update(rawBody).digest('base64') } });
+        webhookEventId: active!.eventIds[index], replyToken: `${prefix}-${index}-token`, timestamp: at, source }));
+      for (const [index, batch] of (bubbles ? events.map(event => [event]) : [events]).entries()) {
+        if (index > 0) { await delay(replayTurn.bubbleGapsMs![index - 1]!); batch[0]!.timestamp = Date.now(); }
+        const body = { destination: row.fixture.messagingChannelId, events: batch };
+        const rawBody = Buffer.from(JSON.stringify(body));
+        await app.get(LineWebhookController).lineWebhook({ body, rawBody, headers: { 'x-line-signature': createHmac('sha256', secret).update(rawBody).digest('base64') } });
+      }
       const deadline = Date.now() + Math.max(60_000, ...row.turns.map(item => item.expect.deadlineMs));
       let settled = false;
       while (Date.now() < deadline) {

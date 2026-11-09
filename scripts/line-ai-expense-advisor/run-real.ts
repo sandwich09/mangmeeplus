@@ -273,6 +273,7 @@ export function buildWorkflowReplay(corpus: WorkflowCorpus, seed: WorkflowSeed, 
           pressFrom: turn.as?.key ?? conversation.actors[0]!.key,
           ...(turn.pressFrom ? { pressOrigin: { turn: turn.pressFrom.turn, actor: turn.pressFrom.actor?.key } } : {}),
           ...(turn.fixture ? { fixture: turn.fixture } : {}),
+          ...(turn.bubbleGapsMs ? { bubbleGapsMs: turn.bubbleGapsMs } : {}),
           ...(turn.press ? { action: { type: 'postback' as const, label: turn.press } } : {}),
           expect: { outcomes: ['answered', 'partial', 'needs_input', 'access_denied', 'unsupported_action', 'feature_unavailable'],
             toolInputs: [], requiredFacts: [], requiredEffects: [], forbiddenEffects: [], requiredDelivery: 'ACCEPTED',
@@ -351,7 +352,7 @@ export async function runReal(dependencies: {
       ].map(sha256File)), registry: sha256File('packages/contracts/src/ai-tools.ts'), model: reliabilityDigest(model), price: sha256File('apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.ts') },
       apiPort: API_PORT, gatewayUrl, databaseUrl: databaseUrl.toString(), redisUrl,
       ...(corpus.version === 2 ? { streamTurnEvidence: true } : {}),
-      environment: { ...PRODUCTION_AI_ENV.api, LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: DETERMINISTIC_FAMILIES }, repeats: 1, cohort: '1000', bootstrapLaunchGates: true,
+      environment: { ...PRODUCTION_AI_ENV.api, LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: DETERMINISTIC_FAMILIES }, repeats: 1, cohort: (process.env.MANGMEE_EVAL_DEBOUNCE_MS ?? PRODUCTION_AI_ENV.api.LINE_AI_BUFFER_DEBOUNCE_MS) as '1000', bootstrapLaunchGates: true,
     };
     const goldPass = await (dependencies.oracle ?? collectGoldResults)(REPO_ROOT, fullCorpus.version === 2 ? fullCorpus : requested, workflowSeed?.companies ?? companies, databaseUrl.toString(), redisUrl, secretsPath, now,
       () => capturePendingSpend().then(() => undefined));

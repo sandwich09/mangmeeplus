@@ -25,6 +25,17 @@ export const INTAKE_CONSTANT_CALIBRATIONS = [
     "digest": "b0faf4398de09ccc8811e2e4e2e9d2f0ebbe1c2fba530179f4d368e633bbe607",
     "bytes": 61068,
     "tokenBound": 26686
+  },
+  // Speed r26a output trim: -43 bytes per mode, same model and catalogue vocabulary; keeps C72's bound.
+  {
+    "digest": "7ffa9fef0a867a083ff541cab7ed60990cf2933072174af8f7ae0c98a06a9d29",
+    "bytes": 66577,
+    "tokenBound": 26686
+  },
+  {
+    "digest": "bc7137b8405190f86dd499e953ea1b3d09807498137a189f2975aca05d48980a",
+    "bytes": 61025,
+    "tokenBound": 26686
   }
 ] as const;
 // Exact reviewed catalogue vocabulary; new/edited entries retain their full byte bound.
