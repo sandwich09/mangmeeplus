@@ -53,6 +53,12 @@ test('launcher opens with the single local greeting and existing avatar asset', 
   assert.ok(existsSync(resolve('public', avatar.src.slice(1))));
 });
 
+// Owner 2026-11-09: a link set to 8 documents showed "/3" in the open chat.
+test('the header shows the link document quota, and a used-up quota reads as full', () => {
+  assert.match(popup(true, { page: { ...page, reads: { used: 2, limit: 8 } } }).render(), /อ่านเอกสาร 2\/8/);
+  assert.match(popup(true, { page: { ...page, reads: { used: 3, limit: 1 } } }).render(), /อ่านเอกสาร 1\/1/);
+});
+
 for (const wide of [false, true]) test(`URI chips navigate behind chat and minimise on phone at wide=${wide}`, () => {
   const items: DemoChatItem[] = [{ id: 'out', direction: 'out', createdAt: '1', messages: [{ type: 'text', text: 'ไปดู', quickReply: { items: [{ action: { type: 'uri', label: 'ดูในระบบ', uri: '/companies/demo/expenses' } }] } }] }];
   const view = popup(wide, { items });

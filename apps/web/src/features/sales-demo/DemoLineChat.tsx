@@ -98,6 +98,8 @@ export function DemoLineChat({ companyId }: { companyId: string }) {
       setItems(itemsRef.current);
       setPending(current => reconcileDemoPending(current, itemsRef.current));
       setPage(result);
+      // Sales can raise the document quota while the chat is open; the next read lifts a refusal.
+      setReadLimit(false);
       setLoadError(false);
     }, error => { if (!handleError(error)) setLoadError(true); }, lastSend);
     return () => { poll.current?.stop(); poll.current = null; };
@@ -210,7 +212,7 @@ export function DemoLineChat({ companyId }: { companyId: string }) {
           swipeStart.current = null;
         }}>
           <div className="demo-chat-heading"><div><strong>มั่งมี Plus</strong><span className="demo-chat-pill">แชทจำลอง</span></div>
-            <p className="demo-chat-credit">{page ? `เครดิต ${page.credit.remaining}/${page.credit.total} · อ่านเอกสาร ${readsReached ? Math.max(3, page.reads.used) : page.reads.used}/3` : 'กำลังโหลดเครดิต…'}</p>
+            <p className="demo-chat-credit">{page ? `เครดิต ${page.credit.remaining}/${page.credit.total} · อ่านเอกสาร ${readsReached ? page.reads.limit : page.reads.used}/${page.reads.limit}` : 'กำลังโหลดเครดิต…'}</p>
           </div>
           <button type="button" className="mangmee-btn mangmee-btn-quiet demo-chat-icon" aria-label="ย่อแชทจำลอง" onClick={() => setOpen(false)}>—</button>
           <button type="button" className="mangmee-btn mangmee-btn-quiet demo-chat-icon" aria-label="ปิดแชทจำลอง" onClick={() => setOpen(false)}>×</button>
