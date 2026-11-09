@@ -29,6 +29,16 @@ UAT/READY/PROD IDs are `NOT_DISPATCHED`; native LINE was not exercised. Before t
 `infra/dev-kamal/build-complete.py` dry run found four build blockers (next-env.d.ts dev form, a
 workers spec import, a workers import of `@watchdog-bms/contracts`, stale pins), all fixed on main.
 
+**Bedrock quotas found and requested (2026-11-09, owner-approved, Service Quotas ap-southeast-1):** the
+"not available for this account" answer for Haiku 5.5 is an account quota of **0** for "Global
+cross-region model inference tokens per minute for Anthropic Claude Haiku 5.5" (AWS default
+10,000,000). Sonnet 4.6, which serves UAT and Production, has "Global cross-region model inference
+requests per minute" applied at **10** (default 10,000) — about 3–5 AI-answered LINE messages per
+minute across all shops. Requests at the form's minimum (the AWS default): Haiku 5.5 TPM
+10,000,000 = case `179421967600426`; Sonnet 4.6 RPM 10,000 = case `179421971300520`; both "Case
+Opened". Re-add Haiku to `infra/kamal/config.json` (both environments) only after the Haiku quota
+reads non-zero.
+
 ## Current UAT and Production — concise expense history, 2026-10-30 21:12 Bangkok
 
 UAT and Production serve exact source `884ba5307468111c48a2bd2c01a3c27c438d33a6`. Expense history
