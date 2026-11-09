@@ -10,6 +10,21 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current UAT — LINE "บิลเมื่อกี้ / อันนี้" focus record + own-message quotes (round 29), 2026-11-09 23:32 Bangkok
+
+UAT serves exact main `20934abb16d2ca8859fdd3afd42282753dfe1899` (same tree as develop `bcf315939`): the 21:49
+release below plus LINE-AI round 29 — a claim takes the bill just scanned ("เบิก…บิลเมื่อกี้"), bill and
+claim workflows act on the record just discussed, and a LINE reply to the customer's own photo or earlier
+text resolves to its record. One additive migration `20261109130000_line_webhook_message_id`
+(`LineWebhookEventLog.lineMessageId VARCHAR(200)` + index). Owner's words: "แก้ไข ปรับปรุงตามที่คุยกันและ
+promote ขึ้น uat ได้เลย อย่าลืม fetch main". Controller worktree `release-uat-20261109` moved to origin/main;
+cached MFA session valid. A first prepare `20261109T160703Z-7878eded` was interrupted by the controller at
+`main-typescript-build` (a wording fix followed; no deployment, production not mutated). Prepare
+`20261109T162023Z-4189fb21` (`--publish-images --uat-smoke-acceptance`) `PREPARED_NO_DEPLOYMENT` in 396.417 s;
+apply `20261109T162713Z-25e99b29` signed/verified `ACCEPTED_LINE_DEFERRED` in 283.895 s, 12/12 phases,
+AgentCore `kamal_uat_b` updated. Production untouched (`884ba5307`). Workflow UAT/READY/PROD IDs
+`NOT_DISPATCHED`; native LINE not exercised.
+
 ## Current UAT — demo chat quota header + complete demo purge, 2026-11-09 21:49 Bangkok
 
 UAT serves exact main `eae5297e66745194dabb12442881c13af7c37652` (same tree as develop `0ae4c247f`): the
