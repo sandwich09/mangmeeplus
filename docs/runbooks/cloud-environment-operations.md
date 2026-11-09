@@ -10,6 +10,29 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current Production — demo chat web buttons open the shop page, 2026-11-10 06:53 Bangkok
+
+Production serves exact main `0c5a68468e4af8baf2498596441854e82bc5672e` (same tree as develop `e7f3892dd`):
+round 29 plus one sales-demo fix — in the web demo chat (`Vdemo<companyId>`) card buttons get the plain
+shop link instead of a one-tap `/l/` LINE handoff, the LIFF "เปิดร้านใหม่" button is hidden, and the
+`openExternalBrowser` flag is dropped. Real LINE users unchanged. No migration. Owner's words: "เสร็จแล้วขึ้น
+prod เลย"; the owner typed a fresh Production MFA code (the cached one had ~1 h left). Promoted from the
+signed UAT apply `20261109T234052Z-c2251283`, no rebuild. Prepare `20261109T234547Z-211d7f74`
+`PREPARED_NO_DEPLOYMENT` in 53.748 s; apply `20261109T234645Z-e2706e17` signed `ACCEPTED_LINE_DEFERRED` in
+417.917 s, 12/12 phases, website ready 282.6 s, browser stage 108.4 s. Browser acceptance in the Claude
+in-app browser: the owner signed in himself before the deploy; his access token expired mid-check, a page
+reload refreshed it; auth/me 200 as `prodmangmeeplus` SYSTEM_ADMIN with launch-gate permission and no
+password/legal action; platform access OPEN/live/canOpen; owner approved the UI logout; `/login` shows
+`data-platform-access="open"` and auth/me 401 afterwards. Evidence: two JSON files in the run directory.
+Workflow UAT/READY/PROD IDs `NOT_DISPATCHED`; native LINE not exercised.
+
+## Current UAT — demo chat web buttons, 2026-11-10 06:45 Bangkok
+
+UAT serves exact main `0c5a68468` (above). Owner's go: "Deploy to UAT". Fresh controller worktree
+`release-uat-20261110a`. Prepare `20261109T233303Z-b2465062` (`--publish-images --uat-smoke-acceptance`)
+`PREPARED_NO_DEPLOYMENT` in 467.877 s; apply `20261109T234052Z-c2251283` signed `ACCEPTED_LINE_DEFERRED` in
+285.119 s, 12/12 phases.
+
 ## Current Production — LINE recent-record focus (round 29) and everything since 2026-10-30, 2026-11-09 23:54 Bangkok
 
 Production serves exact main `20934abb16d2ca8859fdd3afd42282753dfe1899` (same tree as develop `bcf315939`),
