@@ -21,6 +21,11 @@ export async function purgeDemoCompany(db: PrismaClient, storage: AttachmentStor
     await tx.expenseSubstituteReceiptEvidence.deleteMany({ where: { companyId } });
     await tx.companyOnboardingRun.deleteMany({ where: { companyId } });
     await tx.salesDemoLink.updateMany({ where: { companyId }, data: { companyId: null } });
+    // Chat logs and queued events point at the shop without a foreign key, so they would outlive it.
+    // Deleting the webhook log cascades to its turn outcomes and their delivery plans.
+    await tx.lineWebhookEventLog.deleteMany({ where: { companyId } });
+    await tx.lineDeliveryPlan.deleteMany({ where: { companyId } });
+    await tx.outboxEvent.deleteMany({ where: { companyId } });
     await tx.company.delete({ where: { id: companyId } });
     // Demo users are made for this shop only; a user who also works elsewhere is kept.
     await tx.user.deleteMany({ where: { id: { in: userIds.filter(id => !shared.some(row => row.userId === id)) } } });

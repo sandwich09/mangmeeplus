@@ -126,6 +126,10 @@ describe('sales demo links on real PostgreSQL', { skip: !databaseUrl }, () => {
     const userIds = (await client.companyMembership.findMany({ where: { companyId } })).map(row => row.userId);
     assert.ok(userIds.length > 1 && await client.expenseRecord.count({ where: { companyId } }) > 0);
     await client.demoChatMessage.create({ data: { companyId, chatId: 'c', direction: 'in', messagesJson: [] } });
+    // Owner 2026-11-09: chat logs and queued events have no foreign key to the shop and must go too.
+    await client.lineWebhookEventLog.create({ data: { webhookEventId: `purge-${companyId}`, companyId, eventType: 'message',
+      turnOutcome: { create: { id: `purge-${companyId}`, companyId, presentationKind: 'text', messagesJson: [{ type: 'text', text: 'ข้อความลูกค้า' }] } } } });
+    assert.ok(await client.outboxEvent.count({ where: { companyId } }) > 0);
     await client.attachmentObject.create({ data: { companyId, storageProvider: 'local', bucket: 'b', objectKey: `demo/${companyId}/receipt.jpg`,
       originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 1, uploadedByUserId: userIds[0] } });
     const deleted: string[] = [], storage = { deleteObject: async (file: { objectKey: string }) => { deleted.push(file.objectKey); } } as any;
@@ -139,6 +143,9 @@ describe('sales demo links on real PostgreSQL', { skip: !databaseUrl }, () => {
     assert.equal(await client.company.count({ where: { id: companyId } }), 0);
     assert.equal(await client.user.count({ where: { id: { in: userIds } } }), 0);
     assert.equal(await client.expenseRecord.count({ where: { companyId } }), 0);
+    assert.equal(await client.lineWebhookEventLog.count({ where: { companyId } }), 0);
+    assert.equal(await client.lineTurnOutcome.count({ where: { companyId } }), 0);
+    assert.equal(await client.outboxEvent.count({ where: { payloadJson: { path: ['companyId'], equals: companyId } } }), 0);
     const row = await client.salesDemoLink.findUniqueOrThrow({ where: { tokenHash: hashLineHandoffToken(tokenOf(link)) } });
     assert.equal(row.companyId, null); assert.ok(row.openedAt);
     await assert.rejects(demo.open(tokenOf(link), 'after'), (error: any) => error.getStatus() === 410);
