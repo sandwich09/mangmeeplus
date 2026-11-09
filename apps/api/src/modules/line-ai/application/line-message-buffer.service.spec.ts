@@ -17,6 +17,7 @@ type Row = {
   processedAt?: Date | null;
   errorCode?: string | null;
   companyId?: string | null;
+  lineMessageId?: string | null;
   payloadJson?: unknown;
 };
 
@@ -79,6 +80,7 @@ function makeHarness(opts: {
             processedAt: data.processedAt,
             errorCode: data.errorCode,
             companyId: data.companyId,
+            lineMessageId: data.lineMessageId,
             payloadJson: data.payloadJson,
           });
           return data;
@@ -210,6 +212,32 @@ function mediaEnv(id: string, opts: { chatId?: string; userId?: string; timestam
   };
 }
 
+describe('Round 29b incoming LINE message IDs', () => {
+  it('persists text and photo message IDs on their created event logs, including the legal gate', async () => {
+    for (const legalAcceptanceRequired of [false, true]) {
+      const h = makeHarness({ legalAcceptanceRequired });
+      await h.service.enqueue(textEnv('own-text-id', 'ข้อความ'));
+      await h.service.enqueue(mediaEnv('own-photo-id'));
+      assert.equal(h.rows.get('own-text-id')?.lineMessageId, 'mid-own-text-id');
+      assert.equal(h.rows.get('own-photo-id')?.lineMessageId, 'mid-own-photo-id');
+      await h.service.onModuleDestroy();
+    }
+  });
+
+  it('stores malformed or absent incoming message IDs as null', async () => {
+    for (const legalAcceptanceRequired of [false, true]) {
+      const h = makeHarness({ legalAcceptanceRequired });
+      for (const [index, id] of [undefined, '', 'has space', 'a'.repeat(201), 'รูป', 'bad/id'].entries()) {
+        const envelope = textEnv(`invalid-id-${index}`, 'ข้อความ');
+        envelope.item.lineMessageId = id;
+        await h.service.enqueue(envelope);
+        assert.equal(h.rows.get(envelope.item.webhookEventId)?.lineMessageId, null);
+      }
+      await h.service.onModuleDestroy();
+    }
+  });
+});
+
 describe('LineMessageBufferService – legal acceptance pre-storage gate', () => {
   it('terminalizes pending employee text without persisting or dispatching its raw envelope', async () => {
     const h = makeHarness({ legalAcceptanceRequired: true, loadingEnabled: true });
@@ -232,7 +260,7 @@ describe('LineMessageBufferService – legal acceptance pre-storage gate', () =>
     assert.deepEqual(Object.keys(h.preflightCalls[0] ?? {}).sort(), ['lineUserId', 'messagingChannelId']);
   });
 
-  it('terminalizes pending employee media before any media id or filename is durable', async () => {
+  it('terminalizes pending employee media with only its message ID retained', async () => {
     const h = makeHarness({ legalAcceptanceRequired: true });
     const envelope = mediaEnv('legal-media');
     if (envelope.item.kind === 'media') {
@@ -247,7 +275,8 @@ describe('LineMessageBufferService – legal acceptance pre-storage gate', () =>
     assert.equal(row?.payloadJson, Prisma.DbNull);
     assert.equal(h.receipts.length, 0);
     assert.equal(h.executed.length, 0);
-    assert.doesNotMatch(JSON.stringify(row), /mid-legal-media|payroll-secret|rt-legal-media/);
+    assert.equal(row?.lineMessageId, 'mid-legal-media');
+    assert.doesNotMatch(JSON.stringify(row), /payroll-secret|rt-legal-media/);
   });
 
   it('deduplicates a pending event and sends the neutral reply only once', async () => {

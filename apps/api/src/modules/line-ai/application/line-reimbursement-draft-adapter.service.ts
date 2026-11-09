@@ -273,6 +273,34 @@ export class LineReimbursementDraftAdapterService {
     } catch { return null; }
   }
 
+  async linkRecentSource(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; expenseId: string }) {
+    const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
+    const accepted = active && this.accepted(active);
+    if (!active || active.operation !== 'CREATE' || active.status !== 'COLLECTING' || !accepted || Date.parse(accepted.options.expiresAt) <= Date.now()
+      || accepted.proposal?.lineChanges?.some(line => line.operation === 'ADD' && (line.values.linkedExpenseChoiceId || line.values.amount))) return null;
+    const branch = accepted.options.choices.find(choice => choice.choiceId === accepted.options.selected.branchChoiceId);
+    const requester = accepted.options.choices.find(choice => choice.choiceId === accepted.options.selected.requesterChoiceId);
+    if (!branch || !requester) return null;
+    try {
+      await this.currentChoice(input.ctx, branch, accepted.options);
+      await this.currentChoice(input.ctx, requester, accepted.options);
+    } catch { return null; }
+    const rows = await this.repo.listReimbursementSources(input.ctx.companyId, String(branch.raw['id']), String(requester.raw['id']), '', input.expenseId);
+    const source = rows.find(row => row.expenseId === input.expenseId);
+    if (!source) return { sourceRefusal: 'ทำใบเบิกจากบิลนี้ในแชทไม่ได้ค่ะ' };
+    if (!source.eligible) {
+      const sentences: Record<string, string> = {
+        expense_already_claimed: 'บิลนี้อยู่ในใบเบิกอื่นแล้วค่ะ',
+        reimbursement_source_already_settled: 'บิลนี้ยืนยันหรือจ่ายเป็นค่าใช้จ่ายของร้านแล้ว จึงทำใบเบิกจากบิลนี้ไม่ได้ค่ะ',
+        reimbursement_source_tax_review_required: 'บิลนี้ต้องให้ผู้ตรวจรายจ่ายตรวจ VAT หรือหัก ณ ที่จ่ายก่อนค่ะ',
+        reimbursement_source_fields_mismatch: 'บิลนี้ข้อมูลยังไม่ครบ แก้วันที่หรือยอดในเว็บก่อนค่ะ',
+      };
+      return { sourceRefusal: sentences[source.reason ?? ''] ?? 'ทำใบเบิกจากบิลนี้ในแชทไม่ได้ค่ะ' };
+    }
+    const control = await this.sourceChoiceControl(input);
+    return control ? this.choose({ ...input, control }) : null;
+  }
+
   async sourceChoiceControl(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; expenseId: string }) {
     const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
     const accepted = active && this.accepted(active);

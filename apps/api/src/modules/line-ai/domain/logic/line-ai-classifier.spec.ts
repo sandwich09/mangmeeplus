@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { lineRecentRecordReference } from './line-recent-record-reference.logic';
 import { normalizeLineText, classifyIntent, chooseAgent, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand, isPendingFieldAnswer, lineWorkflowPickerText, isLineWorkflowCountRead, lineDocumentNumberMatches, lineWorkflowListOpener } from './line-ai-classifier.logic';
 
 describe('normalizeLineText', () => {
@@ -517,4 +518,11 @@ it('R23 controller: "พัก<งาน>ก่อน" and "รอทำ…ท�
     assert.equal(lineWorkflowPickerText(text).question, true, text);
   for (const text of ['ลบร่างหรือยกเลิกบิลให้หน่อยจ้ะ', 'ใส่ชื่อร้านหรือชื่อคนก็ได้จ้ะ', 'ใส่ชื่อร้านหรือชื่อเจ้าของจ้ะ'])
     assert.equal(lineWorkflowPickerText(text).question, false, text);
+});
+
+it('R29 detector accepts record references and rejects periods named rounds and shops', () => {
+  const positive = ['บิลเมื่อกี้', 'บิลร้านอาหารเมื่อกี้', 'ตามรายการบิลเมื่อกี้เลย', 'อันนี้', 'อันนั้น', 'ตัวนั้น', 'ใบนี้', 'บิลนี้', 'ใบเสร็จที่ส่งไป', 'รายการที่แล้ว', 'บิลล่าสุด', 'ใบเบิกเมื่อกี้', 'เอกสารที่เพิ่งส่ง', 'รูปเมื่อกี้', 'อันเมื่อกี้'];
+  const negative = ['ค่าใช้จ่ายเดือนที่แล้ว', 'ปีที่แล้ว', 'สัปดาห์ที่แล้ว', 'ใบเบิกรอบที่แล้ว', 'รอบ 3', 'บิลเลขที่ INV-1', 'ร้านนี้', 'เบิกค่าอาหาร 300 บาท'];
+  for (const text of positive) assert.equal(lineRecentRecordReference(text), true, text);
+  for (const text of negative) assert.equal(lineRecentRecordReference(text), false, text);
 });

@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { LINE_AI_CONTEXT_WINDOW_MINUTES, type LineAiReadMemory } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
-import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan, type DeliveryPlanV2 } from '../domain/logic/line-delivery-plan.logic';
+import { deliveryHash, lineDeliveryPlanId, parseDeliveryBatchStates, parseLineDeliveryPlan, type DeliveryPlanV2 } from '../domain/logic/line-delivery-plan.logic';
+import { LINE_RECENT_CAPTURE_WINDOW_MS } from '../../expenses/application/services/line-recent-capture';
 
 export type LineQuotedRecord = { tool: 'expense.get_detail' | 'reimbursement.get_detail' | 'voucher.get_detail' | 'counterparty.get_detail'; id: string };
 export type LineQuoteOwner = { companyId: string; userId: string; membershipId: string; chatKeyHash: string; channelId: string;
@@ -46,6 +47,22 @@ function sameOwner(saved: Record<string, unknown>, owner: LineQuoteOwner): boole
 @Injectable()
 export class LineQuotedMessageService {
   constructor(private readonly prisma: PrismaService) {}
+  async recentRecords(owner: LineQuoteOwner): Promise<LineQuotedRecord[]> {
+    const now = new Date();
+    const rows = await this.prisma.client.lineDeliveryPlan.findMany({ where: { companyId: owner.companyId, userId: owner.userId,
+      createdAt: { gte: new Date(now.getTime() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60_000) }, purgeAt: { gt: now },
+      planJson: { path: ['authorization', 'actor', 'chatKeyHash'], equals: owner.chatKeyHash } }, orderBy: { createdAt: 'desc' }, take: 50,
+      select: { planJson: true, planHash: true, batchStateJson: true } });
+    for (const row of rows) {
+      const plan = parseLineDeliveryPlan(row.planJson);
+      if (!plan || row.planHash !== deliveryHash(plan) || plan.authorization.kind !== 'PRIVATE'
+        || !sameOwner(plan.authorization.actor, owner)
+        || !parseDeliveryBatchStates(row.batchStateJson, plan)?.every(state => state.status === 'ACCEPTED')) continue;
+      const records = quoteRecordsFromPlan(plan);
+      if (records.length) return records;
+    }
+    return [];
+  }
   /** The latest delivered claim read or draft receipt supplies a follow-up locator, never financial facts. */
   async recentReimbursementDraft(owner: LineQuoteOwner): Promise<LineQuotedRecord[]> {
     const now = new Date();
@@ -99,6 +116,31 @@ export class LineQuotedMessageService {
         return validQuoteRecords(sent ? sent.records : quote.records);
       }
     }
-    return [];
+    const expense = await this.prisma.client.expenseRecord.findFirst({ where: {
+      companyId: owner.companyId, createdByUserId: owner.userId, captureSource: 'LINE_UPLOAD',
+      createdAt: { gte: new Date(now.getTime() - LINE_RECENT_CAPTURE_WINDOW_MS) },
+      AND: [
+        { sourceChannelMetadataJson: { path: ['chatKeyHash'], equals: owner.chatKeyHash } },
+        { sourceChannelMetadataJson: { path: ['lineMessageId'], equals: quotedMessageId } },
+      ],
+    }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { id: true } });
+    if (expense) return [{ tool: 'expense.get_detail', id: expense.id }];
+
+    const event = await this.prisma.client.lineWebhookEventLog.findFirst({ where: {
+      lineMessageId: quotedMessageId, companyId: owner.companyId, createdAt: { gte: since },
+    }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { webhookEventId: true } });
+    if (!event) return [];
+    const planId = lineDeliveryPlanId('WEBHOOK', deliveryHash(['line-outcome-v2', event.webhookEventId]));
+    const row = await this.prisma.client.lineDeliveryPlan.findUnique({ where: { id: planId, companyId: owner.companyId,
+      userId: owner.userId, purgeAt: { gt: now } }, select: { planJson: true, planHash: true, batchStateJson: true } });
+    const plan = row && parseLineDeliveryPlan(row.planJson);
+    if (plan && plan.planId === planId && row.planHash === deliveryHash(plan) && plan.authorization.kind === 'PRIVATE'
+      && sameOwner(plan.authorization.actor, owner)
+      && parseDeliveryBatchStates(row.batchStateJson, plan)?.every(state => state.status === 'ACCEPTED')) return quoteRecordsFromPlan(plan);
+
+    const outcome = await this.prisma.client.lineTurnOutcome.findUnique({ where: { webhookEventId: event.webhookEventId,
+      companyId: owner.companyId, deliveredAt: { gte: since } }, select: { authorizationJson: true } });
+    const quote = (outcome?.authorizationJson as Record<string, unknown> | null)?.quote as Record<string, unknown> | undefined;
+    return quote && sameOwner(quote, owner) ? validQuoteRecords(quote.records) : [];
   }
 }

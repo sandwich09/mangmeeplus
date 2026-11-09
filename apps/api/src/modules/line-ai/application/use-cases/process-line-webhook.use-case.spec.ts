@@ -10908,24 +10908,134 @@ it('round 5A delivers only API-issued WHT catalog message buttons for this read 
 import { LineQuotedMessageService, quoteReadMemory, quoteRecordsFromPlan } from '../line-quoted-message.service';
 import { buildLineDeliveryPlan, deliveryHash, initialDeliveryBatchStates } from '../../domain/logic/line-delivery-plan.logic';
 
-function quotedDeliveryFixture() {
+function quotedDeliveryFixture(producerId = 'quoted-outcome') {
   const owner = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', chatKeyHash: 'quoted-chat', channelId: 'oa-1',
     recipientHash: 'recipient', accessFingerprint: 'fingerprint', conversationId: 'line-v2:conversation', ownerEpoch: 1 };
   const now = new Date(), expiresAt = new Date(now.getTime() + 600_000).toISOString();
-  const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'quoted-outcome', createdAt: now.toISOString(), readyAt: now.toISOString(), expiresAt,
+  const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId, createdAt: now.toISOString(), readyAt: now.toISOString(), expiresAt,
     firstDispatchDeadlineAt: new Date(now.getTime() + 40_000).toISOString(), control: null, businessResult: null,
     authorization: { v: 2, kind: 'PRIVATE', issuedAt: now.toISOString(), expiresAt, actor: { ...owner, requestId: 'original', channel: 'line', channelKind: 'USER' },
       proofs: [{ id: 'expense-source', kind: 'EXPENSE_REVISION', records: [{ id: 'quoted-draft', revision: now.toISOString() }] }] },
     answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: 'ร่างค่าใช้จ่ายค่ะ', required: true, sourceProofIds: ['expense-source'] }] } });
   const states = initialDeliveryBatchStates(plan); states[0] = { ...states[0]!, status: 'ACCEPTED', acceptedAt: now.toISOString(), sentMessageIds: ['bot-message'] };
   let saved: any;
-  const prisma: any = { client: { lineDeliveryPlan: { findMany: async ({ where }: any) => {
+  const prisma: any = { client: { expenseRecord: { findFirst: async () => null }, lineWebhookEventLog: { findFirst: async () => null }, lineDeliveryPlan: { findMany: async ({ where }: any) => {
     assert.ok(where.createdAt.gte instanceof Date); assert.ok(where.purgeAt.gt instanceof Date);
     return [{ planJson: plan, planHash: deliveryHash(plan), batchStateJson: states }];
   } }, lineTurnOutcome: { findMany: async () => [], findUnique: async () => ({ id: 'outcome', authorizationJson: { v: 1 } }),
     updateMany: async (input: any) => { saved = input.data.authorizationJson; return { count: 1 }; } } } };
   return { owner, plan, states, prisma, service: new LineQuotedMessageService(prisma), saved: () => saved };
 }
+
+describe('Round 29b own-message quoted replies', () => {
+  function ownQuoteFixture() {
+    const h = quotedDeliveryFixture(deliveryHash(['line-outcome-v2', 'original-text-event']));
+    const flow = makeUseCase(makePrisma().prisma).useCase as any;
+    flow.quoteOwner = () => h.owner;
+    flow.quotedMessages = h.service;
+    return { ...h, quoteEvent: (id: string) => flow.quotedRecordsForEvent({ ...BASE_EVENT, quotedMessageId: id }) };
+  }
+
+  it('resolves a text event quoting its own photo to the newest scanned expense ID only', async () => {
+    const h = ownQuoteFixture();
+    h.prisma.client.expenseRecord.findFirst = async ({ where, orderBy, select }: any) => {
+      assert.equal(where.companyId, h.owner.companyId);
+      assert.equal(where.createdByUserId, h.owner.userId);
+      assert.equal(where.captureSource, 'LINE_UPLOAD');
+      assert.ok(Math.abs(Date.now() - where.createdAt.gte.getTime() - 24 * 60 * 60_000) < 1_000);
+      assert.deepEqual(where.AND, [
+        { sourceChannelMetadataJson: { path: ['chatKeyHash'], equals: h.owner.chatKeyHash } },
+        { sourceChannelMetadataJson: { path: ['lineMessageId'], equals: 'own-photo' } },
+      ]);
+      assert.deepEqual(orderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
+      assert.deepEqual(select, { id: true });
+      return { id: 'own-scanned-expense' };
+    };
+    assert.deepEqual(await h.quoteEvent('own-photo'), [{ tool: 'expense.get_detail', id: 'own-scanned-expense' }]);
+  });
+
+  it('ignores the same photo ID from another chat, user or company and expired or non-LINE captures', async () => {
+    const h = ownQuoteFixture();
+    const originalOwner = { ...h.owner };
+    let lookups = 0;
+    h.prisma.client.expenseRecord.findFirst = async ({ where }: any) => {
+      lookups += 1;
+      const row = { companyId: originalOwner.companyId, createdByUserId: originalOwner.userId,
+        captureSource: 'LINE_UPLOAD', createdAt: new Date(), chatKeyHash: originalOwner.chatKeyHash };
+      return where.companyId === row.companyId && where.createdByUserId === row.createdByUserId
+        && where.AND[0].sourceChannelMetadataJson.equals === row.chatKeyHash ? { id: 'private-expense' } : null;
+    };
+    for (const field of ['chatKeyHash', 'userId', 'companyId'] as const) {
+      h.owner[field] = 'other';
+      assert.deepEqual(await h.quoteEvent('own-photo'), [], field);
+      h.owner[field] = originalOwner[field];
+    }
+    assert.equal(lookups, 3);
+    h.prisma.client.expenseRecord.findFirst = async ({ where }: any) => {
+      assert.equal(where.captureSource, 'LINE_UPLOAD');
+      assert.ok(where.createdAt.gte > new Date(Date.now() - 25 * 60 * 60_000));
+      return null;
+    };
+    assert.deepEqual(await h.quoteEvent('old-or-web-photo'), []);
+  });
+
+  it('resolves an earlier own text through its fully accepted, hash-valid answer plan', async () => {
+    const h = ownQuoteFixture();
+    h.prisma.client.lineWebhookEventLog.findFirst = async ({ where, select }: any) => {
+      assert.equal(where.lineMessageId, 'own-text');
+      assert.equal(where.companyId, h.owner.companyId);
+      assert.ok(where.createdAt.gte instanceof Date);
+      assert.deepEqual(select, { webhookEventId: true });
+      return { webhookEventId: 'original-text-event' };
+    };
+    let row = { planJson: h.plan, planHash: deliveryHash(h.plan), batchStateJson: h.states };
+    h.prisma.client.lineDeliveryPlan.findUnique = async ({ where }: any) => {
+      assert.equal(where.id, h.plan.planId);
+      assert.equal(where.companyId, h.owner.companyId);
+      assert.equal(where.userId, h.owner.userId);
+      assert.ok(where.purgeAt.gt instanceof Date);
+      return row;
+    };
+    assert.deepEqual(await h.quoteEvent('own-text'), [{ tool: 'expense.get_detail', id: 'quoted-draft' }]);
+    row = { ...row, planHash: 'tampered' };
+    assert.deepEqual(await h.quoteEvent('own-text'), []);
+    row = { planJson: h.plan, planHash: deliveryHash(h.plan), batchStateJson: initialDeliveryBatchStates(h.plan) };
+    assert.deepEqual(await h.quoteEvent('own-text'), []);
+    const multiBatchPlan = buildLineDeliveryPlan({ ...h.plan, answer: { ...h.plan.answer,
+      items: Array.from({ length: 6 }, () => ({ kind: 'answer', text: 'รายการค่ะ', required: true, sourceProofIds: ['expense-source'] })) } });
+    const states = initialDeliveryBatchStates(multiBatchPlan).map(state => ({ ...state, status: 'ACCEPTED' as const, acceptedAt: new Date().toISOString() }));
+    assert.equal(states.length, 2);
+    row = { planJson: multiBatchPlan, planHash: deliveryHash(multiBatchPlan), batchStateJson: states };
+    assert.deepEqual(await h.quoteEvent('own-text'), [{ tool: 'expense.get_detail', id: 'quoted-draft' }]);
+    row.batchStateJson[1]!.status = 'UNKNOWN';
+    assert.deepEqual(await h.quoteEvent('own-text'), []);
+  });
+
+  it('ignores an earlier text answer plan or legacy outcome belonging to another owner', async () => {
+    const h = ownQuoteFixture();
+    h.prisma.client.lineWebhookEventLog.findFirst = async () => ({ webhookEventId: 'original-text-event' });
+    h.prisma.client.lineDeliveryPlan.findUnique = async () => ({ planJson: h.plan, planHash: deliveryHash(h.plan), batchStateJson: h.states });
+    for (const field of ['companyId', 'userId', 'membershipId', 'chatKeyHash', 'channelId', 'recipientHash', 'accessFingerprint', 'conversationId', 'ownerEpoch'] as const) {
+      const owner = { ...h.owner, [field]: field === 'ownerEpoch' ? 2 : 'other' };
+      if (h.plan.authorization.kind === 'PRIVATE') h.plan.authorization.actor = { ...h.plan.authorization.actor, ...owner };
+      h.prisma.client.lineTurnOutcome.findUnique = async () => ({ authorizationJson: { quote: { ...owner, records: [{ tool: 'expense.get_detail', id: 'private-expense' }] } } });
+      assert.deepEqual(await h.quoteEvent('own-text'), [], field);
+    }
+  });
+
+  it('falls back from an earlier own text to its owner-bound legacy outcome IDs', async () => {
+    const h = ownQuoteFixture();
+    h.prisma.client.lineWebhookEventLog.findFirst = async () => ({ webhookEventId: 'legacy-text-event' });
+    h.prisma.client.lineDeliveryPlan.findUnique = async () => null;
+    h.prisma.client.lineTurnOutcome.findUnique = async ({ where }: any) => {
+      assert.equal(where.webhookEventId, 'legacy-text-event');
+      assert.equal(where.companyId, h.owner.companyId);
+      assert.ok(where.deliveredAt.gte instanceof Date);
+      return { authorizationJson: { quote: { ...h.owner, records: [{ tool: 'reimbursement.get_detail', id: 'legacy-claim' }] } } };
+    };
+    assert.deepEqual(await h.quoteEvent('own-text'), [{ tool: 'reimbursement.get_detail', id: 'legacy-claim' }]);
+  });
+});
 
 describe('Round 7A quoted replies', () => {
   it('resolves the accepted bot message to IDs only; drafts/claims/vouchers keep their record type', async () => {
@@ -20989,4 +21099,304 @@ it('R23 controller: a reject reason with an embedded "อะไร" opens the re
   const entry = await h.source.actions.store.load('company-1', key);
   assert.equal(entry?.preview.reason, 'ขาดข้อมูลว่าจะใช้ทำอะไร');
   assert.equal(entry?.preview.action, 'REIMBURSEMENT_REJECT');
+});
+
+async function r29FocusClaim(text: string, captureChat?: string, reason?: string) {
+  const claim = manualClaimHarness();
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma, { permissions: claim.ctx.permissions, config: { aiGatewayInternalSecret: 'secret', webBaseUrl: 'https://app.example.com' } });
+  const flow = h.useCase as any;
+  const event: any = { ...BASE_EVENT, webhookEventId: 'r29-focus-claim', messageText: text };
+  claim.owner.chatKeyHash = chatKeyHashOf(event);
+  flow.boundConversations.set(event, { owner: claim.owner, epoch: 1, id: 'line-v2:r29-conversation' });
+  flow.reimbursementAdapter = claim.adapter; flow.reimbursementDrafts = claim.service;
+  const source = claim.sources[0]!;
+  Object.assign(source, { label: 'ครัวบ้านนุ้ย', description: 'ค่าอาหาร', amount: '1670.00', eligible: !reason, reason });
+  const bill = { ...savedMediaFixture(source.expenseId), vendorNameSnapshot: 'ครัวบ้านนุ้ย', grandTotalAmount: '1670.00', netPayableAmount: '1670.00', status: reason ? 'CONFIRMED' : 'DRAFT' };
+  const queries: any[] = [];
+  flow.expenseRepo = { listRecentLineCaptures: async (input: any) => {
+    queries.push(input);
+    return input.chatKeyHash === (captureChat ?? claim.owner.chatKeyHash) && input.createdByUserId === claim.ctx.userId ? [bill] : [];
+  }, findByIdWithRelations: async () => bill };
+  flow.textEvidenceV2 = async () => (await createLineAiInputEvidence({ turnKey: deliveryHash(event.messageText), parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] }))!.inputEvidence;
+  const start = async (reference = 'none') => {
+    event.inputEvidence = await flow.textEvidenceV2(event);
+    return flow.startClassifiedWorkflow(event, claim.ctx, null, 'reimbursement_claim', { status: 'CLASSIFIED', slots: { reference } });
+  };
+  return { ...h, claim, flow, event, source, bill, queries, start, messages: () => JSON.stringify(h.sentMessages) };
+}
+
+it('R29 a recent capture links the bill at claim start and asks the reason', async () => {
+  const h = await r29FocusClaim('เบิกค่าใช้จ่ายร้านอาหารบิลเมื่อกี้ให้หน่อย');
+  await h.start();
+  assert.ok(h.claim.action().commandJson.accepted.proposal.lineChanges?.[0].values.linkedExpenseChoiceId);
+  assert.match(h.messages(), /เหตุผล|เพื่ออะไร/);
+  assert.doesNotMatch(h.messages(), /ขอรายละเอียดรายการ/);
+});
+
+it('R29 c a settled focus bill explains the refusal and links to that bill', async () => {
+  const h = await r29FocusClaim('เบิกบิลเมื่อกี้', undefined, 'reimbursement_source_already_settled');
+  await h.start();
+  assert.match(h.messages(), /บิลนี้ยืนยันหรือจ่ายเป็นค่าใช้จ่ายของร้านแล้ว จึงทำใบเบิกจากบิลนี้ไม่ได้ค่ะ/);
+  assert.match(h.messages(), /ครัวบ้านนุ้ย/); assert.match(h.messages(), /1,670.00/);
+  assert.match(h.messages(), /expenses\/source-expense/);
+  assert.doesNotMatch(h.messages(), /ขอรายละเอียดรายการ/);
+  assert.equal(h.claim.action().status, 'COLLECTING');
+});
+
+it('R29 e ยืนยันบิลเมื่อกี้ opens the captured bill preview among multiple targets', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+  h.source.records.forEach(row => row.status = 'READY_FOR_CONFIRMATION');
+  h.source.actions.repo.listRecentLineCaptures = async (input: any) => {
+    assert.equal(input.createdByUserId, h.source.ctx.userId); assert.equal(input.chatKeyHash, chatKeyHashOf(BASE_EVENT));
+    return [h.source.records[1]];
+  };
+  await h.execute('ยืนยันบิลเมื่อกี้');
+  assert.deepEqual(h.source.previewed, [h.source.records[1]!.id]);
+  assert.match(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+  assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /wf_open/);
+});
+
+it('R29 g a capture from another chat never supplies the claim line', async () => {
+  const h = await r29FocusClaim('เบิกบิลเมื่อกี้', 'another-chat');
+  await h.start();
+  assert.equal(h.queries.length, 1);
+  assert.equal(h.claim.action().commandJson.accepted.proposal.lineChanges?.[0]?.values.linkedExpenseChoiceId, undefined);
+  assert.match(h.messages(), /เลือกบิลที่จะเบิก/);
+});
+
+it('R29 b collecting ตามรายการบิลเมื่อกี้เลย links the captured bill before parsing a manual answer', async () => {
+  const h = await r29FocusClaim('สร้างใบเบิก'); await h.start();
+  h.event.messageText = 'ตามรายการบิลเมื่อกี้เลย';
+  assert.equal(await h.flow.continueReimbursementQuestion(h.event, h.claim.ctx), true);
+  assert.ok(h.claim.action().commandJson.accepted.proposal.lineChanges[0].values.linkedExpenseChoiceId);
+  assert.match(JSON.stringify(h.sentMessages.at(-1)), /เหตุผล|เพื่ออะไร/);
+  assert.doesNotMatch(JSON.stringify(h.sentMessages.at(-1)), /ขอรายละเอียดรายการ/);
+});
+
+it('R29 d without a recent capture the existing manual-details question is unchanged', async () => {
+  const h = await r29FocusClaim('เบิกบิลเมื่อกี้', 'no-capture'); h.claim.sources.splice(0);
+  await h.start();
+  assert.match(h.messages(), /ขอรายละเอียดรายการ จำนวนเงิน และวันที่สำรองจ่ายเพื่อทำใบเบิกต่อค่ะ/);
+  assert.equal(h.claim.action().commandJson.accepted.proposal.lineChanges?.[0]?.values.linkedExpenseChoiceId, undefined);
+});
+
+it('R29 f an ineligible recent bill shows its status and web exit instead of other targets', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+  h.source.records[1]!.status = 'CONFIRMED';
+  h.source.targets.expenses.execute = async (_ctx: any, filter: any) => {
+    const data = h.source.records.filter(row => !filter.status || row.status === filter.status);
+    return { data, total: data.length };
+  };
+  h.source.actions.repo.listRecentLineCaptures = async (input: any) => { assert.equal(input.includeAllStatuses, true); return [h.source.records[1]]; };
+  await h.execute('ยืนยันบิลเมื่อกี้');
+  const text = JSON.stringify(h.delivered.at(-1));
+  assert.match(text, /ยืนยันบิลนี้ในแชทไม่ได้ตอนนี้ค่ะ/); assert.match(text, /ร้านทดสอบ/); assert.match(text, /501.00/);
+  assert.match(text, /ยืนยันแล้ว/); assert.match(text, /expenses\/expense-company-c-10/);
+  // Only the focus bill is checked (its own card action refuses it); no other bill is offered or previewed.
+  assert.doesNotMatch(text, /wf_open/); assert.deepEqual(h.source.previewed, ['expense-company-c-10']);
+});
+
+it('R29 h ส่งใบเบิกเมื่อกี้ opens the newest claim created by this user in this chat', async t => {
+  const h = await r8ClaimPicker(t, 'reimbursement_submit');
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: 'reimbursement_submit', confidence: .99, secondLabel: 'none', secondConfidence: 0, slots: {} });
+  const queries: any[] = [];
+  h.prisma.client.reimbursementDraftAction = { findFirst: async (input: any) => { queries.push(input); return { requestId: 'c-7' }; } };
+  await h.execute('ส่งใบเบิกเมื่อกี้');
+  const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+  assert.equal(pending?.expenseId, 'c-7', JSON.stringify(h.delivered.at(-1)));
+  assert.match(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+  assert.equal(queries.length, 1);
+  assert.equal(queries[0].where.companyId, 'company-1'); assert.equal(queries[0].where.actorUserId, 'user-1');
+  assert.equal(queries[0].where.chatKeyHash, chatKeyHashOf(BASE_EVENT));
+  assert.deepEqual(queries[0].where.requestId, { not: null }); assert.equal(queries[0].where.operation, 'CREATE');
+  assert.equal(queries[0].where.status, 'APPLIED'); assert.ok(queries[0].where.updatedAt.gte > new Date(Date.now() - 86_401_000));
+  assert.deepEqual(h.source.writes, []);
+});
+
+async function r29QuoteService(flow: any, event: any, records: Array<{ tool: string; id: string }>, quotedRecords = records) {
+  const { LineQuotedMessageService } = await import('../line-quoted-message.service');
+  const currentAccess = await flow.permissionResolver.resolveAccess('user-1', 'company-1');
+  const access = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1',
+    fingerprint: resolvedLineDeliveryAccessFingerprint('user-1', 'company-1', currentAccess, null) };
+  if (!flow.deliveryAccess.has(event)) flow.deliveryAccess.set(event, access);
+  const owner = flow.quoteOwner(event);
+  const now = new Date(), expiresAt = new Date(now.getTime() + 60_000).toISOString();
+  const makeRow = (items: typeof records, id: string) => {
+    const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: id, createdAt: now.toISOString(), readyAt: now.toISOString(), expiresAt, firstDispatchDeadlineAt: expiresAt,
+      answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: 'บิลที่ส่งมา', required: true, sourceProofIds: [] }] }, control: null, businessResult: null,
+      authorization: { v: 2, kind: 'PRIVATE', actor: { ...owner, channel: 'line', channelKind: 'USER', requestId: 'r29-quote' }, issuedAt: now.toISOString(), expiresAt,
+        proofs: [{ id: 'quote', kind: 'QUOTE_REFERENCES', records: items }] } });
+    return { planJson: plan, planHash: deliveryHash(plan), batchStateJson: initialDeliveryBatchStates(plan).map(state => ({ ...state, status: 'ACCEPTED', acceptedAt: now.toISOString(), sentMessageIds: [id] })) };
+  };
+  const rows = [makeRow(records, 'newest-card'), makeRow(quotedRecords, 'receipt-card')];
+  const queries: any[] = [];
+  flow.quotedMessages = new LineQuotedMessageService({ client: { lineDeliveryPlan: { findMany: async (input: any) => { queries.push(input); return rows; } }, lineTurnOutcome: { findMany: async () => [] } } } as any);
+  return { rows, owner, queries };
+}
+
+it('R29 i replying to the receipt card picks that bill even with a newer capture', async () => {
+  for (const text of ['เบิกอันนี้', 'ช่วยเบิกให้หน่อย']) {
+    const h = await r29FocusClaim(text);
+    h.event.quotedMessageId = 'receipt-card';
+    h.flow.expenseRepo.listRecentLineCaptures = async () => [{ ...h.bill, id: 'newer-bill' }];
+    await r29QuoteService(h.flow, h.event, [{ tool: 'expense.get_detail', id: 'newer-bill' }], [{ tool: 'expense.get_detail', id: h.source.expenseId }]);
+    await h.start();
+    const linked = h.claim.action().commandJson.accepted.proposal.lineChanges[0].values.linkedExpenseChoiceId;
+    const choice = h.claim.action().commandJson.accepted.options.choices.find((row: any) => row.choiceId === linked);
+    assert.equal(choice.raw.expenseId, h.source.expenseId); assert.equal(h.queries.length, 0);
+  }
+});
+
+it('R29 j a last plan with three bills falls through to the recent capture', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: 'expense_confirm', confidence: .99, secondLabel: 'none', secondConfidence: 0, slots: {} });
+  h.source.records.forEach(row => row.status = 'READY_FOR_CONFIRMATION');
+  h.source.actions.repo.listRecentLineCaptures = async () => [h.source.records[1]];
+  const original = h.flow.recentFocus.bind(h.flow);
+  let reads = 0;
+  h.flow.recentFocus = async (event: any, ctx: any, kind: any) => {
+    const quote = await r29QuoteService(h.flow, event, h.source.records.slice(2).map(row => ({ tool: 'expense.get_detail', id: row.id })));
+    const result = await original(event, ctx, kind); reads += quote.queries.length;
+    return result;
+  };
+  await h.execute('ยืนยันอันนี้');
+  assert.ok(reads > 0); assert.deepEqual(h.source.previewed, [h.source.records[1]!.id]);
+});
+
+it('R29 recentRecords accepts only intact delivered plans for the exact owner and returns the latest records', async () => {
+  const h = await r29FocusClaim('เบิกบิลเมื่อกี้');
+  const quote = await r29QuoteService(h.flow, h.event, [{ tool: 'expense.get_detail', id: 'newest' }]);
+  assert.deepEqual(await h.flow.quotedMessages.recentRecords(quote.owner), [{ tool: 'expense.get_detail', id: 'newest' }]);
+  for (const changed of [{ companyId: 'other' }, { userId: 'other' }, { membershipId: 'other' }, { chatKeyHash: 'other' }, { accessFingerprint: 'other' }, { ownerEpoch: 2 }])
+    assert.deepEqual(await h.flow.quotedMessages.recentRecords({ ...quote.owner, ...changed }), []);
+  quote.rows.splice(1);
+  const row = quote.rows[0]!;
+  row.planHash = 'tampered'; assert.deepEqual(await h.flow.quotedMessages.recentRecords(quote.owner), []);
+  row.planHash = deliveryHash(row.planJson); row.batchStateJson.forEach(state => state.status = 'PENDING');
+  assert.deepEqual(await h.flow.quotedMessages.recentRecords(quote.owner), []);
+  const query = quote.queries[0].where;
+  assert.equal(query.userId, 'user-1'); assert.equal(query.planJson.equals, chatKeyHashOf(h.event));
+  assert.ok(query.createdAt.gte > new Date(Date.now() - 901_000));
+});
+
+it('R29 only classifier this adds a reference and existing manual amounts and linked bills are retained', async () => {
+  const classified = await r29FocusClaim('ช่วยทำใบเบิกให้หน่อย'); await classified.start('this');
+  assert.ok(classified.claim.action().commandJson.accepted.proposal.lineChanges[0].values.linkedExpenseChoiceId);
+  const shown = await r29FocusClaim('ช่วยทำใบเบิกให้หน่อย'); await shown.start('last_shown'); assert.equal(shown.queries.length, 0);
+  for (const existing of ['amount', 'linkedExpenseChoiceId']) {
+    const h = await r29FocusClaim('สร้างใบเบิก'); await h.start();
+    const value = existing === 'amount' ? { value: '300' } : 'saved-source';
+    h.claim.action().commandJson.accepted.proposal.lineChanges = [{ operation: 'ADD', values: { [existing]: value } }];
+    assert.equal(await h.claim.adapter.linkRecentSource({ ...h.claim.input, expenseId: h.source.expenseId }), null);
+    assert.deepEqual(h.claim.action().commandJson.accepted.proposal.lineChanges[0].values[existing], value);
+  }
+});
+
+it('R29 group and room chats never acquire a focus from captures or draft actions', async () => {
+  for (const channelKind of ['GROUP', 'ROOM']) {
+    const h = await r29FocusClaim('เบิกบิลเมื่อกี้'); h.event.channelKind = channelKind;
+    assert.equal(await h.flow.recentFocus(h.event, h.claim.ctx, 'expense'), undefined);
+    assert.equal(await h.flow.recentFocus(h.event, h.claim.ctx, 'reimbursement'), undefined);
+    assert.equal(h.queries.length, 0);
+  }
+});
+
+it('R29 a named amount takes precedence over the recent bill', async t => {
+  const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+  h.source.records.forEach(row => row.status = 'READY_FOR_CONFIRMATION');
+  h.source.actions.repo.listRecentLineCaptures = async () => assert.fail('a named amount must bypass focus selection');
+  await h.execute('ยืนยันบิลเมื่อกี้ ยอด 504 บาท');
+  assert.deepEqual(h.source.previewed, [h.source.records[4]!.id]);
+});
+
+it('R29 substitute receipt narrows its existing continuation to the focus bill', async t => {
+  const h = await r7OffPagePicker(t), continued: any[] = [];
+  h.flow.workflowTargets = h.source.targets;
+  h.source.targets.candidates = { execute: async () => ({ items: h.source.records, total: h.source.records.length }) };
+  h.source.actions.repo.listRecentLineCaptures = async () => [h.source.records[1]];
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: 'substitute_receipt', confidence: .99, secondLabel: 'none', secondConfidence: 0, slots: {} });
+  h.flow.substituteReceiptContinuation = { substituteContext: async () => ({ workflowState: 'none', hasPendingQuestion: false, preparedState: 'none', recentCandidateCount: 0 }),
+    execute: async (_ctx: any, input: any) => { continued.push(input); return { handled: true, status: 'BLOCKED', replyText: 'ใครจ่ายรายการนี้คะ' }; } };
+  h.flow.deliverSubstituteWorkflow = async () => {};
+  await h.execute('ทำใบรับรองแทนใบเสร็จบิลเมื่อกี้');
+  assert.equal(continued.length, 1); assert.deepEqual(continued[0].boundCandidateExpenseIds, [h.source.records[1]!.id]);
+  assert.equal(continued[0].confirmedStart, true); assert.equal(h.creates(), 0);
+});
+
+it('R29 every source refusal names the bill and manual collection remains open', async () => {
+  for (const [reason, sentence] of [
+    ['expense_already_claimed', 'บิลนี้อยู่ในใบเบิกอื่นแล้วค่ะ'],
+    ['reimbursement_source_tax_review_required', 'บิลนี้ต้องให้ผู้ตรวจรายจ่ายตรวจ VAT หรือหัก ณ ที่จ่ายก่อนค่ะ'],
+    ['reimbursement_source_fields_mismatch', 'บิลนี้ข้อมูลยังไม่ครบ แก้วันที่หรือยอดในเว็บก่อนค่ะ'],
+    ['reimbursement_source_unavailable', 'ทำใบเบิกจากบิลนี้ในแชทไม่ได้ค่ะ'],
+  ]) {
+    const h = await r29FocusClaim('เบิกบิลเมื่อกี้', undefined, reason); await h.start();
+    assert.ok(h.messages().includes(sentence!)); assert.match(h.messages(), /ครัวบ้านนุ้ย/); assert.match(h.messages(), /expenses\/source-expense/);
+    assert.doesNotMatch(h.messages(), /ขอรายละเอียดรายการ/); assert.equal(h.claim.action().status, 'COLLECTING');
+    h.event.messageText = 'ค่ารถ 300 บาท วันนี้';
+    assert.equal(await h.flow.continueReimbursementQuestion(h.event, h.claim.ctx), true);
+    const values = h.claim.action().commandJson.accepted.proposal.lineChanges[0].values;
+    assert.equal(values.amount.value, '300'); assert.equal(values.linkedExpenseChoiceId, undefined);
+  }
+});
+
+it('R29 expense actions retain their existing preview or field collection for the focus bill', async t => {
+  for (const [workflow, text, status] of [
+    ['expense_submit', 'ส่งตรวจบิลเมื่อกี้', 'DRAFT'], ['expense_delete', 'ลบร่างบิลเมื่อกี้', 'DRAFT'],
+    ['expense_void', 'ยกเลิกบิลเมื่อกี้', 'CONFIRMED'], ['expense_pay', 'บันทึกจ่ายบิลเมื่อกี้', 'CONFIRMED'],
+    ['payment_voucher', 'ทำใบเตรียมจ่ายจากบิลเมื่อกี้', 'CONFIRMED'],
+  ]) {
+    const h = await r7OffPagePicker(t); h.flow.workflowTargets = h.source.targets;
+    h.source.records.forEach(row => row.status = status!);
+    h.source.actions.repo.listRecentLineCaptures = async () => [h.source.records[1]];
+    h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: workflow, confidence: .99, secondLabel: 'none', secondConfidence: 0, slots: {} });
+    await h.execute(text);
+    const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+    assert.equal(pending?.expenseId, h.source.records[1]!.id, `${workflow}: ${JSON.stringify(h.delivered.at(-1))}`);
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /wf_open/);
+    assert.equal(h.creates(), 0);
+  }
+});
+
+it('R29 cancel uses a focused claim while approver workflows keep their pickers', async t => {
+  for (const workflow of ['reimbursement_cancel', 'approvals', 'reimbursement_reject', 'reimbursement_pay']) {
+    const h = await r8ClaimPicker(t, workflow);
+    if (workflow === 'reimbursement_pay') {
+      h.source.ctx.permissions.push('reimbursement.payment.record');
+      h.source.claims.forEach(claim => claim.status = 'APPROVED');
+    }
+    h.flow.quotedMessages = { recentRecords: async () => [{ tool: 'reimbursement.get_detail', id: 'c-7' }] };
+    h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: workflow, confidence: .99, secondLabel: 'none', secondConfidence: 0, slots: { reference: 'this' } });
+    await h.execute(workflow === 'reimbursement_cancel' ? 'ยกเลิกใบเบิกเมื่อกี้' : workflow === 'approvals' ? 'อนุมัติใบเบิกเมื่อกี้' : workflow === 'reimbursement_reject' ? 'ไม่อนุมัติใบเบิกเมื่อกี้' : 'จ่ายคืนใบเบิกเมื่อกี้');
+    const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+    if (workflow === 'reimbursement_cancel') assert.equal(pending?.expenseId, 'c-7');
+    else { assert.equal(pending, null); assert.match(JSON.stringify(h.delivered.at(-1)), /wf_open|ไม่มีใบเบิก/); }
+    assert.deepEqual(h.source.writes, []);
+  }
+});
+
+it('R29 bound webhook carries a scanned bill through both claim entry and collecting follow-up', async t => {
+  for (const followUp of [false, true]) {
+    const h = await r7OffPagePicker(t), claim = manualClaimHarness();
+    claim.owner.chatKeyHash = chatKeyHashOf(BASE_EVENT);
+    h.source.ctx.permissions.push(...claim.ctx.permissions);
+    h.flow.reimbursementAdapter = claim.adapter; h.flow.reimbursementDrafts = claim.service;
+    const bill = h.source.records[1]!;
+    Object.assign(bill, { vendorNameSnapshot: 'ครัวบ้านนุ้ย', grandTotalAmount: '1670.00' });
+    Object.assign(claim.sources[0]!, { expenseId: bill.id, label: 'ครัวบ้านนุ้ย', description: 'ค่าอาหาร', amount: '1670.00' });
+    h.source.actions.repo.listRecentLineCaptures = async (input: any) => {
+      assert.equal(input.createdByUserId, claim.ctx.userId); assert.equal(input.chatKeyHash, claim.owner.chatKeyHash);
+      return [bill];
+    };
+    h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: 'reimbursement_claim', confidence: .99, secondLabel: 'none', secondConfidence: 0, slots: {} });
+    await h.execute(followUp ? 'สร้างใบเบิก' : 'เบิกค่าใช้จ่ายร้านอาหารบิลเมื่อกี้ให้หน่อย');
+    if (followUp) await h.execute('ตามรายการบิลเมื่อกี้เลย');
+    const accepted = claim.action().commandJson.accepted;
+    const linked = accepted.proposal.lineChanges[0].values.linkedExpenseChoiceId;
+    assert.equal(accepted.options.choices.find((choice: any) => choice.choiceId === linked).raw.expenseId, bill.id);
+    const delivered = JSON.stringify(h.delivered.at(-1));
+    assert.match(delivered, /เหตุผล|เพื่ออะไร/); assert.doesNotMatch(delivered, /ขอรายละเอียดรายการ/);
+    assert.equal(claim.action().status, 'COLLECTING'); assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0);
+  }
 });

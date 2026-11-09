@@ -1911,6 +1911,7 @@ model LineAiTaskRun {
 model LineWebhookEventLog {
   id             String    @id @default(cuid())
   webhookEventId String    @unique
+  lineMessageId  String?   @db.VarChar(200)
   companyId      String?
   lineUserIdHash String?
   eventType      String
@@ -1932,6 +1933,7 @@ model LineWebhookEventLog {
 
   @@index([companyId, createdAt])
   @@index([lineUserIdHash])
+  @@index([lineMessageId])
   @@index([status, createdAt])
   @@index([createdAt])
   budgetAuthorityJson Json?

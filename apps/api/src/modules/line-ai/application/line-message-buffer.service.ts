@@ -326,6 +326,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       await this.prisma.client.lineWebhookEventLog.create({
         data: {
           webhookEventId,
+          lineMessageId: typeof envelope.item.lineMessageId === 'string' && /^[A-Za-z0-9_-]{1,200}$/u.test(envelope.item.lineMessageId) ? envelope.item.lineMessageId : null,
           lineUserIdHash: hashMessagePreview(envelope.lineUserId),
           eventType: 'message',
           ...claimed,
@@ -412,6 +413,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       await this.prisma.client.lineWebhookEventLog.create({
         data: {
           webhookEventId,
+          lineMessageId: typeof envelope.item.lineMessageId === 'string' && /^[A-Za-z0-9_-]{1,200}$/u.test(envelope.item.lineMessageId) ? envelope.item.lineMessageId : null,
           lineUserIdHash: hashMessagePreview(envelope.lineUserId),
           eventType: 'message',
           status: 'received',

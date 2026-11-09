@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "413d9f1601357df171f3d45e1ee92a16115daa65",
+  "sourceRevision": "1ec1c92851eed0020414e4799bd77af0ac1fc227",
   "checkoutBranch": null,
   "checkoutDirty": true,
   "sourceHashes": [
@@ -53,11 +53,11 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-message-buffer.service.ts",
-      "sha256": "a48efd74cd4449ea4bde100409515c7bfd55aa1aab5135d2bbcb28fab27c563a"
+      "sha256": "3a9802de07c53a3245d75055eae7630b4b70f20d89d909a53c619d93c4133608"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-quoted-message.service.ts",
-      "sha256": "b877105abc6a0c8368762d8ee92ed6ed34629033ccae4d1e8df5cf740aca1ab3"
+      "sha256": "485ad614257ef2a0b12eca33aeead2f10f8216c707e739fe5c5a0e0ccc8c0b89"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "9b0f188cfcf2fc157a4ccb06e4365bd75d12798e7a47199d6f63d5de297f2986"
+      "sha256": "be3fcc83344f50298ae71cee45a93263c13593b8fdc6939bf07c92dad43bf232"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -10295,6 +10295,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-09T01:57:11.050Z",
-  "manifestDigest": "fe4ea43d02a7fbf58cfd0475c8e3a79e098f5c2901effc4ea3ec11024bcc0c54"
+  "generatedAt": "2026-11-09T16:02:13.082Z",
+  "manifestDigest": "366f7c0efd0dc717e177f7b40e97e44d43edddea3b12ac2c15aece9af7c8487a"
 }
