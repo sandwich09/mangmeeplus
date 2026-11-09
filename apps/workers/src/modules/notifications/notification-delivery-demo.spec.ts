@@ -1,6 +1,6 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
-import { processLineDelivery } from './notification-delivery-adapters';
+import { processLineDelivery } from './notification-delivery-adapters.js';
 
 it('worker drops DEMO company/channel/target before credentials or fetch; real delivery remains', async () => {
   const original = globalThis.fetch; let calls = 0;

@@ -39,7 +39,7 @@ function fixture(options: { recipientEmail?: string | null; changeRow?: Row; com
       },
       update: async ({ data }: Row) => Object.assign(account, data),
     },
-    company: { findUniqueOrThrow: async () => company },
+    company: { findUniqueOrThrow: async () => company, findUnique: async () => company },
     companyMembership: { findMany: async () => members },
     emailSendAttempt: {
       findFirst: async ({ where }: Row) => where.id === notice.id && where.intentKey === notice.intentKey ? notice : null,
