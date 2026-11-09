@@ -1148,7 +1148,7 @@ describe('accountant-v2 scoped reads and filing coverage', () => {
     assert.equal(result.withholdingRowCount, 2); assert.equal(result.paymentRowCount, 2);
     const xml = h.workbook(Buffer.from(result.indexXlsxBase64, 'base64'));
     assert.equal((xml.match(/<v>500<\/v>/g) ?? []).length, 2); assert.equal((xml.match(/<v>15<\/v>/g) ?? []).length, 2);
-    assert.match(xml, /ยังไม่ยื่น · ข้อมูลครบตามแบบ/);
+    assert.match(xml, /ยังไม่ยื่น ข้อมูลครบตามแบบ/);
     const main = await h.useCase.execute(h.context, { yearMonth: '2026-09', expenseIds: ['A'] });
     assert.match(h.workbook(Buffer.from(main.indexXlsxBase64, 'base64')), /2 ต.ค. 2569/);
     const moved = fixture({ moved: true });
@@ -1159,7 +1159,7 @@ describe('accountant-v2 scoped reads and filing coverage', () => {
     for (const options of [{ open: true, unknown: true }, { open: true, foreign: true }]) {
       const h = fixture(options); const result = await h.useCase.execute(h.context, { yearMonth: '2026-10', expenseIds: ['A'] });
       const xml = h.workbook(Buffer.from(result.indexXlsxBase64, 'base64'));
-      assert.match(xml, /ยังไม่ยื่น · ต้องตรวจ:/); assert.match(xml, options.unknown ? /ยังไม่รู้ว่า/ : /ไม่ได้ใช้สกุลเงินของร้าน/);
+      assert.match(xml, /ยังไม่ยื่น ต้องตรวจ /); assert.match(xml, options.unknown ? /ยังไม่รู้ว่า/ : /ไม่ได้ใช้สกุลเงินของร้าน/);
     }
   });
   it('both WHT reads use exactly loaded IDs, including empty selections and explicit pages', async () => {
@@ -1201,7 +1201,7 @@ describe('accountant-v2 scoped reads and filing coverage', () => {
       const result = await h.useCase.execute(h.context, { yearMonth: '2026-10', expenseIds: ['A'] });
       assert.equal(result.rowCount, 0); assert.equal(result.paymentRowCount, 1); assert.equal(result.withholdingRowCount, 1);
       const xml = h.workbook(Buffer.from(result.indexXlsxBase64, 'base64'));
-      assert.match(xml, options.invalid ? /ยังไม่ยื่น · ต้องตรวจ:/ : options.locked ? /งวดปิดแล้ว ตรวจกับแบบที่ยื่น/ : /ยังไม่ยื่น · ข้อมูลครบตามแบบ/);
+      assert.match(xml, options.invalid ? /ยังไม่ยื่น ต้องตรวจ / : options.locked ? /งวดปิดแล้ว ตรวจกับแบบที่ยื่น/ : /ยังไม่ยื่น ข้อมูลครบตามแบบ/);
       if (options.external) assert.match(xml, /EXT-7/);
       assert.match(xml, /ดอลลาร์สหรัฐ/); assert.match(xml, /ภ.ง.ด.2/); assert.doesNotMatch(xml, /พร้อมยื่น|posting_status|journal_entry_number|เลขที่ใบสำคัญจ่าย/);
       assert.ok(h.audits.every(entry => entry.metadataJson.workbook === 'accountant-v2'));
@@ -1646,7 +1646,7 @@ describe('accountant evidence bundle', () => {
     const xml = [...workbookParts(entries.get('สารบัญ.xlsx')!).values()].join('');
     assert.match(xml, /ฉบับเดิม \(มีฉบับใหม่แทนแล้ว\)/); assert.match(xml, /ยกเลิกแล้ว \(ไม่มีฉบับใหม่\)/);
     assert.match(xml, /ผู้สำรองจ่าย/); assert.match(xml, /SR-3/);
-    assert.equal((xml.match(/HYPERLINK\(&quot;ใบรับรองแทนใบเสร็จ\/EXP-1-3.jpg/g) ?? []).length, 4, 'primary file, current file and both replacement links point to the terminal');
+    assert.equal((xml.match(/Target="ใบรับรองแทนใบเสร็จ\/EXP-1-3.jpg"/g) ?? []).length, 3, 'current file and both replacement links point to the terminal');
     const index = await useCase.execute(reader, { yearMonth: '2026-10' });
     assert.match(index.indexCsv, /ใบรับรองแทนใบเสร็จ\/EXP-1-1.jpg/); assert.doesNotMatch(index.indexCsv, /ฉบับเดิม.jpg/);
   });
@@ -1695,12 +1695,11 @@ describe('accountant evidence bundle', () => {
     assert.deepEqual([...unzip(first.bytes).keys()], ['เอกสารค่าใช้จ่าย/EXP-060-1.jpg', ...Array.from({ length: 59 }, (_, i) => `ชุดเอกสารรายการ/EXP-${String(i).padStart(3, '0')}.pdf`), 'สารบัญ.xlsx']);
     const xml = [...workbookParts(unzip(first.bytes).get('สารบัญ.xlsx')!).values()].join('');
     assert.match(xml, /อยู่ในชุดที่ 1:/);
-    const formulas = xml.match(/<f>.*?<\/f>/g) ?? [];
-    const fileFormulas = formulas.filter(formula => !formula.includes('&quot;#'));
-    assert.ok(fileFormulas.length > 0);
-    for (const formula of fileFormulas.filter(formula => formula.includes('เอกสารค่าใช้จ่าย/'))) { assert.ok(formula.includes('EXP-060')); assert.ok(!formula.includes('EXP-000')); }
-    assert.ok(fileFormulas.some(formula => formula.includes('ชุดเอกสารรายการ/EXP-000.pdf')));
-    for (const formula of formulas.filter(formula => formula.includes('&quot;#'))) assert.match(formula, /HYPERLINK\(&quot;#'/);
+    const fileLinks = [...xml.matchAll(/\/hyperlink" Target="([^"]*)" TargetMode="External"/g)].map(match => match[1]!);
+    assert.ok(fileLinks.length > 0);
+    for (const link of fileLinks.filter(link => link.includes('เอกสารค่าใช้จ่าย/'))) { assert.ok(link.includes('EXP-060')); assert.ok(!link.includes('EXP-000')); }
+    assert.ok(fileLinks.some(link => link.includes('ชุดเอกสารรายการ/EXP-000.pdf')));
+    for (const location of xml.match(/location="[^"]*"/g) ?? []) assert.match(location, /^location="'/);
   });
   it('checks export/read permission and branch scope before planning or downloading', async () => {
     const { useCase, queries } = fixture([]);
@@ -2150,6 +2149,20 @@ it('PWS-HISTORY-FREE-ACCESS preserves source-draft own, branch and tenant gates 
   }
 });
 
+/** Rows of one titled table on the month summary sheet, keyed by its header; `_label` is the first column. */
+function summaryTable(rows: string[][], heading: string): Array<Record<string, string> & { _label: string }> {
+  const start = rows.findIndex(row => row[0]?.startsWith(heading));
+  if (start < 0) return [];
+  const header = rows[start + 1]!, out: Array<Record<string, string> & { _label: string }> = [];
+  for (const row of rows.slice(start + 2)) {
+    if (!row.length) break;
+    out.push({ ...Object.fromEntries(header.map((label, index) => [label, row[index] ?? ''])), _label: row[0]! });
+  }
+  return out;
+}
+const summaryOverview = (rows: string[][]) => new Map(summaryTable(rows, 'ภาพรวมรายจ่ายที่เลือก').map(row => [row._label, Object.entries(row).slice(1, -1).map(([, value]) => value)]));
+const summaryWht = (rows: string[][]) => summaryTable(rows, 'หัก ณ ที่จ่ายตามวันที่จ่าย');
+const inRangeWht = (rows: string[][]) => summaryWht(rows).filter(row => !row._label.includes('นอกช่วง') && !row._label.startsWith('ธนาคาร') && !row._label.startsWith('ส่วนต่าง'));
 function packV2Workbook(bytes: Buffer): Map<string, string[][]> {
   const files = new Map<string, string>();
   for (let offset = 0; bytes.readUInt32LE(offset) === 0x04034b50;) {
@@ -2193,19 +2206,19 @@ describe('pack v2 workbookProjection integration', () => {
     const h = fixture(), result = await h.project(), sheets = packV2Workbook(result.data);
     assert.deepEqual([...sheets.keys()].slice(0, 3), ['ต้องตามเอกสาร', 'สรุปรายเดือน', 'รายการค่าใช้จ่าย']);
     const summary = sheets.get('สรุปรายเดือน')!;
-    const total = summary.find(row => row[0] === 'รายจ่ายที่เลือก')!;
+    const total = summaryOverview(summary);
     const expenses = sheets.get('รายการค่าใช้จ่าย')!;
-    for (const [index, label] of [[3, 'มูลค่าก่อน VAT'], [4, 'VAT'], [5, 'ยอดรวมตามเอกสาร'], [6, 'หัก ณ ที่จ่าย (ทั้งเอกสาร)'], [7, 'ยอดจ่ายสุทธิ'], [8, 'จ่ายแล้ว'], [9, 'ค้างจ่าย']] as const) {
-      assert.equal(Number(total[index]), Number(expenses[1]![expenses[0]!.indexOf(label)]), label);
+    for (const label of ['มูลค่าก่อน VAT', 'VAT', 'ยอดรวมตามเอกสาร', 'หัก ณ ที่จ่าย (ทั้งเอกสาร)', 'ยอดจ่ายสุทธิ', 'จ่ายแล้ว', 'ค้างจ่าย']) {
+      assert.equal(Number(total.get(label)![0]), Number(expenses[1]![expenses[0]!.indexOf(label)]), label);
     }
-    for (const kind of ['แยกตามหมวด', 'แยกตาม VAT']) {
-      for (const index of [3, 4]) assert.equal(summary.filter(row => row[0] === kind).reduce((sum, row) => sum + Number(row[index]), 0).toFixed(2), Number(total[index]).toFixed(2));
+    for (const heading of ['แยกตามหมวดค่าใช้จ่าย', 'แยกตาม VAT']) {
+      for (const label of ['มูลค่าก่อน VAT', 'VAT']) assert.equal(summaryTable(summary, heading).filter(row => row._label !== 'รวม').reduce((sum, row) => sum + Number(row[label]), 0).toFixed(2), Number(total.get(label)![0]).toFixed(2));
     }
-    const wht = summary.filter(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' || row[0] === 'หัก ณ ที่จ่ายจากรายจ่ายนอกช่วงเอกสาร');
+    const wht = summaryWht(summary).filter(row => !row._label.startsWith('ธนาคาร') && !row._label.startsWith('ส่วนต่าง'));
     const sheetWht = sheets.get('หัก ณ ที่จ่าย')!;
-    assert.equal(wht.reduce((sum, row) => sum + Number(row[6]), 0), Number(sheetWht[1]![sheetWht[0]!.indexOf('ภาษีที่หัก')]));
+    assert.equal(wht.reduce((sum, row) => sum + Number(row['ภาษีที่หัก']), 0), Number(sheetWht[1]![sheetWht[0]!.indexOf('ภาษีที่หัก')]));
     const purchase = sheets.get('รายงานภาษีซื้อ')!.find(row => row[2] === 'INV-1')!;
-    assert.equal(Number(summary.find(row => row[0] === 'ภาษีซื้อในรายงาน')![4]), Number(purchase[8]));
+    assert.equal(Number(summaryTable(summary, 'รายงานภาษีซื้อ').find(row => row._label === 'อยู่ในรายงานภาษีซื้อ')!.VAT), Number(purchase[8]));
     assert.ok(h.lineQueries.every(query => query.where.companyId === 'shop' && JSON.stringify(query.where.expenseId.in) === '["a"]'));
   });
   it('pack v2 uses document month and dated registration facts', async () => {
@@ -2232,23 +2245,23 @@ describe('pack v2 workbookProjection integration', () => {
     let sheets = packV2Workbook((await h.project()).data);
     let report = sheets.get('รายงานภาษีซื้อ')!.find(row => row[2] === 'INV-1')!;
     assert.equal(report[8], '7');
-    assert.equal(sheets.get('สรุปรายเดือน')!.find(row => row[0] === 'ภาษีซื้อในรายงาน')![4], '7');
-    assert.equal(sheets.get('สรุปรายเดือน')!.find(row => row[0] === 'ภาษีซื้อที่ไม่อยู่ในรายงาน')![4], '7');
+    assert.equal(summaryTable(sheets.get('สรุปรายเดือน')!, 'รายงานภาษีซื้อ').find(row => row._label === 'อยู่ในรายงานภาษีซื้อ')!.VAT, '7');
+    assert.equal(summaryTable(sheets.get('สรุปรายเดือน')!, 'รายงานภาษีซื้อ').find(row => row._label.startsWith('ไม่อยู่ในรายงาน'))!.VAT, '7');
     h.expense.vendorBranchCodeSnapshot = '';
     sheets = packV2Workbook((await h.project()).data);
     assert.ok(!sheets.get('รายงานภาษีซื้อ')!.some(row => row[2] === 'INV-1'));
-    const exclusions = sheets.get('สรุปรายเดือน')!.filter(row => row[0] === 'ภาษีซื้อที่ไม่อยู่ในรายงาน');
-    assert.equal(exclusions.reduce((sum, row) => sum + Number(row[4]), 0), 14);
+    const exclusions = summaryTable(sheets.get('สรุปรายเดือน')!, 'รายงานภาษีซื้อ').filter(row => row._label.startsWith('ไม่อยู่ในรายงาน'));
+    assert.equal(exclusions.reduce((sum, row) => sum + Number(row.VAT), 0), 14);
     h.expense.vendorBranchCodeSnapshot = '00000';
     h.expense.inputVatClaimStatus = 'NON_CLAIMABLE';
     sheets = packV2Workbook((await h.project()).data);
-    assert.ok(!sheets.get('สรุปรายเดือน')!.some(row => row[0] === 'ภาษีซื้อในรายงาน'));
+    assert.ok(!summaryTable(sheets.get('สรุปรายเดือน')!, 'รายงานภาษีซื้อ').some(row => row._label === 'อยู่ในรายงานภาษีซื้อ'));
   });
   it('pack v2 retains filed coverage before dates and bridges prior-document rows', async () => {
     const h = fixture();
     h.selectedIds.clear();
     let sheets = packV2Workbook((await h.project()).data);
-    assert.ok(sheets.get('สรุปรายเดือน')!.some(row => row[0] === 'หัก ณ ที่จ่ายจากรายจ่ายนอกช่วงเอกสาร' && row[6] === '1'));
+    assert.ok(summaryWht(sheets.get('สรุปรายเดือน')!).some(row => row._label.includes('นอกช่วง') && row['ภาษีที่หัก'] === '1'));
     h.selectedIds.add('a');
     const filed = { id: 'filed', sourceType: 'expense.record', sourceId: 'a', filing: { formType: 'PND53', periodKey: '2026-09' },
       lineJson: { payment: ['expense.record', 'a', '2026-09-15', 'b1', 'THB', '', '300', '3', '1', 'ชื่อที่ยื่น', '0123456789012', '00000', 'ที่อยู่ที่ยื่น'] } };
@@ -2260,7 +2273,7 @@ describe('pack v2 workbookProjection integration', () => {
     result = await h.project(); sheets = packV2Workbook(result.data);
     assert.equal(result.withholdingRowCount, 1);
     assert.ok(sheets.get('หัก ณ ที่จ่าย')!.flat().includes('ชื่อที่ยื่น'));
-    assert.ok(sheets.get('สรุปรายเดือน')!.some(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' && row[6] === '3'));
+    assert.ok(inRangeWht(sheets.get('สรุปรายเดือน')!).some(row => row['ภาษีที่หัก'] === '3'));
   });
   it('pack v2 reconciles rounded legacy money and keeps amount-only and mixed WHT rates distinct', async () => {
     const h = fixture();
@@ -2269,12 +2282,12 @@ describe('pack v2 workbookProjection integration', () => {
     h.live[0]!.whtRate = null as any;
     h.live.push({ ...h.live[0]!, sourceLineKey: 'payment:p:line:2', whtRate: '5', whtAmount: '2' });
     const sheets = packV2Workbook((await h.project()).data), summary = sheets.get('สรุปรายเดือน')!;
-    const total = summary.find(row => row[0] === 'รายจ่ายที่เลือก')!;
-    assert.deepEqual(total.slice(3, 6), ['100.01', '7.01', '107.01']);
-    assert.equal(summary.filter(row => row[0] === 'แยกตามหมวด').reduce((sum, row) => sum + Number(row[5]), 0).toFixed(2), '107.01');
-    assert.ok(summary.some(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' && row[1]!.includes('ยังไม่ระบุอัตรา')));
-    assert.ok(summary.some(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' && row[1]!.includes('5%')));
-    assert.equal(summary.filter(row => row[0] === 'หัก ณ ที่จ่ายในช่วง').reduce((sum, row) => sum + Number(row[6]), 0), 3);
+    const total = summaryOverview(summary);
+    assert.deepEqual(['มูลค่าก่อน VAT', 'VAT', 'ยอดรวมตามเอกสาร'].map(label => total.get(label)![0]), ['100.01', '7.01', '107.01']);
+    assert.equal(summaryTable(summary, 'แยกตามหมวดค่าใช้จ่าย').filter(row => row._label !== 'รวม').reduce((sum, row) => sum + Number(row['ยอดรวม']), 0).toFixed(2), '107.01');
+    assert.ok(inRangeWht(summary).some(row => row._label.includes('ยังไม่ระบุอัตรา')));
+    assert.ok(inRangeWht(summary).some(row => row._label.includes('5%')));
+    assert.equal(inRangeWht(summary).reduce((sum, row) => sum + Number(row['ภาษีที่หัก']), 0), 3);
   });
   it('pack v2 summary separates currency identity and PND2 PND3 PND53 groups', async () => {
     const h = fixture();
@@ -2284,23 +2297,23 @@ describe('pack v2 workbookProjection integration', () => {
     }
     h.db.whtIncomeCategory.findMany = async () => [{ code: 'PND2', nameTh: 'เงินได้บุคคล', filingRoute: 'SEPARATE_PND2' }];
     const sheets = packV2Workbook((await h.project()).data), summary = sheets.get('สรุปรายเดือน')!;
-    assert.equal(summary.filter(row => row[0] === 'รายจ่ายที่เลือก').length, 4);
-    for (const form of ['ภ.ง.ด.2', 'ภ.ง.ด.3', 'ภ.ง.ด.53']) assert.ok(summary.some(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' && row[1]!.startsWith(form)));
-    for (const code of ['ZZZ', 'QQQ']) assert.ok(summary.some(row => row[2] === `สกุลเงินอื่น (${code})`));
+    assert.equal(summaryOverview(summary).get('จำนวนรายการ')!.length, 4);
+    for (const form of ['ภ.ง.ด.2', 'ภ.ง.ด.3', 'ภ.ง.ด.53']) assert.ok(inRangeWht(summary).some(row => row._label.startsWith(form)));
+    for (const code of ['ZZZ', 'QQQ']) assert.ok(inRangeWht(summary).some(row => row['สกุลเงิน'] === `สกุลเงินอื่น (${code})`));
     const columns = sheets.get('หัก ณ ที่จ่าย')![0]!;
     const currencies = [...new Set(sheets.get('หัก ณ ที่จ่าย')!.slice(1).map(row => row[columns.indexOf('สกุลเงิน')]))];
     for (const currency of currencies) {
       const tax = sheets.get('หัก ณ ที่จ่าย')!.slice(1).filter(row => row[columns.indexOf('สกุลเงิน')] === currency).reduce((sum, row) => sum + Number(row[columns.indexOf('ภาษีที่หัก')]), 0);
-      assert.equal(summary.filter(row => row[0] === 'หัก ณ ที่จ่ายในช่วง' && row[2] === currency).reduce((sum, row) => sum + Number(row[6]), 0), tax);
+      assert.equal(inRangeWht(summary).filter(row => row['สกุลเงิน'] === currency).reduce((sum, row) => sum + Number(row['ภาษีที่หัก']), 0), tax);
     }
   });
   it('pack v2 separates document WHT payment WHT and e-WHT', async () => {
     const h = fixture('E_WHT'), result = await h.project(), sheets = packV2Workbook(result.data);
     assert.equal(result.withholdingRowCount, 0);
     assert.ok(!sheets.has('หัก ณ ที่จ่าย'));
-    assert.ok(sheets.get('สรุปรายเดือน')!.some(row => row[0] === 'e-WHT' && row[6] === '1'));
+    assert.ok(summaryWht(sheets.get('สรุปรายเดือน')!).some(row => row._label === 'ธนาคารนำส่ง (e-WHT)' && row['ภาษีที่หัก'] === '1'));
     assert.ok(!sheets.get('ต้องตามเอกสาร')!.some(row => row.join(' ').includes('50 ทวิ')));
-    assert.ok(sheets.get('เกี่ยวกับไฟล์นี้')!.some(row => row[1] === 'ไม่มีแถวในแผ่นหัก ณ ที่จ่าย'));
+    assert.ok(sheets.get('เกี่ยวกับไฟล์นี้')!.some(row => row[1] === 'ไม่มีรายการในแผ่นหัก ณ ที่จ่าย'));
   });
 });
 
@@ -2391,7 +2404,9 @@ describe('pack v2 packet sources', () => {
     const packets = contents.files.filter((file: any) => file.kind === 'recordPacks');
     assert.equal(packets.length, 1); assert.deepEqual(packets[0].expenseIds, ['B', 'A']);
     const text = await textPages(await packets[0].load());
-    assert.match(text[0]!, /VOUCHER/);
+    // The rendered cover comes first, then the voucher leads the evidence.
+    assert.ok(text.findIndex(page => page.includes('VOUCHER')) > 0);
+    assert.ok(text.findIndex(page => page.includes('VOUCHER')) < text.findIndex(page => page.includes('RECEIPT-B')));
     assert.ok(text.findIndex(page => page.includes('RECEIPT-B')) < text.findIndex(page => page.includes('RECEIPT-A')));
     assert.equal(text.filter(page => page.includes('SHARED')).length, 1);
     const partial = await (useCase as any).bundleContents(reader, { expenseIds: ['A'] });

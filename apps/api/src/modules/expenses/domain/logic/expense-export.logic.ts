@@ -22,7 +22,7 @@ import {
   type TaxEvidenceStatus,
 } from '@watchdog-bms/contracts';
 import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
-import { buildWorkbook, type WorkbookCell, type WorkbookSheet } from '../../../../common/export/xlsx.logic';
+import { buildWorkbook, columnName, type WorkbookCell, type WorkbookSheet } from '../../../../common/export/xlsx.logic';
 import { safeCsvCell } from '../../../../common/export/csv.logic';
 
 export function accountantWhtRemittance(amount: string, remittance?: WhtRemittance | null): string {
@@ -210,7 +210,7 @@ export function buildAccountantIndexRow(source: AccountantIndexSource): Accounta
     supporting_evidence_refs: supporting.map((a) => evidenceRef(source.expenseNumber, source.expenseId, a.id, source.captureGroupId)).join(','),
     web_url: source.webUrl,
     notes: [source.notes, expenseEvidenceImageMissing(source) ? EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL : '',
-      expenseEvidenceAssessment(source)?.note?.trim() ? `หมายเหตุ: ${expenseEvidenceAssessment(source)!.note!.trim()}` : ''].filter(Boolean).join(' · '),
+      expenseEvidenceAssessment(source)?.note?.trim() ? `หมายเหตุ: ${expenseEvidenceAssessment(source)!.note!.trim()}` : ''].filter(Boolean).join(', '),
     additional_charges_amount: source.additionalChargesAmount,
     // Spec §5.2: the accountant reads `document_date` beside this, so a placeholder can never pass
     // for a printed date in the one artefact that leaves the system.
@@ -283,7 +283,7 @@ export function vendorBranchLabel(code: string | null | undefined): string {
   return !code ? '' : code === '00000' ? 'สำนักงานใหญ่' : /^\d{5}$/.test(code) ? `สาขา ${code}` : 'ยังไม่ระบุ';
 }
 export function shopBranchLabel(branch: { name: string; isVatEstablishment?: boolean; taxBranchCode?: string | null }): string {
-  return [branch.name, branch.isVatEstablishment ? vendorBranchLabel(branch.taxBranchCode) : ''].filter(Boolean).join(' · ');
+  return branch.isVatEstablishment ? `${branch.name} (${vendorBranchLabel(branch.taxBranchCode)})` : branch.name;
 }
 export function accountantNotes(input: {
   dateStatus?: string; hasImage?: boolean; evidenceNote?: string | null; taxEvidenceStatus?: string | null;
@@ -291,16 +291,19 @@ export function accountantNotes(input: {
 }): string {
   return [input.dateStatus === 'implausible' ? 'วันที่เอกสารควรตรวจอีกครั้ง' : '', input.hasImage === false ? 'ยังไม่มีรูปเอกสาร' : '',
     input.evidenceNote ? `หมายเหตุ: ${input.evidenceNote}` : '', input.taxEvidenceStatus !== 'USABLE_FOR_TAX' ? input.taxEvidenceReason : '',
-    ['NON_CLAIMABLE', 'NEEDS_REVIEW'].includes(input.inputVatClaimStatus ?? '') && input.inputVatReason ? `สิทธิภาษีซื้อ: ${input.inputVatReason}` : ''].filter(Boolean).join(' · ');
+    ['NON_CLAIMABLE', 'NEEDS_REVIEW'].includes(input.inputVatClaimStatus ?? '') && input.inputVatReason ? `สิทธิภาษีซื้อ: ${input.inputVatReason}` : ''].filter(Boolean).join(', ');
+}
+/** Stored notes join their parts with a middle dot; accountant files list them with commas, as reports do. */
+export function exportNote(note: string | null | undefined): string {
+  return (note ?? '').split(/\s*·\s*/).map(part => part.trim()).filter(Boolean).join(', ');
 }
 export function primaryFileCell(file: AccountantWorkbookFile | undefined, currentPart: number): WorkbookCell {
   if (!file) return 'ไม่มีไฟล์';
   if (file.skippedReason) return `ไม่ได้รวม: ${file.skippedReason}`;
   if (!file.path || /^(?:[a-z]+:|[/\\])|(?:^|[/\\])\.\.(?:[/\\]|$)/i.test(file.path)) return 'ไม่มีไฟล์';
-  const display = file.path + (file.referenceReason ? ` · ${file.referenceReason}` : '');
+  const display = file.path + (file.referenceReason ? ` (${file.referenceReason})` : '');
   if (file.part !== currentPart) return `อยู่ในชุดที่ ${file.part}: ${display}`;
-  const escaped = file.path.replace(/"/g, '""');
-  return { value: display, formula: `HYPERLINK("${escaped}","${display.replace(/"/g, '""')}")` };
+  return { value: display, link: file.path, style: 15 };
 }
 export function paidAtLabel(paidAt: string | Date | null | undefined, confirmed = true): string {
   if (!paidAt) return '';
@@ -323,12 +326,14 @@ export function buildAccountantWorkbook(input: {
   const money = accountantMoney;
   const text = (value: unknown) => value == null ? '' : String(value);
   const date = (value: unknown) => value ? formatThaiExportDate(String(value)) : 'ยังไม่ระบุ';
-  const sheet = (name: string, columns: readonly string[], labels: Record<string, string>, entries: WorkbookCell[][]): WorkbookSheet => ({
-    name, freezeRows: 1, rows: [columns.map(column => labels[column]!), ...entries],
-  });
-  const expenseColumns: string[] = ACCOUNTANT_WORKBOOK_COLUMNS.filter(column => column !== 'primary_file' || bundled);
+  const sheet = (name: string, columns: readonly string[], labels: Record<string, string>, entries: WorkbookCell[][]): WorkbookSheet =>
+    accountantTable({ name, rows: [columns.map(column => labels[column]!), ...entries] }, columns.map(column => ACCOUNTANT_COLUMN_WIDTHS[column] ?? 18));
+  // In the ZIP each record has one PDF (cover, payment proof, documents); every row links there, right after its number.
+  const expenseColumns: string[] = ACCOUNTANT_WORKBOOK_COLUMNS.filter(column => column !== 'primary_file');
   if (visible.shopBranch) expenseColumns.splice(2, 0, 'shop_branch');
-  if (bundled) expenseColumns.push('record_files');
+  if (bundled) expenseColumns.splice(expenseColumns.indexOf('expense_number') + 1, 0, 'record_files');
+  const recordPdf = (expenseId: string | undefined) => primaryFileCell(files?.filter(file => file.kind === 'recordPacks' && file.expenseIds?.includes(expenseId ?? ''))
+    .sort((a, b) => a.path.localeCompare(b.path))[0], part);
   const expenseLabels = { ...ACCOUNTANT_WORKBOOK_COLUMN_LABELS, ...ACCOUNTANT_WORKBOOK_OPTIONAL_COLUMN_LABELS };
   const ordered = rows.slice().sort((a, b) => text(a.document_date).localeCompare(text(b.document_date)) || text(a.expense_number).localeCompare(text(b.expense_number)));
   const orderedPayments = payments.slice().sort((a, b) => text(a.paid_at).localeCompare(text(b.paid_at)));
@@ -346,11 +351,11 @@ export function buildAccountantWorkbook(input: {
     const target = expenseIndex >= 0 ? [ACCOUNTANT_WORKBOOK_SHEETS.expenses, expenseIndex + 2] : paymentIndex >= 0
       ? [ACCOUNTANT_WORKBOOK_SHEETS.payments, paymentIndex + 2] : withholdingIndex >= 0
         ? [ACCOUNTANT_WORKBOOK_SHEETS.withholding, withholdingIndex + 2] : [ACCOUNTANT_WORKBOOK_SHEETS.about, 1];
-    return [issue.expenseNumber, issue.message, { value: 'ดูรายการ', formula: `HYPERLINK("#'${target[0]}'!A${target[1]}","ดูรายการ")` }];
+    return [issue.expenseNumber, issue.message, { value: 'ดูรายการ', link: `#'${target[0]}'!A${target[1]}`, style: 15 }];
   });
   const sheets: WorkbookSheet[] = [
-    { name: ACCOUNTANT_WORKBOOK_SHEETS.followUp, freezeRows: 1, rows: [['เลขที่รายการ', 'สิ่งที่ต้องตาม', 'ดูรายการ'],
-      ...(issueRows.length ? issueRows : [['ไม่พบรายการที่ต้องตามเอกสารจากข้อมูลในไฟล์นี้']])] },
+    accountantTable({ name: ACCOUNTANT_WORKBOOK_SHEETS.followUp, rows: [['เลขที่รายการ', 'สิ่งที่ต้องตาม', 'ดูรายการ'],
+      ...(issueRows.length ? issueRows : [['ไม่พบรายการที่ต้องตามเอกสารจากข้อมูลในไฟล์นี้']])] }, [22, 64, 14], issueRows.length > 0),
     buildAccountantMonthSummary(groups, payments, withholding, input.bankRemitted ?? [], purchase),
     sheet(ACCOUNTANT_WORKBOOK_SHEETS.expenses, expenseColumns, expenseLabels, ordered.map(row => expenseColumns.map(column => {
     const value = row[column as keyof AccountantWorkbookRow];
@@ -367,21 +372,20 @@ export function buildAccountantWorkbook(input: {
     if (column === 'tax_evidence_status') return label(value, TAX_EVIDENCE_STATUS_LABELS);
     if (column === 'notes') {
       const packets = files?.filter(file => file.kind === 'recordPacks' && file.expenseIds?.includes(row.sourceExpenseId ?? '')) ?? [];
-      return [...new Set([accountantNotes({ dateStatus: row.dateStatus }), text(value), bundled && packets.length > 1 ? `มีชุดเอกสารรายการ ${packets.length} ชุด ดูแผ่นไฟล์ทั้งหมด` : ''].filter(Boolean))].join(' · ');
+      return [...new Set([accountantNotes({ dateStatus: row.dateStatus }), text(value), bundled && packets.length > 1 ? `มีชุดเอกสารรายการ ${packets.length} ชุด ดูแผ่นไฟล์ทั้งหมด` : ''].filter(Boolean))].join(', ');
     }
-    if (column === 'record_files') return primaryFileCell(files?.filter(file => file.kind === 'recordPacks' && file.expenseIds?.includes(row.sourceExpenseId ?? '')).sort((a, b) => a.path.localeCompare(b.path))[0], part);
-    if (column === 'primary_file') return primaryFileCell(row.primaryFile ?? files?.find(file => file.expenseNumber === row.expense_number && ['receipts', 'substituteReceipts'].includes(file.kind) && file.version !== 'superseded'), part);
+    if (column === 'record_files') return recordPdf(row.sourceExpenseId);
     return text(value);
   })))];
   if (payments.length) {
     const columns = ACCOUNTANT_PAYMENT_SHEET_COLUMNS.filter(column => (column !== 'voucher_numbers' || visible.vouchers) && (column !== 'payment_file' || bundled));
-    sheets.push(sheet(ACCOUNTANT_WORKBOOK_SHEETS.payments, columns, ACCOUNTANT_PAYMENT_SHEET_COLUMN_LABELS,
+    sheets.push(sheet(ACCOUNTANT_WORKBOOK_SHEETS.payments, columns, { ...ACCOUNTANT_PAYMENT_SHEET_COLUMN_LABELS, payment_file: ACCOUNTANT_WORKBOOK_OPTIONAL_COLUMN_LABELS.record_files },
       orderedPayments.map(row => columns.map(column => {
         if (column === 'paid_at') return paidAtLabel(text(row.paid_at), row.paidAtConfirmed);
         if (column === 'amount') return money(row.amount);
         if (column === 'currency') return accountantCurrencyLabel(text(row.currency));
         if (column === 'payment_method') return label(row.payment_method, EXPENSE_PAYMENT_METHOD_LABELS);
-        if (column === 'payment_file') return primaryFileCell(row.paymentFile, part);
+        if (column === 'payment_file') return recordPdf(row.sourceExpenseId);
         return text(row[column]);
       }))));
   }
@@ -396,7 +400,7 @@ export function buildAccountantWorkbook(input: {
         if (column === 'form_type') return ({ PND2: 'ภ.ง.ด.2', PND3: 'ภ.ง.ด.3', PND53: 'ภ.ง.ด.53' } as Record<string, string>)[text(row.form_type)] ?? 'ยังไม่ระบุ';
         if (column === 'income_type') return row.income_type ? text(row.income_type) : 'ยังไม่ระบุ';
         if (column === 'rate') return row.rate != null && row.rate !== '' && Number.isFinite(Number(row.rate)) ? Number(row.rate) : 'ยังไม่ระบุ';
-        if (column === 'status') return ({ FILED: 'ยื่นแล้ว', LOCKED: 'งวดปิดแล้ว ตรวจกับแบบที่ยื่น', READY: 'ยังไม่ยื่น · ข้อมูลครบตามแบบ', NEEDS_REVIEW: `ยังไม่ยื่น · ต้องตรวจ: ${(row.faults ?? []).join(' · ')}` } as Record<string, string>)[text(row.status)] ?? 'ยังไม่ระบุ';
+        if (column === 'status') return ({ FILED: 'ยื่นแล้ว', LOCKED: 'งวดปิดแล้ว ตรวจกับแบบที่ยื่น', READY: 'ยังไม่ยื่น ข้อมูลครบตามแบบ', NEEDS_REVIEW: `ยังไม่ยื่น ต้องตรวจ ${(row.faults ?? []).join(', ')}` } as Record<string, string>)[text(row.status)] ?? 'ยังไม่ระบุ';
         return text(row[column]);
       }))));
   }
@@ -404,7 +408,7 @@ export function buildAccountantWorkbook(input: {
   if (bundled && files?.length) {
     const multiple = new Set(files.map(file => file.part)).size > 1;
     const columns = ACCOUNTANT_FILES_SHEET_COLUMNS.filter(column => column !== 'part' || multiple);
-    const kinds = { receipts: 'เอกสารค่าใช้จ่าย', substituteReceipts: 'ใบรับรองแทนใบเสร็จ', paymentSlips: 'หลักฐานการจ่าย', vouchers: 'ใบสำคัญจ่าย', supportingFiles: 'เอกสารประกอบการจ่าย', whtCertificates: 'หนังสือรับรอง 50 ทวิ', claimForms: 'ใบเบิก', recordPacks: 'ชุดเอกสารรายการ' };
+    const kinds = { receipts: 'เอกสารค่าใช้จ่าย', substituteReceipts: 'ใบรับรองแทนใบเสร็จ', paymentSlips: 'หลักฐานการจ่าย', vouchers: 'ใบสำคัญจ่าย', supportingFiles: 'เอกสารประกอบการจ่าย', whtCertificates: 'หนังสือรับรอง 50 ทวิ', claimForms: 'ใบเบิก', recordPacks: 'เอกสารรายการ (PDF)' };
     sheets.push(sheet(ACCOUNTANT_WORKBOOK_SHEETS.files, columns, ACCOUNTANT_FILES_SHEET_COLUMN_LABELS, files.map(file => {
       const values: Record<string, WorkbookCell> = { expense_number: file.expenseNumber || 'ยังไม่มีเลขที่', kind: kinds[file.kind],
         version: file.kind !== 'substituteReceipts' ? '' : file.version === 'superseded' ? file.replacedBy ? 'ฉบับเดิม (มีฉบับใหม่แทนแล้ว)' : 'ยกเลิกแล้ว (ไม่มีฉบับใหม่)' : 'ฉบับที่ใช้อยู่',
@@ -415,16 +419,17 @@ export function buildAccountantWorkbook(input: {
   }
   const facts: Record<string, string | number> = { ...about,
     'จำนวนรายการ': rows.length, 'จำนวนการจ่าย': payments.length,
-    'การจ่ายที่ยังไม่ยืนยันวันที่': `${payments.filter(row => row.paidAtConfirmed === false).length} รายการ ไม่อยู่ในแผ่นหัก ณ ที่จ่าย`,
-    'หัก ณ ที่จ่าย': withholding.length ? `${withholding.length} แถว` : 'ไม่มีแถวในแผ่นหัก ณ ที่จ่าย',
+    'การจ่ายที่ยังไม่ยืนยันวันที่': payments.some(row => row.paidAtConfirmed === false)
+      ? `${payments.filter(row => row.paidAtConfirmed === false).length} รายการ ยังไม่ได้ใส่ในแผ่นหัก ณ ที่จ่ายจนกว่าจะยืนยันวันที่` : 'ไม่มี',
+    'หัก ณ ที่จ่าย': withholding.length ? `${withholding.length} รายการในแผ่นหัก ณ ที่จ่าย` : 'ไม่มีรายการในแผ่นหัก ณ ที่จ่าย',
     'สกุลเงิน': 'ยอดเงินเป็นสกุลตามคอลัมน์สกุลเงิน อย่ารวมต่างสกุล',
     'การตรวจไฟล์': bundled ? files?.some(file => file.part !== part) ? 'ไฟล์ชุดอื่นยังไม่ได้ตรวจในครั้งนี้' : 'ตรวจไฟล์ของชุดนี้แล้ว' : 'ไฟล์ต้นฉบับตรวจตอนดาวน์โหลดชุดเอกสาร',
     ...(sources.some(source => source.receiptCheckUnavailable) ? { 'ใบเสร็จจากใบเบิก': 'ข้อมูลเดิมบางรายการยังระบุไฟล์ใบเสร็จต้นทางไม่ได้' } : {}),
-    'ช่องว่าง': 'ช่องว่าง = ไม่มีข้อมูลนี้ในมั่งมี หรือไม่เกี่ยวกับรายการนี้ (เช่น รายการที่ไม่มีหัก ณ ที่จ่าย)',
+    'ช่องที่ว่าง': 'ไม่มีข้อมูลนี้ในมั่งมี หรือข้อมูลนี้ไม่เกี่ยวกับรายการนั้น เช่น รายการที่ไม่มีหัก ณ ที่จ่าย',
     ...(bundled ? { 'ชุดที่': part } : {}),
-    ...(bundled && files?.length ? { 'วิธีเปิดไฟล์': 'แตกไฟล์ ZIP ก่อน แล้วเปิดไฟล์นี้ในคอมพิวเตอร์ ลิงก์ในคอลัมน์ไฟล์จึงจะเปิดเอกสารได้' } : {}),
+    ...(bundled && files?.length ? { 'วิธีเปิดไฟล์': 'แตกไฟล์ ZIP ก่อน แล้วเปิดไฟล์นี้ในคอมพิวเตอร์ จากนั้นกดลิงก์ในคอลัมน์เอกสารรายการ (PDF) เพื่อเปิดเอกสารของแต่ละรายการ' } : {}),
   };
-  sheets.push({ name: ACCOUNTANT_WORKBOOK_SHEETS.about, rows: [['หัวข้อ', 'ค่า'], ...Object.entries(facts)], freezeRows: 1 });
+  sheets.push(accountantTable({ name: ACCOUNTANT_WORKBOOK_SHEETS.about, rows: [['หัวข้อ', 'ค่า'], ...Object.entries(facts)] }, [30, 90], false));
   return buildWorkbook(sheets);
 }
 
@@ -452,6 +457,25 @@ const decimalAmount = (value: MoneyValue | null | undefined) => new Decimal(Stri
 function accountantMoney(value: unknown): WorkbookCell {
   if (value == null || value === '') return '';
   return Number.isFinite(Number(value)) ? { value: decimalAmount(String(value)).toNumber(), style: 3 } : 'ยังไม่ระบุ';
+}
+/** Column widths in characters: short for dates and money, wide for names, notes and file paths. */
+const ACCOUNTANT_COLUMN_WIDTHS: Record<string, number> = {
+  document_date: 14, uploaded_at: 14, expense_number: 20, vendor_document_number: 18, source_document_type: 20, vendor_name: 32,
+  vendor_tax_id: 17, vendor_branch: 14, vendor_address: 40, category_name: 24, description: 32, currency: 10, taxable_amount: 15,
+  vat_amount: 13, grand_total_amount: 16, input_vat_right: 20, tax_evidence_status: 24, wht_amount: 14, net_payable_amount: 15,
+  paid_amount: 15, outstanding_amount: 15, last_paid_at: 18, advanced_by: 20, expense_status: 16, notes: 44, primary_file: 40,
+  wht_remittance: 22, shop_branch: 22, record_files: 40,
+  paid_at: 16, payee_name: 32, amount: 15, payment_method: 18, paid_from: 24, voucher_numbers: 20, payment_file: 40,
+  payee_tax_id: 17, payee_branch: 12, payee_address: 40, form_type: 12, income_type: 24, rate: 10, gross_amount: 16,
+  withheld_amount: 14, certificate_numbers: 24, status: 32, kind: 22, version: 26, replaced_by: 40, file: 50, part: 8,
+};
+/** A readable table: green header, sized columns, rows that grow with their text, gridlines and a filter. */
+function accountantTable(sheet: WorkbookSheet, widths: number[], filter = true): WorkbookSheet {
+  const [head = [], ...rest] = sheet.rows;
+  const last = Math.max(1, ...sheet.rows.map(row => row.length));
+  return { ...sheet, freezeRows: 1, autoHeight: true, showGrid: true, widths: Array.from({ length: last }, (_, i) => widths[i] ?? 18),
+    rows: [head.map(cell => ({ value: cell && typeof cell === 'object' ? cell.value : cell, style: 1 })), ...rest],
+    ...(filter ? { filter: `A1:${columnName(last)}${sheet.rows.length}` } : {}) };
 }
 export function accountantCurrencyLabel(code: string): string {
   const label = expenseCurrencyLabel(code);
@@ -523,7 +547,14 @@ export function buildAccountantFollowUpRows(sources: readonly AccountantExportSo
 export function buildAccountantPurchaseTaxRows(records: readonly AccountantTaxRecord[], context: AccountantPurchaseContext): PurchaseProjection {
   const columns = ['ลำดับที่', 'วัน เดือน ปี', 'เลขที่/เล่มที่', 'ชื่อผู้ขายสินค้า/ผู้ให้บริการ', 'เลขประจำตัวผู้เสียภาษีอากรของผู้ขายสินค้า/ผู้ให้บริการ',
     'สำนักงานใหญ่', 'สาขาที่', 'มูลค่าสินค้าหรือบริการ', 'จำนวนเงินภาษีมูลค่าเพิ่ม'];
-  const sheet: WorkbookSheet = { name: ACCOUNTANT_WORKBOOK_SHEETS.purchaseTax, freezeRows: 1, rows: [] };
+  const sheet: WorkbookSheet = { name: ACCOUNTANT_WORKBOOK_SHEETS.purchaseTax, rows: [], widths: [10, 15, 18, 34, 22, 12, 10, 17, 17], autoHeight: true, showGrid: true, merges: [] };
+  const bold = (value: string): WorkbookCell => ({ value, style: 12 });
+  // Text rows span the narrow RD columns so labels and notes stay on one readable line.
+  const push = (cells: WorkbookCell[], ...spans: [string, string][]) => {
+    sheet.rows.push(cells);
+    for (const [from, to] of spans) sheet.merges!.push(`${from}${sheet.rows.length}:${to}${sheet.rows.length}`);
+  };
+  const note = (value: string) => push([value], ['A', 'I']);
   const included: PurchaseProjection['included'] = [], excluded: PurchaseExclusion[] = [];
   const blocks = new Map<string, { source: AccountantExportSource; base: string; vat: string }[]>();
   for (const record of records) {
@@ -561,9 +592,10 @@ export function buildAccountantPurchaseTaxRows(records: readonly AccountantTaxRe
     const [month, branchId] = key.split(':');
     const branch = context.branches?.find(row => row.id === branchId);
     const monthLabel = month ? monthFormatter.format(new Date(`${month}-01T00:00:00Z`)) : 'ยังไม่ระบุเดือน';
-    sheet.rows.push(['เดือนภาษี', monthLabel], ['ชื่อผู้ประกอบการ', context.company?.registeredName?.trim() || 'ยังไม่ระบุ'],
+    if (sheet.rows.length) sheet.rows.push([]);
+    for (const [label, value] of [['เดือนภาษี', monthLabel], ['ชื่อผู้ประกอบการ', context.company?.registeredName?.trim() || 'ยังไม่ระบุ'],
       ['เลขประจำตัวผู้เสียภาษีอากร', context.company?.taxId?.trim() || 'ยังไม่ระบุ'], ['ชื่อสถานประกอบการ', branch?.name ?? 'ยังไม่ระบุ'],
-      ['สำนักงานใหญ่/สาขาที่', branch?.taxBranchCode === '00000' ? 'สำนักงานใหญ่' : branch?.taxBranchCode ?? 'ยังไม่ระบุ']);
+      ['สำนักงานใหญ่/สาขาที่', branch?.taxBranchCode === '00000' ? 'สำนักงานใหญ่' : branch?.taxBranchCode ?? 'ยังไม่ระบุ']] as const) push([bold(label), null, value], ['A', 'B'], ['C', 'F']);
     const selectedRecords = records.filter(record => `${sourceDay(record.source).slice(0, 7)}:${record.source.branchId ?? ''}` === key);
     if (!entries.length) {
       const reasons = [...new Set(excluded.filter(row => selectedRecords.some(record => record.source.id === row.source.id)).map(row => row.reason))];
@@ -574,7 +606,7 @@ export function buildAccountantPurchaseTaxRows(records: readonly AccountantTaxRe
       const message = statuses.every(status => status === 'NOT_REGISTERED') ? 'ร้านไม่ได้จด VAT ในช่วงรายการนี้ จึงไม่มีรายงานภาษีซื้อ'
         : statuses.every(status => status === 'UNKNOWN') ? 'ยังไม่มีข้อมูลยืนยันการจด VAT ของร้านในช่วงรายการนี้'
           : reasons.find(reason => reason.startsWith('ข้อมูลร้าน')) ?? 'ไม่พบรายการภาษีซื้อที่ใช้สิทธิได้ในชุดที่เลือก';
-      sheet.rows.push([message]);
+      note(message);
       continue;
     }
     const documents = new Map<string, typeof entries[number]>();
@@ -584,24 +616,29 @@ export function buildAccountantPurchaseTaxRows(records: readonly AccountantTaxRe
     }
     const ordered = [...documents.values()].sort((a, b) => receiptOrder(a.source) - receiptOrder(b.source)
       || (a.source.expenseNumber ?? '').localeCompare(b.source.expenseNumber ?? '') || a.source.id.localeCompare(b.source.id));
-    sheet.rows.push(columns);
+    sheet.rows.push(columns.map(value => ({ value, style: 1 })));
     for (const [index, entry] of ordered.entries()) {
       included.push(entry);
       const source = entry.source;
       sheet.rows.push([index + 1, formatThaiExportDate(sourceDay(source)), source.vendorDocumentNumber ?? '', source.vendorNameSnapshot ?? '', source.vendorTaxIdSnapshot ?? '',
         source.vendorBranchCodeSnapshot === '00000' ? '✓' : '', source.vendorBranchCodeSnapshot === '00000' ? '' : source.vendorBranchCodeSnapshot ?? '', accountantMoney(entry.base), accountantMoney(entry.vat)]);
     }
-    sheet.rows.push(['รวม', '', '', '', '', '', '', accountantMoney(ordered.reduce((sum, entry) => sum.plus(entry.base), new Decimal(0))), accountantMoney(ordered.reduce((sum, entry) => sum.plus(entry.vat), new Decimal(0)))]);
+    const total = (value: Decimal): WorkbookCell => ({ value: value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(), style: 13 });
+    sheet.rows.push([{ value: 'รวม', style: 14 }, ...Array.from({ length: 6 }, () => ({ value: null, style: 14 })),
+      total(ordered.reduce((sum, entry) => sum.plus(entry.base), new Decimal(0))), total(ordered.reduce((sum, entry) => sum.plus(entry.vat), new Decimal(0)))]);
   }
-  if (!records.length) sheet.rows.push(['ไม่พบรายการภาษีซื้อที่ใช้สิทธิได้ในชุดที่เลือก']);
-  sheet.rows.push(['จัดตามเดือนวันที่เอกสาร ระบบยังไม่ได้เก็บเดือนที่ใช้สิทธิภาษีซื้อ'], ['แสดงเฉพาะรายจ่ายที่เลือก ให้สำนักงานบัญชีตรวจเดือนใช้สิทธิก่อนใช้รายงาน'],
-    ['รายการที่ไม่มีวันที่รับเอกสารเรียงตามวันที่ส่งเข้า']);
+  if (!records.length) note('ไม่พบรายการภาษีซื้อที่ใช้สิทธิได้ในชุดที่เลือก');
+  sheet.rows.push([]);
+  for (const text of ['จัดตามเดือนวันที่เอกสาร ระบบยังไม่ได้เก็บเดือนที่ใช้สิทธิภาษีซื้อ', 'แสดงเฉพาะรายจ่ายที่เลือก ให้สำนักงานบัญชีตรวจเดือนใช้สิทธิก่อนใช้รายงาน',
+    'รายการที่ไม่มีวันที่รับเอกสารเรียงตามวันที่ส่งเข้า']) note(text);
   if (excluded.length) {
-    sheet.rows.push(['รายการที่ไม่อยู่ในรายงาน', 'เหตุผล', 'สกุลเงิน', 'มูลค่าก่อน VAT', 'VAT']);
+    const head = (value: string | null): WorkbookCell => ({ value, style: 1 });
+    sheet.rows.push([]);
+    push([head('รายการที่ไม่อยู่ในรายงาน'), head(null), head('เหตุผล'), head(null), head(null), head(null), head('สกุลเงิน'), head('มูลค่าก่อน VAT'), head('VAT')], ['A', 'B'], ['C', 'F']);
     for (const entry of excluded) {
       const row = context.expenseRows?.get(entry.source.id), number = entry.source.expenseNumber ?? 'ยังไม่มีเลขที่';
-      const link = row ? { value: number, formula: `HYPERLINK("#'${ACCOUNTANT_WORKBOOK_SHEETS.expenses}'!A${row}","${number.replace(/"/g, '""')}")` } : number;
-      sheet.rows.push([link, entry.reason, accountantCurrencyLabel(entry.source.currency), accountantMoney(entry.base), accountantMoney(entry.vat)]);
+      const link = row ? { value: number, link: `#'${ACCOUNTANT_WORKBOOK_SHEETS.expenses}'!A${row}`, style: 15 } : number;
+      push([link, null, entry.reason, null, null, null, accountantCurrencyLabel(entry.source.currency), accountantMoney(entry.base), accountantMoney(entry.vat)], ['A', 'B'], ['C', 'F']);
     }
   }
   return { sheet, included, excluded };
@@ -645,15 +682,61 @@ export function buildAccountantMonthSummary(records: readonly AccountantTaxRecor
   for (const [index, row] of withholding.entries()) {
     const selected = row.sourceExpenseId ? selectedIds.has(row.sourceExpenseId) : selectedNumbers.has(String(row.expense_number));
     const rate = row.rate == null || row.rate === '' || !Number.isFinite(Number(row.rate)) ? null : new Decimal(String(row.rate)).toString();
-    const name = `${formLabels[String(row.form_type)] ?? 'ยังไม่ระบุแบบ'} · ${rate === null ? 'ยังไม่ระบุอัตรา' : `${rate}%`}`;
+    const name = `${formLabels[String(row.form_type)] ?? 'ยังไม่ระบุแบบ'} ${rate === null ? 'ยังไม่ระบุอัตรา' : `อัตรา ${rate}%`}`;
     add(selected ? 'หัก ณ ที่จ่ายในช่วง' : 'หัก ณ ที่จ่ายจากรายจ่ายนอกช่วงเอกสาร', name, { id: String(index), currency: String(row.currency ?? '') },
       [String(row.gross_amount ?? 0), '0', '0', String(row.withheld_amount ?? 0)], JSON.stringify([row.form_type, rate]));
   }
   for (const [index, row] of bankRemitted.entries()) add('e-WHT', 'ธนาคารนำส่งในช่วง', { id: String(index), currency: String(row.currency ?? '') }, [String(row.gross_amount ?? 0), '0', '0', String(row.withheld_amount ?? 0)]);
   for (const entry of purchase.included) add('ภาษีซื้อในรายงาน', 'ใช้สิทธิได้และข้อมูลครบ', entry.source, [entry.base, entry.vat]);
   for (const entry of purchase.excluded) add('ภาษีซื้อที่ไม่อยู่ในรายงาน', entry.reason, entry.source, [entry.base, entry.vat]);
-  return { name: ACCOUNTANT_WORKBOOK_SHEETS.summary, freezeRows: 1,
-    rows: [['หัวข้อ', 'รายการ', 'สกุลเงิน', 'มูลค่าก่อน VAT', 'VAT', 'ยอดรวมตามเอกสาร', 'หัก ณ ที่จ่าย', 'ยอดจ่ายสุทธิ', 'จ่ายแล้ว', 'ค้างจ่าย', 'จำนวนรายการ'],
-      ...[...entries.values()].map(entry => [entry.kind, entry.name, accountantCurrencyLabel(entry.currency), ...entry.amounts.map(value => accountantMoney(value)), entry.ids.size]),
-      ...(!entries.size ? [['ไม่มีรายการตามที่เลือก']] : [])] };
+  return summarySheet([...entries.values()]);
+}
+
+type SummaryEntry = { kind: string; name: string; currency: string; amounts: Decimal[]; ids: Set<string> };
+/**
+ * The summary reads top to bottom as small titled tables, each with only the columns that apply.
+ * Amount indexes: 0 base, 1 VAT, 2 document total, 3 WHT, 4 net payable, 5 paid, 6 outstanding.
+ */
+function summarySheet(all: SummaryEntry[]): WorkbookSheet {
+  const rows: WorkbookCell[][] = [], merges: string[] = [];
+  const currencies = [...new Set(all.map(entry => entry.currency))];
+  const multi = currencies.length > 1, unit = multi ? '' : ` (${accountantCurrencyLabel(currencies[0] ?? 'THB')})`;
+  const boldMoney = (value: Decimal): WorkbookCell => ({ value: value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(), style: 13 });
+  const title = (text: string) => {
+    if (rows.length) rows.push([]);
+    rows.push([{ value: text, style: 12 }]); merges.push(`A${rows.length}:F${rows.length}`);
+  };
+  const head = (labels: string[]) => rows.push(labels.map(value => ({ value, style: 1 })));
+  const overview = all.filter(entry => entry.kind === 'รายจ่ายที่เลือก');
+  if (!all.length) rows.push(['ไม่มีรายการตามที่เลือก']);
+  if (overview.length) {
+    title(`ภาพรวมรายจ่ายที่เลือก${unit}`);
+    head(['รายการ', ...(multi ? overview.map(entry => accountantCurrencyLabel(entry.currency)) : ['ยอดเงิน'])]);
+    rows.push(['จำนวนรายการ', ...overview.map(entry => entry.ids.size)]);
+    for (const [index, label, strong] of [[0, 'มูลค่าก่อน VAT'], [1, 'VAT'], [2, 'ยอดรวมตามเอกสาร', true], [3, 'หัก ณ ที่จ่าย (ทั้งเอกสาร)'],
+      [4, 'ยอดจ่ายสุทธิ', true], [5, 'จ่ายแล้ว'], [6, 'ค้างจ่าย', true]] as const) {
+      rows.push([strong ? { value: label, style: 14 } : label, ...overview.map(entry => strong ? boldMoney(entry.amounts[index]!) : accountantMoney(entry.amounts[index]))]);
+    }
+  }
+  const table = (heading: string, kinds: readonly string[], label: string, columns: readonly (readonly [string, number])[], name: (entry: SummaryEntry) => string = entry => entry.name, total = false) => {
+    const list = all.filter(entry => kinds.includes(entry.kind) && (entry.kind !== 'ส่วนต่างหัก ณ ที่จ่าย' || !entry.amounts[3]!.isZero()));
+    if (!list.length) return;
+    title(`${heading}${unit}`);
+    head([label, ...(multi ? ['สกุลเงิน'] : []), 'จำนวนรายการ', ...columns.map(([column]) => column)]);
+    for (const entry of list) rows.push([name(entry), ...(multi ? [accountantCurrencyLabel(entry.currency)] : []), entry.ids.size, ...columns.map(([, index]) => accountantMoney(entry.amounts[index]))]);
+    if (total && !multi && list.length > 1) rows.push([{ value: 'รวม', style: 14 }, { value: new Set(list.flatMap(entry => [...entry.ids])).size, style: 14 },
+      ...columns.map(([, index]) => boldMoney(list.reduce((sum, entry) => sum.plus(entry.amounts[index]!), new Decimal(0))))]);
+  };
+  const vatColumns = [['มูลค่าก่อน VAT', 0], ['VAT', 1], ['ยอดรวม', 2]] as const;
+  table('แยกตามหมวดค่าใช้จ่าย', ['แยกตามหมวด'], 'หมวด', vatColumns, undefined, true);
+  table('แยกตาม VAT', ['แยกตาม VAT'], 'ประเภท VAT', vatColumns, undefined, true);
+  table('สิทธิใช้ภาษีซื้อ', ['สิทธิภาษีซื้อ'], 'สิทธิภาษีซื้อ', [['มูลค่าก่อน VAT', 0], ['VAT', 1]]);
+  table('รายงานภาษีซื้อ', ['ภาษีซื้อในรายงาน', 'ภาษีซื้อที่ไม่อยู่ในรายงาน'], 'สถานะ', [['มูลค่าก่อน VAT', 0], ['VAT', 1]],
+    entry => entry.kind === 'ภาษีซื้อในรายงาน' ? 'อยู่ในรายงานภาษีซื้อ' : `ไม่อยู่ในรายงาน: ${entry.name}`);
+  table('หัก ณ ที่จ่ายตามวันที่จ่ายในช่วงนี้', ['หัก ณ ที่จ่ายในช่วง', 'หัก ณ ที่จ่ายจากรายจ่ายนอกช่วงเอกสาร', 'e-WHT', 'ส่วนต่างหัก ณ ที่จ่าย'], 'แบบและอัตรา',
+    [['จำนวนเงินที่จ่าย', 0], ['ภาษีที่หัก', 3]], entry => entry.kind === 'หัก ณ ที่จ่ายจากรายจ่ายนอกช่วงเอกสาร' ? `${entry.name} (รายจ่ายที่ลงวันที่นอกช่วงนี้)`
+      : entry.kind === 'e-WHT' ? 'ธนาคารนำส่ง (e-WHT)' : entry.kind === 'ส่วนต่างหัก ณ ที่จ่าย' ? 'ส่วนต่าง: ภาษีตามเอกสารที่ยังไม่ได้หักตอนจ่ายในช่วงนี้' : entry.name);
+  table('การจ่ายในช่วงนี้', ['การจ่ายในช่วง', 'การจ่ายที่ยังไม่ยืนยันวันที่'], 'รายการ', [['ยอดจ่าย', 5]],
+    entry => entry.kind === 'การจ่ายในช่วง' ? 'การจ่ายทั้งหมดในช่วงนี้' : 'ในนั้น ยังไม่ยืนยันวันที่จ่าย');
+  return { name: ACCOUNTANT_WORKBOOK_SHEETS.summary, rows, merges, autoHeight: true, widths: [44, ...(multi ? [20] : []), 14, 17, 15, 17, 17, 17] };
 }

@@ -138,10 +138,16 @@ function crc32Table(): number[] {
   return tableCache;
 }
 
-export type WorkbookCell = XlsxCell | null | { value: XlsxCell | null; style?: number; formula?: string };
+/**
+ * `link` is a real cell hyperlink (works in Excel, Numbers, Google Sheets and LibreOffice, unlike a HYPERLINK formula):
+ * `#'Sheet'!A2` jumps inside the workbook; anything else is a relative file path next to the workbook.
+ */
+export type WorkbookCell = XlsxCell | null | { value: XlsxCell | null; style?: number; formula?: string; link?: string };
 export type WorkbookSheet = {
   name: string; rows: WorkbookCell[][]; widths?: number[]; freezeRows?: number; filter?: string;
   merges?: string[]; printArea?: string; charts?: WorkbookChart[]; autoHeightRows?: number[];
+  /** Every row grows with its wrapped text instead of a fixed height. */
+  autoHeight?: boolean; showGrid?: boolean;
 };
 export type WorkbookChart = {
   title: string; kind: 'doughnut' | 'bar'; labels: string[]; values: (number | null)[];
@@ -177,7 +183,7 @@ function workbookCell(cell: WorkbookCell, ref: string): string {
   if (cell === null) return '';
   const typed = typeof cell === 'object' ? cell : { value: cell };
   const style = typed.style ?? 0, value = typed.value;
-  if (!Number.isInteger(style) || style < 0 || style > 11) throw new Error('XLSX_INVALID_STYLE');
+  if (!Number.isInteger(style) || style < 0 || style > 15) throw new Error('XLSX_INVALID_STYLE');
   if (typed.formula !== undefined) {
     if (!typed.formula || typed.formula.includes('[') || typed.formula.length > 8192) throw new Error('XLSX_INVALID_FORMULA');
     return `<c r="${ref}" s="${style}"${typeof value === 'number' ? '' : ' t="str"'}><f>${xml(typed.formula)}</f><v>${xml(value)}</v></c>`;
@@ -198,22 +204,34 @@ export function buildWorkbook(sheets: WorkbookSheet[], limits: { maxBytes?: numb
     checkSheet(sheet.rows, sheet.name);
     const id = i + 1, freeze = sheet.freezeRows ?? 0, widths = sheet.widths ?? Array.from({ length: Math.max(1, ...sheet.rows.map(row => row.length)) }, () => 22);
     if (widths.some(width => !Number.isFinite(width) || width <= 0 || width > 255)) throw new Error('XLSX_INVALID_WIDTH');
-    const data = sheet.rows.map((row, r) => `<row r="${r + 1}"${sheet.autoHeightRows?.includes(r + 1) ? '' : ` ht="${r + 1 === freeze && sheet.filter ? 72 : 24}" customHeight="1"`}>${row.map((cell, c) => workbookCell(cell, `${columnName(c + 1)}${r + 1}`)).join('')}</row>`).join('');
+    const links: string[] = [], linkRelations: string[] = [];
+    sheet.rows.forEach((row, r) => row.forEach((cell, c) => {
+      if (!cell || typeof cell !== 'object' || cell.link === undefined) return;
+      const ref = `${columnName(c + 1)}${r + 1}`, link = cell.link;
+      if (link.startsWith('#')) { links.push(`<hyperlink ref="${ref}" location="${xml(link.slice(1))}" display="${xml(cell.value)}"/>`); return; }
+      if (!link || /^(?:[a-z]+:|[/\\])|(?:^|[/\\])\.\.(?:[/\\]|$)/i.test(link)) throw new Error('XLSX_INVALID_LINK');
+      const relationId = `link${linkRelations.length + 1}`;
+      linkRelations.push(`<Relationship Id="${relationId}" Type="${OFFICE_NS}/hyperlink" Target="${xml(link.replace(/[%# ?]/g, encodeURIComponent))}" TargetMode="External"/>`);
+      links.push(`<hyperlink ref="${ref}" r:id="${relationId}" display="${xml(cell.value)}"/>`);
+    }));
+    const data = sheet.rows.map((row, r) => `<row r="${r + 1}"${sheet.autoHeight || sheet.autoHeightRows?.includes(r + 1) ? '' : ` ht="${r + 1 === freeze && sheet.filter ? 72 : 24}" customHeight="1"`}>${row.map((cell, c) => workbookCell(cell, `${columnName(c + 1)}${r + 1}`)).join('')}</row>`).join('');
     const sheetXml = `${declaration}<worksheet xmlns="${MAIN_NS}" xmlns:r="${OFFICE_NS}">`
       + (sheet.printArea ? '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' : '')
-      + '<sheetViews><sheetView showGridLines="0" workbookViewId="0">'
+      + `<sheetViews><sheetView${sheet.showGrid ? '' : ' showGridLines="0"'} workbookViewId="0">`
       + (freeze ? `<pane ySplit="${freeze}" topLeftCell="A${freeze + 1}" activePane="bottomLeft" state="frozen"/>` : '')
       + `</sheetView></sheetViews><cols>${widths.map((width, c) => `<col min="${c + 1}" max="${c + 1}" width="${width}" customWidth="1"/>`).join('')}</cols><sheetData>${data}</sheetData>`
       + (sheet.filter ? `<autoFilter ref="${xml(sheet.filter)}"/>` : '')
       + (sheet.merges?.length ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map(ref => `<mergeCell ref="${xml(ref)}"/>`).join('')}</mergeCells>` : '')
+      + (links.length ? `<hyperlinks>${links.join('')}</hyperlinks>` : '')
       + (sheet.printArea ? '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="1"/>' : '')
       + (sheet.charts?.length ? '<drawing r:id="drawing"/>' : '') + '</worksheet>';
     files[`xl/worksheets/sheet${id}.xml`] = Buffer.from(sheetXml);
     types.push(override(`xl/worksheets/sheet${id}.xml`, 'spreadsheetml.worksheet'));
     workbookRelations.push(relation(`sheet${id}`, 'worksheet', `worksheets/sheet${id}.xml`));
+    if (linkRelations.length && !sheet.charts?.length) files[`xl/worksheets/_rels/sheet${id}.xml.rels`] = Buffer.from(relationships(linkRelations));
     if (sheet.charts?.length) {
       const chartRelations: string[] = [];
-      files[`xl/worksheets/_rels/sheet${id}.xml.rels`] = Buffer.from(relationships([relation('drawing', 'drawing', `../drawings/drawing${id}.xml`)]));
+      files[`xl/worksheets/_rels/sheet${id}.xml.rels`] = Buffer.from(relationships([relation('drawing', 'drawing', `../drawings/drawing${id}.xml`), ...linkRelations]));
       const anchors = sheet.charts.map((chart, n) => {
         const chartName = id === 1 ? `chart${n + 1}` : `chart${id}_${n + 1}`;
         files[`xl/charts/${chartName}.xml`] = Buffer.from(chartXml(chart));
@@ -249,6 +267,6 @@ function chartXml(chart: WorkbookChart): string {
 }
 function workbookStyles(): string {
   const formats = ['#,##0.00;[Red]-#,##0.00', '[$-107041E]d mmm bbbb', '[$-107041E]d mmm bbbb hh:mm" น."', '0.0%'];
-  const xfs = [[0, 0, 0], [1, 2, 0], [1, 2, 0], [0, 0, 164], [0, 0, 165], [0, 0, 166], [0, 0, 167], [2, 3, 0], [0, 3, 0], [0, 4, 0], [0, 5, 0], [2, 3, 164]];
-  return `${declaration}<styleSheet xmlns="${MAIN_NS}"><numFmts count="4">${formats.map((format, i) => `<numFmt numFmtId="${164 + i}" formatCode="${xml(format)}"/>`).join('')}</numFmts><fonts count="3"><font><sz val="11"/><color rgb="FF1A2E22"/><name val="Tahoma"/></font><font><b/><sz val="12"/><color rgb="FFFFFFFF"/><name val="Tahoma"/></font><font><b/><sz val="24"/><color rgb="FF14532D"/><name val="Tahoma"/></font></fonts><fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${['14532D', 'DCFCE7', 'FEF3C7', 'E5E7EB'].map(color => `<fill><patternFill patternType="solid"><fgColor rgb="FF${color}"/><bgColor indexed="64"/></patternFill></fill>`).join('')}</fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${xfs.length}">${xfs.map(([font, fill, format]) => `<xf numFmtId="${format}" fontId="${font}" fillId="${fill}" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment vertical="center" wrapText="1"${format ? ' horizontal="right"' : ''}/></xf>`).join('')}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  const xfs = [[0, 0, 0], [1, 2, 0], [1, 2, 0], [0, 0, 164], [0, 0, 165], [0, 0, 166], [0, 0, 167], [2, 3, 0], [0, 3, 0], [0, 4, 0], [0, 5, 0], [2, 3, 164], [3, 0, 0], [3, 3, 164], [3, 3, 0], [4, 0, 0]];
+  return `${declaration}<styleSheet xmlns="${MAIN_NS}"><numFmts count="4">${formats.map((format, i) => `<numFmt numFmtId="${164 + i}" formatCode="${xml(format)}"/>`).join('')}</numFmts><fonts count="5"><font><sz val="11"/><color rgb="FF1A2E22"/><name val="Tahoma"/></font><font><b/><sz val="12"/><color rgb="FFFFFFFF"/><name val="Tahoma"/></font><font><b/><sz val="24"/><color rgb="FF14532D"/><name val="Tahoma"/></font><font><b/><sz val="11"/><color rgb="FF1A2E22"/><name val="Tahoma"/></font><font><u/><sz val="11"/><color rgb="FF1D4ED8"/><name val="Tahoma"/></font></fonts><fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${['14532D', 'DCFCE7', 'FEF3C7', 'E5E7EB'].map(color => `<fill><patternFill patternType="solid"><fgColor rgb="FF${color}"/><bgColor indexed="64"/></patternFill></fill>`).join('')}</fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${xfs.length}">${xfs.map(([font, fill, format]) => `<xf numFmtId="${format}" fontId="${font}" fillId="${fill}" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment vertical="center" wrapText="1"${format ? ' horizontal="right"' : ''}/></xf>`).join('')}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 }

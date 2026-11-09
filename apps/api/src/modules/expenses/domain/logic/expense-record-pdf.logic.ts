@@ -8,6 +8,8 @@ import { SUBSTITUTE_RECEIPT_PDF_LIMITS } from './substitute-receipt-pdf.logic';
 export type RecordPdfFile = {
   path: string; part: number; mimeType: string; load: () => Promise<Buffer>; identity?: string;
   unavailableReason?: string;
+  /** What these pages are, printed at the bottom right of each of them, e.g. "หลักฐานการจ่าย". */
+  label?: string;
 };
 export type RecordPdfAppendix = { path: string; part: number; status: 'included' | 'referenced' | 'unavailable'; reason?: string };
 const WIDTH = 595.28, HEIGHT = 841.89, MARGIN = 36, FOOTER = 28;
@@ -128,46 +130,134 @@ async function appendRecordFile(destination: PDFDocument, file: RecordPdfFile, m
   }
 }
 
+/** One expense's cover: what an accountant reads before the attached evidence. */
+export type RecordCover = {
+  number: string; fields: readonly (readonly [string, string])[]; amountUnit: string;
+  amounts: readonly { label: string; value: string; strong?: boolean }[];
+  payments: readonly { date: string; method: string; account: string; amount: string }[];
+  notes: readonly string[];
+};
+// The cover page is an SVG at the content area's aspect ratio, so text is not stretched when placed.
+const PAGE_W = 850, PAGE_H = Math.round(PAGE_W * (HEIGHT - FOOTER - MARGIN * 2) / (WIDTH - MARGIN * 2)), LEFT = 40, RIGHT = 810, VALUE_X = 290, ROW = 34;
+type CoverItem = { height: number; svg: (y: number) => string };
+const text = (x: number, y: number, value: string, attributes = '') => `<text x="${x}" y="${y}"${attributes}>${escapeHtml(value)}</text>`;
+const rule = (y: number, color = '#D1D5DB') => `<line x1="${LEFT}" x2="${RIGHT}" y1="${y}" y2="${y}" stroke="${color}" stroke-width="1"/>`;
+const lines = (value: string, width: number) => wrapText(value, width, 18);
+
+function coverItems(covers: readonly RecordCover[], files: readonly { path: string; part: number; note: string; label?: string; pages?: string }[], related: readonly { path: string; part: number }[]): CoverItem[] {
+  const items: CoverItem[] = [];
+  const heading = (title: string) => items.push({ height: 58, svg: y => text(LEFT, y + 38, title, ' font-size="21" font-weight="700" fill="#14532D"') + rule(y + 50, '#14532D') });
+  const wrapped = (x: number, width: number, value: string, attributes: string, first: (y: number) => string = () => '') => lines(value, width)
+    .forEach((line, index) => items.push({ height: ROW, svg: y => (index ? '' : first(y)) + text(x, y + 24, line, attributes) }));
+  for (const cover of covers) {
+    items.push({ height: 104, svg: y => text(LEFT, y + 26, 'สรุปรายการค่าใช้จ่าย', ' font-size="18" fill="#4B5563"')
+      + text(LEFT, y + 72, cover.number, ' font-size="34" font-weight="700" fill="#111827"') + rule(y + 92, '#14532D') });
+    heading('ข้อมูลเอกสาร');
+    for (const [label, value] of cover.fields) wrapped(VALUE_X, RIGHT - VALUE_X, value || '-', ' font-size="18" fill="#111827"', y => text(LEFT, y + 24, label, ' font-size="18" fill="#4B5563"'));
+    heading(`ยอดเงิน (${cover.amountUnit})`);
+    for (const amount of cover.amounts) items.push({ height: ROW + 4, svg: y => {
+      const weight = amount.strong ? ' font-weight="700"' : '';
+      return (amount.strong ? `<rect x="${LEFT}" y="${y + 2}" width="${RIGHT - LEFT}" height="${ROW}" fill="#F0FDF4"/>` : '')
+        + text(LEFT + 8, y + 26, amount.label, ` font-size="18" fill="#374151"${weight}`)
+        + text(RIGHT - 8, y + 26, amount.value, ` font-size="18" fill="#111827" text-anchor="end"${weight}`);
+    } });
+    heading('การจ่าย');
+    if (!cover.payments.length) items.push({ height: ROW, svg: y => text(LEFT, y + 24, 'ยังไม่ได้จ่าย', ' font-size="18" fill="#92400E"') });
+    else {
+      items.push({ height: ROW, svg: y => ['วันที่จ่าย', 'วิธีจ่าย', 'จ่ายจาก'].map((label, i) => text([LEFT, 290, 470][i]!, y + 24, label, ' font-size="16" fill="#6B7280"')).join('')
+        + text(RIGHT, y + 24, 'จำนวนเงิน', ' font-size="16" fill="#6B7280" text-anchor="end"') });
+      for (const payment of cover.payments) items.push({ height: ROW, svg: y => rule(y + 2, '#E5E7EB') + text(LEFT, y + 26, payment.date, ' font-size="18"')
+        + text(290, y + 26, payment.method, ' font-size="18"') + text(470, y + 26, lines(payment.account || '-', 200)[0]!, ' font-size="18"')
+        + text(RIGHT, y + 26, payment.amount, ' font-size="18" text-anchor="end"') });
+    }
+    if (cover.notes.length) {
+      heading('หมายเหตุ');
+      for (const note of cover.notes) wrapped(LEFT, RIGHT - LEFT, note, ' font-size="18" fill="#92400E"');
+    }
+  }
+  heading('เอกสารในไฟล์นี้');
+  if (!files.length) wrapped(LEFT, RIGHT - LEFT, 'ไม่มีไฟล์แนบ รายการนี้ยังไม่มีรูปเอกสารหรือหลักฐานการจ่ายในมั่งมี', ' font-size="18" fill="#92400E"');
+  files.forEach((file, index) => {
+    // A table of contents: what the document is on the left, its pages on the right.
+    wrapped(LEFT + 34, RIGHT - LEFT - 200, file.label ?? file.path, ' font-size="18" fill="#111827"', y => text(LEFT, y + 24, `${index + 1}.`, ' font-size="18" fill="#111827"')
+      + text(RIGHT, y + 24, file.pages ?? 'แยกไว้ต่างหาก', ` font-size="18" text-anchor="end" fill="${file.pages ? '#111827' : '#92400E'}"`));
+    if (!file.pages) wrapped(LEFT + 34, RIGHT - LEFT - 34, file.note, ' font-size="15" fill="#92400E"');
+    wrapped(LEFT + 34, RIGHT - LEFT - 34, `ไฟล์ต้นฉบับ ${file.path} ในชุดที่ ${file.part}`, ' font-size="15" fill="#6B7280"');
+  });
+  if (related.length) {
+    heading('ชุดเอกสารรายการที่เกี่ยวข้อง');
+    for (const file of related) wrapped(LEFT, RIGHT - LEFT, `${file.path} ในชุดที่ ${file.part}`, ' font-size="18" fill="#111827"');
+  }
+  return items;
+}
+
+function paginate(items: readonly CoverItem[]): string[] {
+  const pages: string[][] = [[]];
+  let y = 0;
+  for (const item of items) {
+    if (y + item.height > PAGE_H - 20 && pages.at(-1)!.length) { pages.push([]); y = 0; }
+    pages.at(-1)!.push(item.svg(y)); y += item.height;
+  }
+  return pages.map(page => `<svg xmlns="http://www.w3.org/2000/svg" width="${PAGE_W}" height="${PAGE_H}"><rect width="${PAGE_W}" height="${PAGE_H}" fill="white"/><g font-family="Noto Sans Thai, Tahoma, sans-serif" fill="#111">${page.join('')}</g></svg>`);
+}
+
 export async function buildExpenseRecordPdf(input: {
-  cover: readonly string[]; leading?: RecordPdfFile; files: readonly RecordPdfFile[];
+  cover: readonly RecordCover[]; leading?: RecordPdfFile; files: readonly RecordPdfFile[];
   exportedAt: Date; timezone: string; relatedPackets?: readonly { path: string; part: number }[];
 }): Promise<{ data: Buffer; appendices: RecordPdfAppendix[] }> {
   const destination = await PDFDocument.create();
   const budget = { bytes: 0 };
   const appendices: RecordPdfAppendix[] = [];
-  const indexLines = [...input.cover, 'เอกสารในชุดนี้', ...[...(input.leading ? [input.leading] : []), ...input.files].flatMap(file => [
-    `${file.path} (ชุดที่ ${file.part})`, 'เปิดไฟล์ต้นฉบับเพื่อคงลายเซ็นอิเล็กทรอนิกส์',
-  ]), 'ชุดเอกสารรายการที่เกี่ยวข้อง', ...(input.relatedPackets ?? []).map(file => `${file.path} (ชุดที่ ${file.part})`)];
-  const reservedPages = Math.ceil(indexLines.flatMap(line => wrapText(line, 770, 16)).length / 35);
+  const related = input.relatedPackets ?? [];
+  const reservedPages = paginate(coverItems(input.cover, [...(input.leading ? [input.leading] : []), ...input.files]
+    .map(file => ({ ...file, note: 'เปิดไฟล์ต้นฉบับเพื่อคงลายเซ็นอิเล็กทรอนิกส์' })), related)).length;
   const maxContentPages = LIMITS.maxPages - reservedPages;
-  if (input.leading) appendices.push(await appendRecordFile(destination, input.leading, maxContentPages, budget));
-  const indexPosition = destination.getPageCount();
-  const seen = new Set(input.leading ? [input.leading.identity ?? input.leading.path] : []);
-  for (const file of input.files) {
+  const sections: { label: string; from: number; to: number }[] = [], ranges: { from: number; to: number }[] = [];
+  const seen = new Set<string>();
+  // The cover goes first; a paid voucher then leads the evidence because it is the payment record.
+  for (const file of [...(input.leading ? [input.leading] : []), ...input.files]) {
     const identity = file.identity ?? file.path;
     if (seen.has(identity)) continue;
     seen.add(identity);
+    const from = destination.getPageCount();
     appendices.push(await appendRecordFile(destination, file, maxContentPages, budget));
+    ranges.push({ from, to: destination.getPageCount() });
+    if (file.label && destination.getPageCount() > from) sections.push({ label: file.label, from, to: destination.getPageCount() });
   }
-  const lines = [...input.cover, 'เอกสารในชุดนี้', ...appendices.flatMap(file => [
-    `${file.path} (ชุดที่ ${file.part})`, file.reason ?? (file.status === 'included' ? 'รวมในชุดนี้แล้ว' : 'ไฟล์นี้แยกไว้ในโฟลเดอร์ต้นฉบับ'),
-  ]), ...(input.relatedPackets?.length ? ['ชุดเอกสารรายการที่เกี่ยวข้อง', ...input.relatedPackets.map(file => `${file.path} (ชุดที่ ${file.part})`)] : [])];
-  const wrapped = lines.flatMap(line => wrapText(line, 770, 16));
-  if (Math.ceil(wrapped.length / 35) + destination.getPageCount() > LIMITS.maxPages) throw new Error('page_limit');
-  for (let start = 0; start < wrapped.length; start += 35) {
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="850" height="1150"><rect width="850" height="1150" fill="white"/><g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="16" fill="#111">${wrapped.slice(start, start + 35).map((line, index) => `<text x="35" y="${45 + index * 29}">${escapeHtml(line)}</text>`).join('')}</g></svg>`;
+  const indexPosition = 0;
+  // Included files name their pages, which sit after the cover; a second pass settles a cover that grew a page.
+  const sources = [...(input.leading ? [input.leading] : []), ...input.files];
+  const coverPages = (offset: number) => paginate(coverItems(input.cover, appendices.map((file, index) => ({ ...file, label: sources.find(source => source.path === file.path)?.label,
+    note: file.reason ?? 'ไฟล์นี้แยกไว้ในโฟลเดอร์ต้นฉบับ',
+    pages: file.status !== 'included' ? undefined : ranges[index]!.to - ranges[index]!.from > 1
+      ? `หน้า ${ranges[index]!.from + offset + 1} ถึง ${ranges[index]!.to + offset}` : `หน้า ${ranges[index]!.from + offset + 1}` })), related));
+  let pages = coverPages(1);
+  if (pages.length !== 1) pages = coverPages(pages.length);
+  if (pages.length + destination.getPageCount() > LIMITS.maxPages) throw new Error('page_limit');
+  for (const [index, svg] of pages.entries()) {
     // Fixed-size sheets already have explicit breaks, so render their Thai SVG directly without a second PDF composition.
     const image = await destination.embedJpg(await sharp(Buffer.from(svg), { density: 144, limitInputPixels: LIMITS.maxRasterPixels })
       .jpeg({ quality: 95, chromaSubsampling: '4:4:4' }).toBuffer());
     await image.embed();
-    const page = destination.insertPage(indexPosition + start / 35, [WIDTH, HEIGHT]);
+    const page = destination.insertPage(indexPosition + index, [WIDTH, HEIGHT]);
     page.drawImage(image, { x: MARGIN, y: FOOTER + MARGIN, width: WIDTH - MARGIN * 2, height: HEIGHT - FOOTER - MARGIN * 2 });
   }
-  const label = `ส่งออกวันที่ ${new Intl.DateTimeFormat('th-TH-u-ca-buddhist', { day: 'numeric', month: 'short', year: 'numeric', timeZone: input.timezone }).format(input.exportedAt)}`;
-  const footerSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="700" height="28"><text x="8" y="20" font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="14">${escapeHtml(label)}</text></svg>`;
+  const dateLabel = `ส่งออกวันที่ ${new Intl.DateTimeFormat('th-TH-u-ca-buddhist', { day: 'numeric', month: 'short', year: 'numeric', timeZone: input.timezone }).format(input.exportedAt)}`;
+  const footerSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="700" height="28"><text x="8" y="20" font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="14">${escapeHtml(dateLabel)}</text></svg>`;
   const footer = await destination.embedPng(await sharp(Buffer.from(footerSvg), { density: 144 }).png().toBuffer());
   for (const page of destination.getPages()) page.drawImage(footer, { x: 12, y: 2, width: Math.min(page.getWidth() - 24, 500), height: 20 });
-  destination.setSubject(label);
+  const labelImage = async (text: string) => destination.embedPng(await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="680" height="36"><text x="672" y="27" text-anchor="end" font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="22" font-weight="700" fill="#14532D">${escapeHtml(text)}</text></svg>`), { density: 144 }).png().toBuffer());
+  const label = (image: Awaited<ReturnType<typeof labelImage>>, from: number, to: number) => {
+    for (let index = from; index < to; index++) {
+      const page = destination.getPage(index);
+      page.drawImage(image, { x: page.getWidth() - 12 - 340, y: 4, width: 340, height: 18 });
+    }
+  };
+  const numbers = input.cover.map(cover => cover.number);
+  const owner = numbers.length > 2 ? `${numbers[0]} และอีก ${numbers.length - 1} รายการ` : numbers.join(', ');
+  label(await labelImage(`${owner} สรุปรายการ`), 0, pages.length);
+  for (const section of sections) label(await labelImage(`${owner} ${section.label}`), section.from + pages.length, section.to + pages.length);
+  destination.setSubject(dateLabel);
   destination.setCreationDate(input.exportedAt); destination.setModificationDate(input.exportedAt);
   return { data: Buffer.from(await destination.save()), appendices };
 }

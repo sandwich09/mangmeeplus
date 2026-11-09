@@ -240,3 +240,35 @@ Next: Controller reviews scope, protected-PDF classification, signed-claim selec
   - the count-line pattern accepts ใบเบิก and ชุดเอกสารรายการ.
 - **Follow-up, not fixed.** The expense-page Excel export drops a stale result silently when the list reloads mid-export: no download and no notice.
 - **Still open.** The real-HTTP 300-expense measurement.
+
+## Owner layout round, 2026-11-09
+- **Owner asks (in Thai).**
+  - The plain-text cover and the unformatted Excel were unreadable.
+  - Links showed "The link is invalid" in Numbers.
+  - Each record must be one PDF that every Excel row links to.
+  - No middle dots, semicolons or other symbols that reports do not use.
+- **Record PDF.**
+  - Page order: the cover "สรุปรายการค่าใช้จ่าย", then payment proof (voucher, slips, supporting files, 50 ทวิ), then expense documents (receipt or tax invoice, substitute receipt, claim form).
+    - The cover now comes before the voucher. This supersedes the "voucher first" order of round 2.
+  - The cover is a laid-out page:
+    - document fields: date, type, number, seller, seller tax id and branch, category, description;
+    - amounts with bold totals;
+    - a payment table;
+    - a contents list with page numbers.
+  - Every page's bottom-right label reads "<record> <what this is>".
+  - Owner question: is the cover a payment voucher? No. The cover is an unsigned summary, and the voucher stays a separate real document. The cover was renamed so the two are not confused.
+- **Excel.**
+  - Every sheet has a green header row, sized columns, rows that grow with their text, gridlines and filters.
+  - Links are real cell hyperlinks (`link` on `WorkbookCell`, in `xlsx.logic.ts`), not HYPERLINK formulas, so they work in Numbers too.
+  - Expense and payment rows have one link column, "เอกสารรายการ (PDF)", placed right after the record number. The old original-file columns are gone. Originals stay in their ZIP folders and on the files sheet.
+  - The month summary is now small titled tables: overview, category, VAT, input-VAT right, purchase tax report, WHT by form and rate, payments.
+  - The purchase tax sheet has bold shop facts, a highlighted total row and merged note rows.
+- **Wording.**
+  - Lists use commas and ranges use "ถึง".
+  - Stored notes that join parts with a middle dot are exported comma-separated (`exportNote`).
+  - The ✓ in the RD purchase tax layout stays.
+- **Verification.**
+  - Accountant-related API specs pass, except the compiled-route test, which needs `scripts/local-proof/settings.local.sh`; that file is absent on this machine.
+  - API typecheck passes.
+  - The journeys were updated for the new columns but were not run, because they need the proof stack.
+- **Open.** A real export from the screen and the journeys on the proof stack.

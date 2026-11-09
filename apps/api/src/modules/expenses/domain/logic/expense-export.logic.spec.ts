@@ -79,7 +79,7 @@ describe('accountant workbook v2 pure projection', () => {
     const sheets = exportedSheet(workbook, 'xl/workbook.xml');
     assert.match(sheets, /รายการค่าใช้จ่าย/); assert.match(sheets, /เกี่ยวกับไฟล์นี้/);
     assert.doesNotMatch(sheets, /name="การจ่าย"|name="หัก ณ ที่จ่าย"|name="ไฟล์ทั้งหมด"/);
-    assert.match(exportedSheet(workbook, 'เกี่ยวกับไฟล์นี้'), /ช่องว่าง = ไม่มีข้อมูลนี้ในมั่งมี/);
+    assert.match(exportedSheet(workbook, 'เกี่ยวกับไฟล์นี้'), /ช่องที่ว่าง.*ไม่มีข้อมูลนี้ในมั่งมี/);
   });
 
   it('accountant workbook exposes no app URLs or internal IDs and keeps Thai money and optional columns', async () => {
@@ -140,21 +140,24 @@ describe('accountant workbook v2 pure projection', () => {
       const headers = [contracts.ACCOUNTANT_WORKBOOK_COLUMN_LABELS, contracts.ACCOUNTANT_PAYMENT_SHEET_COLUMN_LABELS, contracts.ACCOUNTANT_WITHHOLDING_SHEET_COLUMN_LABELS, contracts.ACCOUNTANT_FILES_SHEET_COLUMN_LABELS];
       for (const [i, labels] of headers.entries()) for (const [key, value] of Object.entries(labels)) {
         if (key === 'voucher_numbers' && !visible.vouchers || key === 'certificate_numbers' && !visible.certificates) continue;
+        // Bundled rows link to one record PDF instead of the original receipt or payment file.
+        if (key === 'primary_file' || key === 'payment_file') continue;
         assert.ok(xml[i].includes(value), `${i}: ${value}`);
       }
+      for (const index of [0, 1]) assert.ok(xml[index]!.includes('เอกสารรายการ (PDF)'));
     }
   });
 
   it('blank means absent or inapplicable, never hidden permission data; file links have four outcomes', async () => {
     const logic: any = await import('./expense-export.logic');
     const file = { expenseNumber: 'EXP-1', kind: 'receipts', path: 'เอกสารค่าใช้จ่าย/ใบ"หนึ่ง.jpg', part: 1 };
-    assert.deepEqual(logic.primaryFileCell(file, 1), { value: file.path, formula: 'HYPERLINK("เอกสารค่าใช้จ่าย/ใบ""หนึ่ง.jpg","เอกสารค่าใช้จ่าย/ใบ""หนึ่ง.jpg")' });
+    assert.deepEqual(logic.primaryFileCell(file, 1), { value: file.path, link: file.path, style: 15 });
     assert.equal(logic.primaryFileCell(file, 2), `อยู่ในชุดที่ 1: ${file.path}`);
     assert.equal(logic.primaryFileCell({ ...file, skippedReason: 'ไม่พบไฟล์' }, 1), 'ไม่ได้รวม: ไม่พบไฟล์');
     assert.equal(logic.primaryFileCell(undefined, 1), 'ไม่มีไฟล์');
     assert.equal(logic.vendorBranchLabel(null), ''); assert.equal(logic.vendorBranchLabel('00012'), 'สาขา 00012');
-    assert.equal(logic.shopBranchLabel({ name: 'สยาม', isVatEstablishment: true, taxBranchCode: '00000' }), 'สยาม · สำนักงานใหญ่');
-    assert.equal(logic.accountantNotes({ dateStatus: 'implausible', hasImage: false, evidenceNote: 'ตัวจริงอยู่กับผู้ขาย', taxEvidenceStatus: 'SUPPORTING_ONLY', taxEvidenceReason: 'มีหลักฐานประกอบ', inputVatClaimStatus: 'NON_CLAIMABLE', inputVatReason: 'ใช้ส่วนตัว' }), 'วันที่เอกสารควรตรวจอีกครั้ง · ยังไม่มีรูปเอกสาร · หมายเหตุ: ตัวจริงอยู่กับผู้ขาย · มีหลักฐานประกอบ · สิทธิภาษีซื้อ: ใช้ส่วนตัว');
+    assert.equal(logic.shopBranchLabel({ name: 'สยาม', isVatEstablishment: true, taxBranchCode: '00000' }), 'สยาม (สำนักงานใหญ่)');
+    assert.equal(logic.accountantNotes({ dateStatus: 'implausible', hasImage: false, evidenceNote: 'ตัวจริงอยู่กับผู้ขาย', taxEvidenceStatus: 'SUPPORTING_ONLY', taxEvidenceReason: 'มีหลักฐานประกอบ', inputVatClaimStatus: 'NON_CLAIMABLE', inputVatReason: 'ใช้ส่วนตัว' }), 'วันที่เอกสารควรตรวจอีกครั้ง, ยังไม่มีรูปเอกสาร, หมายเหตุ: ตัวจริงอยู่กับผู้ขาย, มีหลักฐานประกอบ, สิทธิภาษีซื้อ: ใช้ส่วนตัว');
   });
 });
 
@@ -165,7 +168,7 @@ describe('accountant index is independent of expense capture mode', () => {
       const source = { ...nonVatExpense, sourceDocumentType: 'TAX_INVOICE' as const, taxEvidenceStatus: 'USABLE_FOR_TAX' as const, inputVatClaimStatus: 'CLAIMABLE' as const,
         aiVerificationSummaryJson: { documentEvidenceDraft: assessment } };
       const row = buildAccountantIndexRow(source);
-      assert.equal(row.notes, ['ยังไม่มีรูปเอกสาร', note ? `หมายเหตุ: ${note}` : ''].filter(Boolean).join(' · '));
+      assert.equal(row.notes, ['ยังไม่มีรูปเอกสาร', note ? `หมายเหตุ: ${note}` : ''].filter(Boolean).join(', '));
       assert.equal(row.input_vat_right, 'CLAIMABLE');
       assert.doesNotMatch(buildAccountantIndexCsv([row]), /ตัวจริงอยู่ที่ร้าน/);
       const xml = exportedSheet(buildAccountantWorkbook({ rows: [row], payments: [], withholding: [], visible: {}, about: {} }));
@@ -660,7 +663,7 @@ describe('pack v2 sheets', () => {
     for (const text of ['ยังไม่มีไฟล์ใบเสร็จหรือใบกำกับภาษีในชุดนี้', 'ใบกำกับภาษียังไม่มีเลขผู้เสียภาษีผู้ขาย', 'ใบกำกับภาษียังไม่มีสาขาผู้ขาย',
       'ใบรับรองแทนใบเสร็จยังเซ็นไม่ครบ', 'ยังไม่มีหนังสือรับรอง 50 ทวิในข้อมูลที่ส่งออก', 'การจ่ายครั้งนี้ยังไม่ยืนยันวันที่',
       'รายการนี้ยังจ่ายไม่ครบ', 'ใบเบิกยังเซ็นไม่ครบ', 'ไม่พบไฟล์']) assert.ok(issues.some(row => row[1] === text), text);
-    assert.match(exportedSheet(file, 'ต้องตามเอกสาร'), /HYPERLINK\(&quot;#'รายการค่าใช้จ่าย'!A2/);
+    assert.match(exportedSheet(file, 'ต้องตามเอกสาร'), /location="'รายการค่าใช้จ่าย'!A2"/);
     assert.doesNotMatch(packV2Sheet(file, 'ต้องตามเอกสาร').flat().join(' '), /https?:|\/companies\//);
   });
 
@@ -672,7 +675,7 @@ describe('pack v2 sheets', () => {
     for (const target of ['payments', 'withholding']) {
       const file = build([source({ selected: false })], { rows: [], [target]: entries });
       const sheet = target === 'payments' ? 'การจ่าย' : 'หัก ณ ที่จ่าย';
-      assert.match(exportedSheet(file, 'ต้องตามเอกสาร'), new RegExp(`HYPERLINK\\(&quot;#'${sheet}'!A3`));
+      assert.match(exportedSheet(file, 'ต้องตามเอกสาร'), new RegExp(`location="'${sheet}'!A3"`));
     }
   });
 
@@ -693,9 +696,11 @@ describe('pack v2 sheets', () => {
       lineNumber: i + 1, description: 'บริการ', taxableAmount: '100', vatAmount: '7', vatRate: '.07', expenseCategoryId: `c${i}`, categoryName: `หมวด ${i}`,
       taxComponentsJson: { VAT: true }, claimabilitySnapshot: right, taxEvidenceReviewStatus: 'VERIFIED' })) });
     const rows = packV2Sheet(build([mixed, source({ id: 'b', expenseNumber: 'EXP-B', currency: 'ZZZ' }), source({ id: 'c', expenseNumber: 'EXP-C', currency: 'QQQ' })]), 'สรุปรายเดือน');
-    assert.ok(rows.some(row => row[0] === 'สิทธิภาษีซื้อ' && row[1] === 'ใช้ได้ตามเงื่อนไข' && row[4] === '7'));
-    assert.ok(rows.some(row => row[0] === 'สิทธิภาษีซื้อ' && row[1] === 'ใช้ไม่ได้' && row[4] === '7'));
-    for (const code of ['ZZZ', 'QQQ']) assert.ok(rows.some(row => row[2] === `สกุลเงินอื่น (${code})`));
+    const rights = (sheet: string[][]) => { const at = sheet.findIndex(row => row[0]?.startsWith('สิทธิใช้ภาษีซื้อ')); const head = sheet[at + 1]!;
+      return sheet.slice(at + 2).filter((row, i, all) => all.slice(0, i + 1).every(r => r.length)).map(row => ({ label: row[0], vat: row[head.indexOf('VAT')] })); };
+    assert.ok(rights(rows).some(row => row.label === 'ใช้ได้ตามเงื่อนไข' && row.vat === '7'));
+    assert.ok(rights(rows).some(row => row.label === 'ใช้ไม่ได้' && row.vat === '7'));
+    for (const code of ['ZZZ', 'QQQ']) assert.ok(rows.flat().includes(`สกุลเงินอื่น (${code})`));
     const expenseRows = packV2Sheet(build([source({ currency: 'ZZZ' })]), 'รายการค่าใช้จ่าย');
     assert.ok(expenseRows.some(row => row.includes('สกุลเงินอื่น (ZZZ)')));
   });
@@ -706,11 +711,11 @@ describe('pack v2 sheets', () => {
     const rows = packV2Sheet(file, 'รายการค่าใช้จ่าย');
     assert.equal(rows.length, 2);
     assert.equal(rows[1]![rows[0]!.indexOf('ยอดรวมตามเอกสาร')], '321.01');
-    assert.equal(rows[0]!.at(-1), 'ชุดเอกสารรายการ');
-    assert.match(exportedSheet(file), /HYPERLINK\(&quot;ชุดเอกสารรายการ\/A.pdf/);
+    assert.equal(rows[0]![rows[0]!.indexOf('เลขที่รายการ') + 1], 'เอกสารรายการ (PDF)');
+    assert.match(exportedSheet(file, 'xl/worksheets/_rels/sheet3.xml.rels'), /Target="ชุดเอกสารรายการ\/A.pdf" TargetMode="External"/);
     assert.ok(rows.flat().some(value => value.includes('มีชุดเอกสารรายการ 2 ชุด')));
     const standalone = packV2Sheet(build([source()], { files }), 'รายการค่าใช้จ่าย');
-    assert.ok(!standalone[0]!.includes('ชุดเอกสารรายการ'));
+    assert.ok(!standalone[0]!.includes('เอกสารรายการ (PDF)'));
     assert.ok(!standalone.flat().some(value => value.includes('มีชุดเอกสารรายการ 2 ชุด')));
     assert.ok(packV2Sheet(build([source()], { files, part: 1 }), 'รายการค่าใช้จ่าย').flat().some(value => value === 'อยู่ในชุดที่ 2: ชุดเอกสารรายการ/A.pdf'));
   });
@@ -727,7 +732,8 @@ describe('pack v2 sheets', () => {
     const partial = source({ lines: [{ lineNumber: 1, description: 'บริการ', taxableAmount: '300', vatAmount: '21.01', vatRate: '.07',
       taxComponentsJson: { VAT: true }, claimabilitySnapshot: 'PARTIAL', taxEvidenceReviewStatus: 'VERIFIED' }] });
     const file = build([partial]);
-    assert.ok(packV2Sheet(file, 'สรุปรายเดือน').some(row => row[0] === 'สิทธิภาษีซื้อ' && row[1] === 'ใช้ได้บางส่วน' && row[4] === '21.01'));
+    const summary = packV2Sheet(file, 'สรุปรายเดือน'), at = summary.findIndex(row => row[0]?.startsWith('สิทธิใช้ภาษีซื้อ'));
+    assert.ok(summary.slice(at + 2).some(row => row[0] === 'ใช้ได้บางส่วน' && row[summary[at + 1]!.indexOf('VAT')] === '21.01'));
     assert.ok(!packV2Sheet(file, 'รายงานภาษีซื้อ').some(row => row[2] === 'INV-1'));
     const negative = packV2Sheet(build([source({ taxableAmount: '-100', vatAmount: '-7', grandTotalAmount: '-107', lines: [] })]), 'รายงานภาษีซื้อ');
     assert.ok(negative.some(row => row[2] === 'INV-1' && row[8] === '-7'), 'stored claimable VAT is retained with its sign');
@@ -785,7 +791,7 @@ describe('pack v2 record PDF', () => {
     buffers.push(signedFixture, signedFixture);
     const hashes = buffers.map(bytes => createHash('sha256').update(bytes).digest('hex'));
     const { buildExpenseRecordPdf } = await import('./expense-record-pdf.logic');
-    const result = await buildExpenseRecordPdf({ cover: ['EXP-1'], exportedAt: new Date('2026-11-07T00:00:00Z'), timezone: 'Asia/Bangkok',
+    const result = await buildExpenseRecordPdf({ cover: [{ number: 'EXP-1', fields: [['ผู้ขาย/ผู้รับเงิน', 'ผู้ขาย']], amountUnit: 'บาท', amounts: [{ label: 'ยอดรวมตามเอกสาร', value: '1.00', strong: true }], payments: [], notes: [] }], exportedAt: new Date('2026-11-07T00:00:00Z'), timezone: 'Asia/Bangkok',
       files: buffers.map((bytes, index) => ({ path: `${index}.pdf`, part: 1, mimeType: index === 5 ? 'image/png' : 'application/pdf', load: async () => bytes })) });
     assert.deepEqual(result.appendices.map(row => row.status), ['included', 'referenced', 'referenced', 'referenced', 'referenced', 'referenced']);
     assert.match(result.appendices[1]!.reason!, /ลายเซ็น/);
@@ -802,7 +808,7 @@ describe('pack v2 record PDF', () => {
     unsupported.context.register(unsupported.context.stream('unknown', { Filter: PDFName.of('UnknownDecoder') }));
     const excessive = await PDFDocument.create(); for (let i = 0; i < 65; i++) excessive.addPage();
     const files = [encrypted, unsupported, excessive];
-    const result = await buildExpenseRecordPdf({ cover: ['EXP-1'], exportedAt: new Date('2026-11-07'), timezone: 'Asia/Bangkok',
+    const result = await buildExpenseRecordPdf({ cover: [{ number: 'EXP-1', fields: [['ผู้ขาย/ผู้รับเงิน', 'ผู้ขาย']], amountUnit: 'บาท', amounts: [{ label: 'ยอดรวมตามเอกสาร', value: '1.00', strong: true }], payments: [], notes: [] }], exportedAt: new Date('2026-11-07'), timezone: 'Asia/Bangkok',
       files: await Promise.all(files.map(async (document, index) => ({ path: `${index}.pdf`, part: 1, mimeType: 'application/pdf', load: async () => Buffer.from(await document.save()) }))) });
     assert.ok(result.appendices.every(file => file.status === 'referenced'));
     assert.equal((await PDFDocument.load(result.data)).getPageCount(), 1);
@@ -812,7 +818,7 @@ describe('pack v2 record PDF', () => {
     const { PDFDocument, PDFName, PDFDict } = await import('pdf-lib');
     const image = await sharp({ create: { width: 600, height: 2400, channels: 4, background: '#fff' } }).png().toBuffer();
     const { buildExpenseRecordPdf } = await import('./expense-record-pdf.logic');
-    const result = await buildExpenseRecordPdf({ cover: ['EXP-1', 'ผู้ขาย'], exportedAt: new Date('2026-11-06T23:00:00Z'), timezone: 'Asia/Bangkok',
+    const result = await buildExpenseRecordPdf({ cover: [{ number: 'EXP-1', fields: [['ผู้ขาย/ผู้รับเงิน', 'ผู้ขาย']], amountUnit: 'บาท', amounts: [{ label: 'ยอดรวมตามเอกสาร', value: '1.00', strong: true }], payments: [], notes: [] }], exportedAt: new Date('2026-11-06T23:00:00Z'), timezone: 'Asia/Bangkok',
       files: [{ path: 'receipt.png', part: 2, mimeType: 'image/png', load: async () => image },
         { path: 'missing.pdf', part: 1, mimeType: 'application/pdf', load: async () => { throw new Error('secret storage key'); } }] });
     assert.equal(result.appendices[1]!.status, 'unavailable');

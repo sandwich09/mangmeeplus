@@ -288,9 +288,12 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     for (const seller of [invoiceSeller, receiptSeller]) {
       const row = rows.find(row => row[headers!.indexOf('ผู้ขาย/ผู้รับเงิน')] === seller);
       expect(row).toBeDefined();
-      const names = row![headers!.indexOf('ไฟล์เอกสาร')]!.split('\n').filter(Boolean);
-      expect(names.some(name => name.startsWith('เอกสารค่าใช้จ่าย/EXP-'))).toBe(true);
-      for (const name of names) expect(files.has(name), name).toBe(true);
+      // Each row links to one record PDF; the original receipt stays in its own folder too.
+      const packet = row![headers!.indexOf('เอกสารรายการ (PDF)')]!;
+      expect(packet).toMatch(/^ชุดเอกสารรายการ\/EXP-.*\.pdf$/);
+      expect(files.has(packet), packet).toBe(true);
+      const number = packet.slice('ชุดเอกสารรายการ/'.length, -'.pdf'.length);
+      expect([...files.keys()].some(name => name.startsWith(`เอกสารค่าใช้จ่าย/${number}`))).toBe(true);
     }
     // Downloading keeps the bundle dialog open so a person can download it again.
     await dialog.getByRole('button', { name: 'ปิด', exact: true }).click();

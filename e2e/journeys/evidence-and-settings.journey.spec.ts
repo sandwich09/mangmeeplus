@@ -66,7 +66,12 @@ function workbookSheets(buffer: Buffer, bundled = false, partCount = 1) {
     const path = posix.normalize(target.startsWith('/') ? target.slice(1) : posix.join('xl', target));
     const xml = files.get(path)!.toString();
     expect(decodeXml(xml)).not.toMatch(/HYPERLINK\("http/i);
+    expect(files.get(`xl/worksheets/_rels/${posix.basename(target)}.rels`)?.toString() ?? '').not.toMatch(/Target="https?:/i);
     const data = rows(xml);
+    if (name === 'สรุปรายเดือน') {
+      expect(data.flat().some(value => value.startsWith('ภาพรวมรายจ่ายที่เลือก'))).toBe(true);
+      return [name, data] as const;
+    }
     if (name === 'รายงานภาษีซื้อ') {
       expect(data.flat()).toContain('จัดตามเดือนวันที่เอกสาร ระบบยังไม่ได้เก็บเดือนที่ใช้สิทธิภาษีซื้อ');
       return [name, data] as const;
@@ -74,11 +79,10 @@ function workbookSheets(buffer: Buffer, bundled = false, partCount = 1) {
     const expected = headers[name as keyof typeof headers].filter(label => name !== 'ไฟล์ทั้งหมด' || label !== 'ชุดที่' || partCount > 1);
     if (name === 'รายการค่าใช้จ่าย') {
       if (data[0]!.includes('สาขาของร้าน')) expected.splice(2, 0, 'สาขาของร้าน');
-      if (bundled) expected.push('ไฟล์เอกสาร');
       expected.push('วิธีนำส่งภาษีหัก ณ ที่จ่าย');
-      if (bundled) expected.push('ชุดเอกสารรายการ');
+      if (bundled) expected.splice(expected.indexOf('เลขที่รายการ') + 1, 0, 'เอกสารรายการ (PDF)');
     }
-    if (name === 'การจ่าย' && bundled) expected.push('ไฟล์หลักฐานการจ่าย');
+    if (name === 'การจ่าย' && bundled) expected.push('เอกสารรายการ (PDF)');
     expect(data[0]).toEqual(expected);
     return [name, data.slice(1)] as const;
   }));
@@ -269,7 +273,7 @@ test('@journey an owner downloads the accounting files, switches a branch off an
       for (const name of files.keys()) expect(name).not.toMatch(/c[a-z0-9]{24}/i);
       const bundledSheets = workbookSheets(files.get('สารบัญ.xlsx')!, true, count);
       const selectedRow = bundledSheets.get('รายการค่าใช้จ่าย')!.find(row => row.includes(expense.expenseNumber));
-      expect(selectedRow?.at(-1)).toContain('ชุดเอกสารรายการ/');
+      expect(selectedRow?.[selectedRow.indexOf(expense.expenseNumber) + 1]).toContain('ชุดเอกสารรายการ/');
       for (const [name, bytes] of files) if (name.startsWith('ชุดเอกสารรายการ/')) {
         expect(bytes.subarray(0, 4).toString()).toBe('%PDF');
         packetNames.push(name);
@@ -779,12 +783,12 @@ test('@journey pack v2 workbook and extracted packet links reconcile', async ({ 
     expect(sheets.get('รายการค่าใช้จ่าย')!).toHaveLength(31);
     const sum = (values: string[]) => values.reduce((total, value) => total + Math.round(Number(value.replace(/,/g, '')) * 100), 0);
     const expenseRows = sheets.get('รายการค่าใช้จ่าย')!;
-    const summary = sheets.get('สรุปรายเดือน')!.find(row => row[0] === 'รายจ่ายที่เลือก')!;
+    const overview = new Map(sheets.get('สรุปรายเดือน')!.map(row => [row[0], row[1]] as const));
     // A shop with two branches adds the 'สาขาของร้าน' column at index 2, which moves every amount one column right.
     const shift = expenseRows[0]!.length - (headers['รายการค่าใช้จ่าย'].length + 1);
-    expect(sum([summary[5]!])).toBe(sum(expenseRows.map(row => row[14 + shift]!)));
-    expect(sum([summary[8]!])).toBe(sum(expenseRows.map(row => row[19 + shift]!)));
-    expect(sum([summary[9]!])).toBe(sum(expenseRows.map(row => row[20 + shift]!)));
+    expect(sum([overview.get('ยอดรวมตามเอกสาร')!])).toBe(sum(expenseRows.map(row => row[14 + shift]!)));
+    expect(sum([overview.get('จ่ายแล้ว')!])).toBe(sum(expenseRows.map(row => row[19 + shift]!)));
+    expect(sum([overview.get('ค้างจ่าย')!])).toBe(sum(expenseRows.map(row => row[20 + shift]!)));
     const plan = await json<{ partCount: number; counts: { claimForms: number; recordPacks: number } }>(await api.post(`companies/${companyId}/expenses/accountant-package/bundle-plan`, { data: selection }));
     expect(plan.partCount).toBeGreaterThan(1); expect(plan.counts).toMatchObject({ claimForms: 1, recordPacks: 31 });
     const extracted = new Map<string, Buffer>(), locations = new Map<string, number>();
@@ -795,10 +799,11 @@ test('@journey pack v2 workbook and extracted packet links reconcile', async ({ 
       for (const [name, bytes] of files) if (name !== 'สารบัญ.xlsx') { expect(extracted.has(name)).toBe(false); extracted.set(name, bytes); locations.set(name, part); }
       const bundled = workbookSheets(files.get('สารบัญ.xlsx')!, true, plan.partCount);
       expect(bundled.get('สรุปรายเดือน')).toEqual(sheets.get('สรุปรายเดือน'));
-      for (const row of bundled.get('รายการค่าใช้จ่าย')!) packetReferences.push({ part, value: row.at(-1)! });
-      crossPart ||= bundled.get('รายการค่าใช้จ่าย')!.some(row => /^อยู่ในชุดที่ \d+: ชุดเอกสารรายการ\//.test(row.at(-1)!));
+      const packetCell = (row: string[]) => row.find(value => /^(อยู่ในชุดที่ \d+: )?ชุดเอกสารรายการ\//.test(value))!;
+      for (const row of bundled.get('รายการค่าใช้จ่าย')!) packetReferences.push({ part, value: packetCell(row) });
+      crossPart ||= bundled.get('รายการค่าใช้จ่าย')!.some(row => /^อยู่ในชุดที่ \d+: /.test(packetCell(row)));
       const xml = [...unzip(files.get('สารบัญ.xlsx')!).values()].map(value => value.toString()).join(' ');
-      expect(decodeXml(xml)).toMatch(/HYPERLINK\("#'รายการค่าใช้จ่าย'!A/);
+      expect(decodeXml(xml)).toMatch(/location="'รายการค่าใช้จ่าย'!A/);
     }
     expect(crossPart).toBe(true);
     for (const reference of packetReferences) {
