@@ -10,6 +10,18 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current Production — LINE recent-record focus (round 29) and everything since 2026-10-30, 2026-11-09 23:54 Bangkok
+
+Production serves exact main `20934abb16d2ca8859fdd3afd42282753dfe1899` (same tree as develop `bcf315939`),
+promoted from the signed UAT apply `20261109T162713Z-25e99b29`. Before it Production ran `884ba5307`
+(2026-10-30). Owner's go: "UAT ขึ้น prod เลย"; the owner typed the Production MFA code. Prepare
+`20261109T164438Z-31a1ee94` `PREPARED_NO_DEPLOYMENT` in 54.435 s; apply `20261109T164541Z-7fa7d5c1`
+signed/verified `ACCEPTED_LINE_DEFERRED` in 548.776 s, 12/12 phases (database 72 s, rollout 92 s, customer
+acceptance 213 s), AgentCore `kamal_production_b` v20 pinned. Browser acceptance in the Claude in-app browser
+about 3 minutes after website-ready: the owner signed in himself; auth/me 200 as SYSTEM_ADMIN with no password
+or legal action; platform access OPEN/live/canOpen; the owner approved the UI logout; auth/me and refresh 401
+afterwards. Evidence files are in the run directory. Native LINE not exercised.
+
 ## Current UAT — LINE "บิลเมื่อกี้ / อันนี้" focus record + own-message quotes (round 29), 2026-11-09 23:32 Bangkok
 
 UAT serves exact main `20934abb16d2ca8859fdd3afd42282753dfe1899` (same tree as develop `bcf315939`): the 21:49
