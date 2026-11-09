@@ -10,6 +10,25 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current UAT — LINE speed rounds 25–28, 2026-11-09 17:14 Bangkok
+
+UAT serves exact main `737fa2ef0bdd7d7af2e73c16884638017f8a93ba`; Production still serves
+`884ba5307468111c48a2bd2c01a3c27c438d33a6` (not mutated). UAT prepare `20261109T100531Z-370d5a56`
+passed in 203.247s (`--uat-smoke-acceptance`; without it the run stops at "Acceptance credentials
+file is missing"). Apply `20261109T100919Z-472a068c` completed signed/verified `ACCEPTED_LINE_DEFERRED`
+in 308.045s: all 12 phases, five additive migrations, AgentCore `kamal_uat_b` v38 (UPDATED_PINNED,
+artifact `3bbce1dd…`), readiness api-web/db, ai-gateway, workers/redis/internal API, retirement 19/19,
+owned SSM cleanup 2/2. Only changed settings versus the 10-30 UAT: version fields and
+`LINE_AI_BUFFER_DEBOUNCE_MS` 1000 → 500. AgentCore now receives the gateway's `APPROVED_AI_MODEL_IDS`
+and global-profile approval at release (still Sonnet 4.6 only). Claude Haiku 5.5 is NOT available to
+this account: one owner-authorized Bedrock playground prompt on `global.anthropic.claude-haiku-5-5`
+returned `AccessDeniedException … not available for this account` and the account has no Haiku 5.5
+Marketplace subscription, so Haiku stays out of `infra/kamal/config.json` for both environments.
+Release ran from worktree `release-uat-20261109` (origin/main, `.env.kamal` symlinked). Workflow
+UAT/READY/PROD IDs are `NOT_DISPATCHED`; native LINE was not exercised. Before this release a clean
+`infra/dev-kamal/build-complete.py` dry run found four build blockers (next-env.d.ts dev form, a
+workers spec import, a workers import of `@watchdog-bms/contracts`, stale pins), all fixed on main.
+
 ## Current UAT and Production — concise expense history, 2026-10-30 21:12 Bangkok
 
 UAT and Production serve exact source `884ba5307468111c48a2bd2c01a3c27c438d33a6`. Expense history
