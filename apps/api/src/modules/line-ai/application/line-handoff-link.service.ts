@@ -6,6 +6,11 @@ import { lineHandoffUrl } from '../../auth/domain/logic/line-handoff.logic';
 import type { LineReplyMessage } from '../infrastructure/line-reply.adapter';
 
 /** Who the outgoing message is for. Without all three there is no identity to bind, so no token. */
+/** The sales demo's web chat speaks as `Vdemo<companyId>`; real LINE user ids start with `U`. */
+export function isWebDemoLineUser(lineUserId: string): boolean {
+  return lineUserId.startsWith('Vdemo');
+}
+
 export type LineHandoffContext = {
   userId: string;
   companyId: string;
@@ -138,6 +143,9 @@ export class LineHandoffLinkService {
    */
   async linkFor(ctx: LineHandoffContext, targetPath: string): Promise<string | null> {
     if (!this.enabled) return null;
+    // The web demo chat runs inside a page the visitor is already signed in to: a handoff there would
+    // bounce through LINE Login, so it gets the plain link on this web origin.
+    if (isWebDemoLineUser(ctx.lineUserId)) return `${this.config.webBaseUrl!.replace(/\/+$/, '')}${stripLineExternalBrowserParam(targetPath)}`;
     try {
       const { rawToken } = await this.mint.execute({
         userId: ctx.userId,

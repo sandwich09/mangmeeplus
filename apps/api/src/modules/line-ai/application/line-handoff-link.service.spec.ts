@@ -287,3 +287,15 @@ describe('LineHandoffLinkService never leaks a token', () => {
     assert.ok(!serialized.includes('tok'), 'no token may reach a log line');
   });
 });
+
+describe('LineHandoffLinkService in the web demo chat', () => {
+  it('keeps the plain tenant link, because the demo visitor is already signed in', async () => {
+    const { service, calls } = makeService();
+    const url = `${WEB}/companies/${COMPANY}/expenses/exp-1`;
+    const [message] = await service.wrapOutgoingLineContent({ ...CTX, lineUserId: `Vdemo${COMPANY}` }, [text(`ดูรายการที่ ${url}`)]);
+    assert.equal((message as any).text, `ดูรายการที่ ${url}`);
+    assert.equal(calls.length, 0);
+    assert.equal(await service.linkFor({ ...CTX, lineUserId: `Vdemo${COMPANY}` }, `/companies/${COMPANY}/dashboard`), `${WEB}/companies/${COMPANY}/dashboard`);
+    assert.equal(calls.length, 0);
+  });
+});

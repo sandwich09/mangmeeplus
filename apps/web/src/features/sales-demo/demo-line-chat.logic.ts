@@ -133,6 +133,8 @@ export function handleDemoAction(action: DemoAction, handlers: {
     case 'uri': {
       const url = safeDemoUrl(action.uri, handlers.origin);
       if (!url) return;
+      // LINE's "leave the in-app browser" flag means nothing on the web page the demo runs in.
+      url.searchParams.delete('openExternalBrowser');
       if (url.origin === handlers.origin) handlers.navigate(`${url.pathname}${url.search}${url.hash}`);
       else handlers.external(url.href);
     }

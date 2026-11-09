@@ -100,8 +100,8 @@ test('message, postback, camera and safe URI actions share the correct dispatch'
   handleDemoAction({ type: 'camera' }, handlers);
   handleDemoAction({ type: 'cameraRoll' }, handlers);
   assert.equal(pickFile.mock.callCount(), 2);
-  for (const uri of ['/companies/demo/expenses?a=1#row', 'https://mangmeeplus.com/companies/demo']) handleDemoAction({ type: 'uri', label: 'เปิด', uri }, handlers);
-  assert.deepEqual(navigate.mock.calls.map(call => call.arguments[0]), ['/companies/demo/expenses?a=1#row', '/companies/demo']);
+  for (const uri of ['/companies/demo/expenses?a=1#row', 'https://mangmeeplus.com/companies/demo', 'https://mangmeeplus.com/companies/demo/expenses?openExternalBrowser=1#line']) handleDemoAction({ type: 'uri', label: 'เปิด', uri }, handlers);
+  assert.deepEqual(navigate.mock.calls.map(call => call.arguments[0]), ['/companies/demo/expenses?a=1#row', '/companies/demo', '/companies/demo/expenses#line']);
   handleDemoAction({ type: 'uri', label: 'นอกเว็บ', uri: 'https://example.org' }, handlers);
   for (const uri of ['javascript:alert(1)', 'data:text/html,bad']) handleDemoAction({ type: 'uri', label: 'เปิด', uri }, handlers);
   assert.equal(external.mock.callCount(), 1);

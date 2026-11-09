@@ -58,3 +58,10 @@ Demo-link management 2026-11-09 (owner: "ขอระบบจัดการล
   (SSM port 22 + ssh, `pg` from `/app/api-runtime`, no secret leaves the host) found 2 links, 2 live demo shops,
   no reset/delete audits and 0 LINE logs or outbox rows of missing companies — nothing to clean. Production
   does not run the demo-link feature. Only the local stack had orphans; they were deleted.
+
+## 2026-11-10 card web buttons in the demo chat
+
+- Owner: "เปิดดูในเว็บ" in the demo chat tried LINE login. Cause: with `LINE_WEB_HANDOFF_ENABLED` every tenant link becomes a one-tap `/l/<token>`, whose exchange fails for the demo visitor and lands on LINE Login.
+- Fix (demo only, keyed on the `Vdemo<companyId>` chat user — real LINE ids start with `U`): `LineHandoffLinkService.linkFor` returns the plain web link, so every card and quick-reply button that goes through the seam keeps the tenant URL; `newShopSignupUrl` hides the LIFF "เปิดร้านใหม่" button; the demo web chat drops `openExternalBrowser=1`.
+- Survey of all stored demo replies: every uri is a tenant page; no LIFF, `line.me` or `/l/` links. Staff contact (`lin.ee`) is a real team door and stays.
+- Verified: handoff spec 22/22, webhook spec 1422/1422, sales-demo web specs 43/43, API + web typecheck; local stack with handoff on — `/company` card "เปิดเว็บบริษัทนี้" opens the demo shop dashboard signed in, no "เปิดร้านใหม่".

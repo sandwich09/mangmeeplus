@@ -229,7 +229,7 @@ import {
 } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 import { type CompanyOcrAdmissionIdentity, releaseCompanyOcrAdmission, LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE, claimReceiptQuotaNotice, receiptQuotaSnapshot, releaseReceiptQuotaNotice, RECEIPT_QUOTA_ERROR_CODE, settleCompanyOcrAdmission } from '../company-ocr-governance';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
-import { LineHandoffLinkService } from '../line-handoff-link.service';
+import { LineHandoffLinkService, isWebDemoLineUser } from '../line-handoff-link.service';
 import { isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../../auth/domain/logic/line-handoff.logic';
 import { canManagePlan, planManagerRoleFilter, PLAN_MANAGE_PERMISSION_KEY } from '../../../access-control/domain/logic/plan-manager.logic';
 import {
@@ -3008,9 +3008,10 @@ export class ProcessLineWebhookUseCase {
    * must not exist there either. `externalSignupEnabled` is the same switch the public signup route
    * answers with `external_signup_disabled`.
    */
-  private newShopSignupUrl(): string | undefined {
+  private newShopSignupUrl(lineUserId?: string): string | undefined {
     const liffId = this.config.lineLiffId;
-    if (!this.config.externalSignupEnabled || !liffId || !LIFF_ID_PATTERN.test(liffId)) return undefined;
+    // The LIFF form needs LINE Login, which the web demo chat cannot do.
+    if ((lineUserId && isWebDemoLineUser(lineUserId)) || !this.config.externalSignupEnabled || !liffId || !LIFF_ID_PATTERN.test(liffId)) return undefined;
     return `https://liff.line.me/${liffId}/signup`;
   }
 
@@ -10946,7 +10947,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       const pendingSignup = await this.findOpenLineSignup(event.lineUserId);
       const stateLabel = companyStateLabel(currentMembership);
       const messages: LineReplyMessage[] = [
-        ...(signupHelp && isCompanyOwner(currentMembership) && this.newShopSignupUrl() && !pendingSignup
+        ...(signupHelp && isCompanyOwner(currentMembership) && this.newShopSignupUrl(event.lineUserId) && !pendingSignup
           ? [buildPublicPolicyCardMessage(signupHelp, replyLanguage(event))] : []),
         buildCompanyContextMessage({
         companyName: companyLabel(currentMembership, replyLanguage(event)),
@@ -10954,7 +10955,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
         displayName,
         roleLabels: companyRoleLabels(currentMembership),
         isOwner: isCompanyOwner(currentMembership),
-        newShopSignupUrl: this.newShopSignupUrl(),
+        newShopSignupUrl: this.newShopSignupUrl(event.lineUserId),
         pendingSignupName: pendingSignup?.companyName,
         // Owner 2026-09-06: the picker below is only pushed to a multi-company member, so its
         // เปิดเว็บบริษัทนี้ button never reached the single-shop owner. Same mint, same surface — the
