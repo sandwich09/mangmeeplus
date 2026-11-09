@@ -380,7 +380,8 @@ function reimbursementOptionsEnglish(options: Parameters<typeof buildReimburseme
     if (categories.length) return [{ type: 'text', text: 'Please choose the expense category.', quickReply: { items: categories.slice(0, 12).map(entry => ({ type: 'action',
       action: choice(lineUiLabel(entry.label, 'en'), entry.choiceId ?? '', `Choose expense category: ${lineUiLabel(entry.label, 'en')}`) })) } }];
   }
-  return options.reasonQuestion ? [{ type: 'text', text: options.reasonQuestion === 'ไม่มีใบเสร็จเพราะอะไรคะ' ? 'Why is the receipt missing?' : 'What was the business purpose of this claim?' }] : [];
+  return options.reasonQuestion ? [{ type: 'text', text: options.reasonQuestion === 'ไม่มีใบเสร็จเพราะอะไรคะ' ? 'Why is the receipt missing?'
+    : options.reasonQuestion.startsWith('ได้เหตุผลของใบเบิกแล้ว') ? 'Got the claim reason. Why is the receipt missing? For example, the shop gives no receipt.' : 'What was the business purpose of this claim?' }] : [];
 }
 
 export function buildReimbursementOptionsMessages(...args: Parameters<typeof reimbursementOptionsMessages>): LineReplyMessage[] {

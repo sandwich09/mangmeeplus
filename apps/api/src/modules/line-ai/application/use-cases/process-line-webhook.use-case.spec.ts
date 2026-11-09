@@ -12089,7 +12089,7 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
   }
   assert.doesNotMatch(JSON.stringify(messages), /ส่วนที่ยังไม่เสร็จ|ข้อ 1|ส่งรูปใบเสร็จ|ไม่มีสิทธิ์/);
   if (withPhoto) assert.doesNotMatch(JSON.stringify(messages), /ไม่มีใบเสร็จเพราะอะไร/);
-  if (live22 && journey === 'J7' && action.status !== 'PREVIEW') assert.ok(lineSystemCardTexts(messages[0].contents).includes('ไม่มีใบเสร็จเพราะอะไรคะ'));
+  if (live22 && journey === 'J7' && action.status !== 'PREVIEW') assert.ok(['ไม่มีใบเสร็จเพราะอะไรคะ', 'ได้เหตุผลของใบเบิกแล้วค่ะ ขอเหตุผลที่ไม่มีใบเสร็จด้วย เช่น ร้านไม่ออกใบเสร็จ'].some(text => lineSystemCardTexts(messages[0].contents).includes(text)));
   currentRoute = live.route;
   currentFragment = { fields: { reason: 'เดินทางพบลูกค้า', ...(!withPhoto ? { missingReceiptReason: 'ร้านไม่ออกใบเสร็จให้' } : {}) } };
   if (fresh23 === 4) currentRoute = FX24_LIVE.J7.turns[4].route;
@@ -13777,9 +13777,10 @@ for (const id of ['X036-A', 'X095-B', 'X042-A', 'X037-A', 'J7', 'J7-E']) for (co
     await h.execute('ค่าเดินทาง');
   } else await press(controls().find((action: any) => action.label === 'ค่าเดินทาง'));
   if (receipt === 'no-receipt') {
-    assert.match(JSON.stringify(h.delivered.at(-1)), /ไม่มีใบเสร็จเพราะอะไรคะ/);
+    // R27: when the claim reason is already kept the question says so and names the missing-receipt reason.
+    assert.match(JSON.stringify(h.delivered.at(-1)), /ไม่มีใบเสร็จเพราะอะไรคะ|ได้เหตุผลของใบเบิกแล้วค่ะ ขอเหตุผลที่ไม่มีใบเสร็จด้วย/);
     await h.execute('ร้านไม่ออกใบเสร็จให้');
-  } else assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /ไม่มีใบเสร็จเพราะอะไรคะ/);
+  } else assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /ไม่มีใบเสร็จเพราะอะไรคะ|ขอเหตุผลที่ไม่มีใบเสร็จด้วย/);
   if (id.startsWith('J7')) {
     const continuation = structuredClone(id === 'J7-E' ? EXAM_E_REPLAYS.find(row => row.id === 'J7-xd-fail#4') : EXAM_D_REPLAYS.find(row => row.id === 'J7#4'));
     const state = h.projection();
@@ -17239,6 +17240,43 @@ it('M4 round 3 combined receipt and category leave an untyped reason pending', a
   const result = await h.adapter.answerReason({ ...h.input, evidence, text });
   assert.equal(result?.status, 'needs_fields');
   assert.equal(h.action().commandJson.accepted.proposal.fields.reason, undefined);
+});
+
+it('R27 a receipt-required company keeps the claim reason from one message and asks the missing-receipt reason as a separate field', async () => {
+  for (const mode of ['ask', 'because'] as const) {
+    const h = manualClaimHarness();
+    h.repo.findPolicy = async () => ({ currency: 'THB', requireReceipt: true, allowMissingReceiptWithReason: true, status: 'ACTIVE' });
+    await h.adapter.startFromWorkflow(h.ctx, h.owner, 1, { eventIdHash: 'a'.repeat(64) });
+    const lineText = 'ค่าแท็กซี่ 250 บาท';
+    const lineEvidence = (await createLineAiInputEvidence({ turnKey: `r27-line-${mode}`, parts: [{ partId: 'part-0',
+      eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.now(), rawText: lineText }] }))!.inputEvidence;
+    await h.adapter.answerLine({ ...h.input, evidence: lineEvidence, text: lineText });
+    const text = mode === 'ask' ? 'ไม่มีใบเสร็จ หมวดค่าเดินทาง เหตุผลไปส่งเอกสารให้ร้าน'
+      : 'ไม่มีใบเสร็จเพราะร้านไม่ออกให้ หมวดค่าเดินทาง เหตุผลไปส่งเอกสารให้ร้าน';
+    const evidence = (await createLineAiInputEvidence({ turnKey: `r27-combined-${mode}`, parts: [{ partId: 'part-0',
+      eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const result = await h.adapter.answerReason({ ...h.input, evidence, text });
+    if (mode === 'ask') {
+      assert.equal(result?.status, 'needs_fields', JSON.stringify(result));
+      const proposal = h.action().commandJson.accepted.proposal;
+      assert.equal(proposal.fields.reason?.value, 'ไปส่งเอกสารให้ร้าน');
+      assert.equal(proposal.fields.missingReceiptReason, undefined, 'the claim reason is never reused as the missing-receipt reason');
+      assert.equal((await h.view())?.reasonQuestion, 'ได้เหตุผลของใบเบิกแล้วค่ะ ขอเหตุผลที่ไม่มีใบเสร็จด้วย เช่น ร้านไม่ออกใบเสร็จ');
+      const answer = 'ร้านไม่ออกใบเสร็จให้';
+      const answerEvidence = (await createLineAiInputEvidence({ turnKey: 'r27-answer', parts: [{ partId: 'part-0',
+        eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.now(), rawText: answer }] }))!.inputEvidence;
+      const done = await h.adapter.answerReason({ ...h.input, evidence: answerEvidence, text: answer });
+      assert.equal(done?.status, 'preview', JSON.stringify(done));
+      if (done?.status === 'preview') assert.equal(done.preview.after.missingReceiptReason, 'ร้านไม่ออกใบเสร็จให้');
+    } else {
+      assert.equal(result?.status, 'preview', JSON.stringify(result));
+      if (result?.status === 'preview') {
+        assert.equal(result.preview.after.missingReceiptReason, 'ร้านไม่ออกให้');
+        assert.equal(result.preview.after.reason, 'ไปส่งเอกสารให้ร้าน');
+        assert.equal(result.preview.after.lines[0].categoryKey, 'travel');
+      }
+    }
+  }
 });
 
 async function m4ClaimAmountHarness(duplicate = false) {

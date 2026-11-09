@@ -125,6 +125,9 @@ function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; 
 function iso(value: string | Date): string { return (value instanceof Date ? value : new Date(value)).toISOString(); }
 function validChoiceId(value: unknown): value is string { return typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value); }
 
+/** Asked when the claim reason is already kept but the company needs a separate missing-receipt reason. */
+export const LINE_CLAIM_MISSING_RECEIPT_AFTER_REASON = 'ได้เหตุผลของใบเบิกแล้วค่ะ ขอเหตุผลที่ไม่มีใบเสร็จด้วย เช่น ร้านไม่ออกใบเสร็จ';
+
 @Injectable()
 export class LineReimbursementDraftAdapterService {
   constructor(
@@ -264,7 +267,8 @@ export class LineReimbursementDraftAdapterService {
         : 'บริษัทกำหนดให้มีหลักฐานก่อนส่งอนุมัติค่ะ แนบใบเสร็จหรือจัดทำใบรับรองแทนใบเสร็จในเว็บให้ครบก่อนนะคะ' : undefined;
       const missingReceiptReason = (active.commandJson as { fieldPaths?: string[] })?.fieldPaths?.includes('fields.missingReceiptReason');
       return { ...this.publicOptions(shown, accepted.proposal, accepted.awaitingPhoto), ...(accepted.lineQuestion ? { lineQuestion: accepted.lineQuestion } : {}), ...(receiptNotice ? { receiptNotice } : {}),
-        ...(missingReceiptReason ? { reasonQuestion: 'ไม่มีใบเสร็จเพราะอะไรคะ' } : {}),
+        // Owner 2026-11-09: a claim reason given in the same message was read as asked again; say it was kept.
+        ...(missingReceiptReason ? { reasonQuestion: accepted.proposal?.fields.reason?.value ? LINE_CLAIM_MISSING_RECEIPT_AFTER_REASON : 'ไม่มีใบเสร็จเพราะอะไรคะ' } : {}),
         control: { actionId: active.id, revision: digest([options, accepted.proposal ?? null, accepted.awaitingPhoto ?? false]) } };
     } catch { return null; }
   }
@@ -502,6 +506,20 @@ export class LineReimbursementDraftAdapterService {
       if (first && !stripLineFieldParticles(first)) remaining = remaining.slice(first.length).trim();
       changed = true;
     }
+    // "ไม่มีใบเสร็จเพราะร้านไม่ออกให้ หมวด… เหตุผล…": the เพราะ clause is the missing-receipt reason.
+    const because = noReceipt && remaining.match(/^เพราะ\s*(.+?)(?=\s+(?:เลือกหมวด|หมวด|เหตุผล)|$)/u);
+    const becauseValue = because ? stripLineFieldParticles(because[1]!.trim()) : '';
+    const part = input.evidence.parts[0]!, becauseStart = becauseValue ? part.rawText.indexOf(becauseValue) : -1;
+    if (because && becauseValue && becauseStart >= 0 && part.rawText.indexOf(becauseValue, becauseStart + 1) < 0) {
+      const fragment = parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: active.taskId, taskRevision: accepted.options.taskRevision,
+        operation: 'CREATE', fields: { missingReceiptReason: { value: becauseValue, proof: { kind: 'USER_TEXT', refs: [{ partId: part.partId,
+          rawSha256: part.rawSha256, startUtf16: becauseStart, endUtf16: becauseStart + becauseValue.length }] } } } },
+      { evidence: input.evidence, candidateValues: {}, candidateSources: {} });
+      if (fragment?.fields.missingReceiptReason) {
+        proposal.fields.missingReceiptReason = fragment.fields.missingReceiptReason;
+        remaining = remaining.slice(because[0].length).trim();
+      }
+    }
     const prefix = remaining.match(/(?:^|[\s,;])(?:เลือกหมวดค่าใช้จ่าย|หมวด(?:ค่าใช้จ่าย)?)\s*[:：]?\s*/u);
     if (!options.collection.categoryChosen) {
       const start = prefix ? prefix.index! + prefix[0].length : 0;
@@ -521,7 +539,7 @@ export class LineReimbursementDraftAdapterService {
     const next = { ...accepted, proposal, awaitingPhoto: noReceipt ? false : accepted.awaitingPhoto };
     const reason = remaining.match(/(?:^|[\s,;])เหตุผล\s*[:：]?\s*.+$/u)?.[0].trim();
     const fields = (active.commandJson as { fieldPaths?: string[] }).fieldPaths ?? [];
-    const missingReason = noReceipt && !prefix && !reason && effectivePolicy(await this.repo.findPolicy(input.ctx.companyId, null)).allowMissingReceiptWithReason
+    const missingReason = noReceipt && !prefix && !reason && !proposal.fields.missingReceiptReason && effectivePolicy(await this.repo.findPolicy(input.ctx.companyId, null)).allowMissingReceiptWithReason
       ? stripLineFieldParticles(remaining).replace(/ด้วย$/u, '').trim() : '';
     const answer = reason || (missingReason ? `เหตุผล ${missingReason}` : '') || ((line.values.categoryChoiceId || options.collection.categoryChosen)
       && fields.some(field => field === 'fields.reason' || field === 'fields.missingReceiptReason') ? remaining : '');
