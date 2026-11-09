@@ -24,6 +24,7 @@ import {
 } from './sales-console.logic';
 import { SalesCredentialPanel, SalesEmpty, SalesNotice } from './SalesConsoleParts';
 import { SalesProfileEditor } from './SalesProfileEditor';
+import { SalesDemoLinkDialog } from './SalesDemoLinkDialog';
 
 /**
  * One page, two rights (spec §12 "Sales console" + "Admin console"):
@@ -42,6 +43,7 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [demoOpen, setDemoOpen] = useState(false);
   const [values, setValues] = useState<SalesAgentFormValues>(() => emptyAgentForm());
   const [address, setAddress] = useState<CompanyLegalAddress>(() => ({ ...EMPTY_ADDRESS }));
   const [bankSelection, setBankSelection] = useState('');
@@ -210,6 +212,8 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
       actions={
         <div className="flex flex-wrap gap-2">
           {admin && <a href={SALES_AGENT_CSV_URL} className="mangmee-btn mangmee-btn-secondary">ส่งออก CSV</a>}
+          {/* Owner 2026-11-09: the admin menu had no way to the sales ดีล page, so the admin could not make a demo link. */}
+          {admin && <button type="button" className="mangmee-btn mangmee-btn-secondary" onClick={() => setDemoOpen(true)}>สร้างลิงก์เดโม่</button>}
           <button type="button" className="mangmee-btn mangmee-btn-primary" onClick={() => { setErrors({}); setCreating(true); }}>เพิ่มบัญชี</button>
         </div>
       }
@@ -449,6 +453,7 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
           </div>}
         </div>
       </Modal>
+      {demoOpen && <SalesDemoLinkDialog onClose={() => setDemoOpen(false)} />}
     </MangmeePage>
   );
 }
