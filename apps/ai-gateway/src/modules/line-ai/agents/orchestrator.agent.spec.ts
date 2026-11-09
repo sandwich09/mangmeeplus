@@ -2803,6 +2803,12 @@ describe('Exam C: independent exam router conversation replays', () => {
         const payload = JSON.parse(input.messages[0]!.text);
         assert.equal(payload.conversationGuidance, undefined);
         assert.ok(input.systemPrompt!.includes(JSON.stringify(ADVISOR_CONVERSATION_GUIDANCE)));
+        // R28: general answers open a yes/no question with the answer and never speak of "your system".
+        assert.match(input.systemPrompt!, /a yes\/no question .* opens with the direct answer \(ได้\/ไม่ได้, ควร\/ไม่ต้อง, ใช่\/ไม่ใช่\)/u);
+        assert.match(input.systemPrompt!, /never call the product "ระบบของคุณ"\/"your system"/u);
+        assert.match(input.systemPrompt!, /a yes\/no question still opens with its answer word/u);
+        assert.match(input.systemPrompt!, /Never send the user to a system administrator, IT or "the company settings"/u);
+        assert.match(input.systemPrompt!, /Last check before you answer: a yes\/no question starts with its answer word, and the text never contains ระบบของคุณ, your system or ผู้ดูแลระบบ\./u);
         if (replay.id === 'V055-A') {
           const prefix = JSON.parse(input.systemPrompt!.split('\n').at(-1)!);
           assert.equal(payload.taxGuidance, undefined);

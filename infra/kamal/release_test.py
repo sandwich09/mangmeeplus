@@ -346,6 +346,41 @@ class Contracts(unittest.TestCase):
             self.assertEqual(r.source,prepared.resolve().parent/'source')
             self.assertEqual(r.build,{'status':'passed'})
 
+    def test_agentcore_update_carries_the_gateway_ai_approvals(self):
+        # A model approved in config.json must reach AgentCore too; it re-checks every grant's model.
+        with tempfile.TemporaryDirectory() as tmp:
+            r=m.Release.__new__(m.Release);r.target=target('uat');r.args=argparse.Namespace(environment='uat')
+            arn=r.target['agentcoreRuntimeArn'];models='global.anthropic.claude-sonnet-4-6,global.anthropic.claude-haiku-5-5'
+            r.envs={'ai-gateway':{'AGENTCORE_RUNTIME_ARN':arn,'AGENTCORE_RUNTIME_QUALIFIER':'candidate_current','APPROVED_AI_MODEL_IDS':models,
+                'AI_GLOBAL_INFERENCE_PROFILE_APPROVED':'true','AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF':'DPO-ref'}}
+            r.target['agentcoreCandidateQualifier']='candidate_next'
+            archive=b'agentcore-zip';r.build_dir=Path(tmp);(Path(tmp)/'agentcore').mkdir();(Path(tmp)/'agentcore/agentcore.zip').write_bytes(archive)
+            r.build={'sourceCommit':'b'*40,'agentcore':{'sha256':hashlib.sha256(archive).hexdigest()}}
+            r.work=Path(tmp);r.id='op-1';r.changed=[];r.receipt={}
+            old={'GIT_SHA':'a'*40,'APPROVED_AI_MODEL_IDS':'global.anthropic.claude-sonnet-4-6','AI_GLOBAL_INFERENCE_PROFILE_APPROVED':'true',
+                'AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF':'DPO-ref','APPROVED_AI_PROVIDERS':'bedrock'}
+            runtime={'agentRuntimeArtifact':{'codeConfiguration':{'code':{'s3':{'bucket':'b','prefix':'old','versionId':'v1'}}}},'environmentVariables':old}
+            sent={}
+            def aws(args, **_):
+                if args[1]=='get-agent-runtime-endpoint': return {'status':'READY','liveVersion':'1' if args[-1]=='candidate_current' else '0'}
+                if args[1]=='get-agent-runtime':
+                    return {**runtime,'environmentVariables':sent['env'],'agentRuntimeArtifact':sent['artifact']} if 'env' in sent else runtime
+                if args[0]=='s3api' and args[1]=='put-object': return {'VersionId':'v2'}
+                if args[0]=='s3api' and args[1]=='get-object': Path(args[-1]).write_bytes(archive); return {}
+                if args[1]=='update-agent-runtime':
+                    req=json.loads(Path(args[-1].removeprefix('file://')).read_text());sent.update(env=req['environmentVariables'],artifact=req['agentRuntimeArtifact'])
+                    return {'agentRuntimeVersion':'2','status':'READY'}
+                if args[1]=='update-agent-runtime-endpoint':
+                    return {}
+                raise AssertionError(args)
+            r.aws=aws;r.remote=lambda *a,**k:'';r.provider_callback=lambda:'https://api.example.com/v1';r.bind_qualifier=lambda slot:None
+            with patch.object(m.time,'sleep',lambda *_:None):
+                try: r.agentcore()
+                except Exception: pass
+            self.assertIn('env',sent,'AgentCore update was not sent')
+            self.assertEqual(sent['env']['APPROVED_AI_MODEL_IDS'],models)
+            self.assertEqual(sent['env']['APPROVED_AI_PROVIDERS'],'bedrock','AgentCore keeps its own provider list')
+
     def test_prepared_build_revalidates_every_identity_and_archive(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);prepared=root/'prepared'/'build';source=prepared.parent/'source';prepared.mkdir(parents=True);source.mkdir()

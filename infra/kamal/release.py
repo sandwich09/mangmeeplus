@@ -48,6 +48,7 @@ UAT_BUILD_SECONDS = 240
 PREPARED_PUBLISH_SECONDS = 3600  # per image; runs outside the remote lock and the UAT pre-mutation budget
 HOST_STORAGE_HEADROOM_BYTES = 2 * 1024 ** 3
 HOST_STORAGE_MULTIPLIER = 2
+AGENTCORE_AI_APPROVAL_KEYS = ('APPROVED_AI_MODEL_IDS', 'AI_GLOBAL_INFERENCE_PROFILE_APPROVED', 'AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF')
 CONTROLLER_FILES = tuple('infra/kamal/'+p for p in ('release.py','config.json','retire-builds.cjs','deploy-uat','deploy-prod')) + tuple('infra/dev-kamal/'+p for p in ('build-complete.py','capture-config.py','release_inventory.py','verify-config.mjs','Dockerfile.tools'))
 CONTROLLER_FILES += ('infra/postmark/config.py', 'infra/postmark/config.json')
 CONTROLLER_FILES += ('infra/kamal/release_source.py', 'infra/kamal/deploy-prod-hotfix', 'infra/kamal/promote-prod')
@@ -1282,6 +1283,10 @@ finally{await client.$disconnect();}})().catch(()=>process.exit(1));"""
         runtime = self.aws(['bedrock-agentcore-control','get-agent-runtime','--agent-runtime-id',rid,'--agent-runtime-version',endpoint['liveVersion']])
         expected = {'GIT_SHA':self.build['sourceCommit'],'SERVICE_VERSION':self.build['sourceCommit'],'AGENTCORE_ARTIFACT_SHA256':self.build['agentcore']['sha256'],
                     'DEPLOY_ENVIRONMENT':self.args.environment,'ERP_CORE_INTERNAL_URL':self.provider_callback()}
+        # AgentCore re-checks every grant's model against its own approval list, so it carries the
+        # gateway's released approval values; otherwise a model approved in config.json reaches the
+        # API and gateway while AgentCore keeps the old list and refuses those turns.
+        expected.update({k: ai[k] for k in AGENTCORE_AI_APPROVAL_KEYS if k in ai})
         actual_env = runtime['environmentVariables']
         if all(actual_env.get(k)==v for k,v in expected.items()) and not any(k in actual_env for k in AI_JWT_SECRET_KEYS):
             object_ref=runtime['agentRuntimeArtifact']['codeConfiguration']['code']['s3']
