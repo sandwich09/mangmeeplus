@@ -10,6 +10,22 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current Production — demo chat opens LIFF start links as the shop page, 2026-11-10 07:36 Bangkok
+
+Production serves exact main `531619870` (same tree as develop): the 06:53 release plus the real fix for
+the demo chat's LINE Login bounce. Since 2026-10-07 the send exit rewrites every shop link to
+`https://liff.line.me/<liffId>/start?to=<path>` (shared with real LINE, inside the frozen plan hash), so
+the 06:53 server change alone did not help; the demo web page now opens `to` (only `/companies/…`) in the
+same tab. Real LINE output unchanged. No migration. Owner's go: "Deploy UAT then prod"; cached MFA
+sessions valid. UAT prepare `20261110T001844Z-54bf1fdc` `PREPARED_NO_DEPLOYMENT` 360.715 s; UAT apply
+`20261110T002445Z-2eafaf63` signed `ACCEPTED_LINE_DEFERRED` 285.152 s, 12/12. Production prepare
+`20261110T002930Z-c8b89490` 53.275 s; apply `20261110T003023Z-d7bc26d0` signed `ACCEPTED_LINE_DEFERRED`
+339.402 s, 12/12, website ready 276.1 s, browser stage 36.2 s. Browser acceptance in the Claude in-app
+browser: owner signed in himself and approved the logout in advance; auth/me 200 `prodmangmeeplus`
+SYSTEM_ADMIN with launch-gate permission, no password/legal action; OPEN/live/canOpen; after the UI logout
+`/login` shows `data-platform-access="open"` and auth/me 401. Workflow IDs `NOT_DISPATCHED`; native LINE
+not exercised.
+
 ## Current Production — demo chat web buttons open the shop page, 2026-11-10 06:53 Bangkok
 
 Production serves exact main `0c5a68468e4af8baf2498596441854e82bc5672e` (same tree as develop `e7f3892dd`):
