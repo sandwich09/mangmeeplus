@@ -133,6 +133,10 @@ export function handleDemoAction(action: DemoAction, handlers: {
     case 'uri': {
       const url = safeDemoUrl(action.uri, handlers.origin);
       if (!url) return;
+      // A real LINE message sends a shop page through the LIFF start page (`liff.line.me/<id>/start?to=<path>`),
+      // which needs LINE Login. The demo visitor is already signed in here, so open the page itself.
+      const to = url.hostname === 'liff.line.me' && /^\/[^/]+\/start$/.test(url.pathname) ? url.searchParams.get('to') : null;
+      if (to?.startsWith('/companies/')) { handlers.navigate(to); break; }
       // LINE's "leave the in-app browser" flag means nothing on the web page the demo runs in.
       url.searchParams.delete('openExternalBrowser');
       if (url.origin === handlers.origin) handlers.navigate(`${url.pathname}${url.search}${url.hash}`);
