@@ -200,6 +200,10 @@ services:
       OPENAI_PROCESSING_REGION: ${OPENAI_PROCESSING_REGION:-}
       BEDROCK_REGION: ${BEDROCK_REGION:-ap-southeast-1}
       BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
+      # Local only: with MODEL_PROVIDER=bedrock, a key here sends the same models through the
+      # Anthropic API instead of AWS. No value on purpose — it passes through from .env only when
+      # set there; `${ANTHROPIC_API_KEY:-}` would hand the gateway "" and fail its boot schema.
+      ANTHROPIC_API_KEY:
       # Bedrock reads the host's ~/.aws (mounted read-only below) instead of key env vars.
       AWS_PROFILE: ${AWS_PROFILE:-}
       AWS_CONFIG_FILE: /aws/config
