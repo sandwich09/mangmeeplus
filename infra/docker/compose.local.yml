@@ -28,7 +28,9 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # MinIO withdrew its own images from Docker Hub and quay.io; this is the community build of
+    # the same source (owner choice 2026-11-25). It bundles `mc`, so bucket setup reuses it.
+    image: coollabsio/minio:RELEASE.2025-10-15T17-29-55Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-watchdog}
@@ -40,7 +42,7 @@ services:
       - minio_data:/data
 
   minio-create-bucket:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: coollabsio/minio:RELEASE.2025-10-15T17-29-55Z
     depends_on:
       minio:
         condition: service_started

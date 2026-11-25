@@ -1153,7 +1153,7 @@ Model ที่โค้ดรู้จัก (`reviewed-line-model-capacity.ts`
 |---|---|---|
 | PostgreSQL | `postgres:16-alpine` | RDS PostgreSQL 18.3, `db.t4g.small`, Multi-AZ |
 | Redis | `redis:7-alpine` | ElastiCache Redis 7.1, 2 × `cache.t4g.micro`, Multi-AZ |
-| Object storage | `minio/minio:RELEASE.2025-09-07T16-13-09Z` (+ `minio/mc:RELEASE.2025-08-13T08-35-41Z`) | Amazon S3 (versioning, SSE-S3) |
+| Object storage | `coollabsio/minio:RELEASE.2025-10-15T17-29-55Z` (server and bundled `mc`) | Amazon S3 (versioning, SSE-S3) |
 
 หมายเหตุ: Prisma datasource เป็น `postgresql` โดยไม่ตรึง major version; local และ production ใช้ major ต่างกัน (16 กับ 18.3)
 
