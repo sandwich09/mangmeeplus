@@ -46,6 +46,20 @@ docker compose -f infra/docker/compose.local.yml --env-file .env down
 | redis | `127.0.0.1:6379` |
 | minio | `127.0.0.1:19000` (console `19001`) |
 
+### AI locally (LINE AI, demo chat, document reading)
+
+`.env.example` ships the AI path switched on the way production runs it. It needs one
+thing from you: a key in `.env`.
+
+```bash
+ANTHROPIC_API_KEY=<your key>
+```
+
+`MODEL_PROVIDER` stays `bedrock`; with the key present the gateway calls the Anthropic API
+instead of AWS, so no AWS credentials are needed. Without a key every AI call fails and the
+chat answers with its "try again" message. To try the sales demo: sign in as
+`qa.mangmee.sales` / `Qa@MangmeeSales123`, open `/sales/demo-links`, create a link.
+
 ### Three things that block a fresh clone
 
 **`pnpm dev` does not work on its own.** `ai-gateway` and `workers` require
