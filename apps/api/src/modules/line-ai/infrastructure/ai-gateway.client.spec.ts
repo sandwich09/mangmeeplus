@@ -465,7 +465,7 @@ describe('AiGatewayClient OCR governance', () => {
     assert.equal(quotaTransactions, 0);
   });
 
-  it('releases the LINE OCR event and aggregate when Typhoon is missing downstream', async () => {
+  it('releases the LINE OCR event and aggregate when the OCR provider is missing downstream', async () => {
     __resetCompanyAiBudgetCache();
     const state = readyOcrPrisma();
     const originalFetch = globalThis.fetch;
@@ -481,9 +481,9 @@ describe('AiGatewayClient OCR governance', () => {
         isProduction: false,
       } as any, { issue: () => 'signed' } as any, undefined, state.prisma);
       const result = await client.requestReceiptOcr({
-        requestId: 'webhook-request-no-typhoon', companyId: 'company-1', userId: 'user-1',
+        requestId: 'webhook-request-no-provider', companyId: 'company-1', userId: 'user-1',
         activeCategories: [],
-        attachment: { id: 'line-message-no-typhoon', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' },
+        attachment: { id: 'line-message-no-provider', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' },
       });
       assert.deepEqual(result, { status: 'not_configured', errorCode: 'PROVIDER_CONFIG_MISSING' });
       assert.equal(state.events.length, 0);

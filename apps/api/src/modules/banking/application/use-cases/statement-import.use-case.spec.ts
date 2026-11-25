@@ -291,9 +291,9 @@ describe('CommitStatementImportUseCase provenance', () => {
         sourceKind: 'ocr',
         extractionModelId: 'global.anthropic.claude-sonnet-4-6',
         extractionModelLineage: [{
-          provider: 'typhoon',
+          provider: 'bedrock',
           modelId: 'global.anthropic.claude-sonnet-4-6',
-          region: 'thailand',
+          region: 'ap-southeast-1',
           purpose: 'bank_statement_extract',
         }],
         evil: 'ignore-me',
@@ -304,9 +304,9 @@ describe('CommitStatementImportUseCase provenance', () => {
       sourceKind: 'ocr',
       extractionModelId: 'global.anthropic.claude-sonnet-4-6',
       extractionModelLineage: [{
-        provider: 'typhoon',
+        provider: 'bedrock',
         modelId: 'global.anthropic.claude-sonnet-4-6',
-        region: 'thailand',
+        region: 'ap-southeast-1',
         purpose: 'bank_statement_extract',
       }],
     });
@@ -442,7 +442,7 @@ describe('StatementAiExtractClient OCR governance', () => {
     assert.equal(quotaTransactions, 0);
   });
 
-  it('releases the OCR event and aggregate when Typhoon is missing downstream', async () => {
+  it('releases the OCR event and aggregate when the OCR provider is missing downstream', async () => {
     __resetCompanyAiBudgetCache();
     const state = readyPrisma();
     const originalFetch = globalThis.fetch;
@@ -456,7 +456,7 @@ describe('StatementAiExtractClient OCR governance', () => {
         aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
       } as any, undefined, state.prisma);
       const result = await client.extract({
-        requestId: 'statement-read-no-typhoon', companyId: 'company-1', userId: 'user-1',
+        requestId: 'statement-read-no-provider', companyId: 'company-1', userId: 'user-1',
         attachment: { mimeType: 'image/png', contentBase64: 'AA==' },
       });
       assert.deepEqual(result, { status: 'not_configured', errorCode: 'PROVIDER_CONFIG_MISSING' });

@@ -112,7 +112,7 @@ services:
       CLAMAV_HOST: ${CLAMAV_HOST:-}
       CLAMAV_PORT: ${CLAMAV_PORT:-3310}
       CLAMAV_TIMEOUT_MS: ${CLAMAV_TIMEOUT_MS:-5000}
-      APPROVED_AI_PROVIDERS: ${APPROVED_AI_PROVIDERS:-bedrock,openai,typhoon}
+      APPROVED_AI_PROVIDERS: ${APPROVED_AI_PROVIDERS:-bedrock,openai}
       APPROVED_AI_MODEL_IDS: ${APPROVED_AI_MODEL_IDS:-global.anthropic.claude-sonnet-4-6,global.anthropic.claude-haiku-4-5-20251001-v1:0,apac.anthropic.claude-3-haiku-20240307-v1:0}
       APPROVED_AI_REGIONS: ${APPROVED_AI_REGIONS:-ap-southeast-1}
       AI_GLOBAL_INFERENCE_PROFILE_APPROVED: ${AI_GLOBAL_INFERENCE_PROFILE_APPROVED:-false}
@@ -190,7 +190,7 @@ services:
       SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-false}
       MODEL_PROVIDER: ${MODEL_PROVIDER:-disabled}
-      APPROVED_AI_PROVIDERS: ${APPROVED_AI_PROVIDERS:-bedrock,openai,typhoon}
+      APPROVED_AI_PROVIDERS: ${APPROVED_AI_PROVIDERS:-bedrock,openai}
       APPROVED_AI_MODEL_IDS: ${APPROVED_AI_MODEL_IDS:-global.anthropic.claude-sonnet-4-6,global.anthropic.claude-haiku-4-5-20251001-v1:0,apac.anthropic.claude-3-haiku-20240307-v1:0}
       APPROVED_AI_REGIONS: ${APPROVED_AI_REGIONS:-ap-southeast-1}
       AI_GLOBAL_INFERENCE_PROFILE_APPROVED: ${AI_GLOBAL_INFERENCE_PROFILE_APPROVED:-false}
@@ -213,9 +213,6 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      TYPHOON_PROCESSING_REGION: ${TYPHOON_PROCESSING_REGION:-}
-      # Receipt OCR stage 1 (Typhoon reads the image) and stage 2 (chat model maps fields).
-      TYPHOON_OCR_API_KEY: ${TYPHOON_OCR_API_KEY:-}
       DOCUMENT_AI_MODEL_ID: ${DOCUMENT_AI_MODEL_ID:-}
       AGENTCORE_REGION: ${AGENTCORE_REGION:-ap-southeast-1}
       AGENTCORE_MAX_BODY_BYTES: ${AGENTCORE_MAX_BODY_BYTES:-1048576}

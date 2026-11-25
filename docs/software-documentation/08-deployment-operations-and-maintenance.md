@@ -577,7 +577,7 @@ wrapper ทั้งสี่ (`deploy-uat`, `deploy-prod`, `deploy-prod-hotfix`
 | `CLAMAV_PORT` | api-web runtime | port ของ clamd ที่ script เริ่มระบบรอ | `infra/api-web/start-api-web-runtime.sh` |
 | `KAMAL_RETIRE_PROOF` | tools | หลักฐานสำหรับ retire build | `infra/kamal/retire-builds.cjs` |
 
-ตัวแปรใน `.env.example` ที่ **ไม่พบการอ่านในโค้ดแอป** (ใช้ใน compose หรือสคริปต์ยุค ECS เท่านั้น): `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, `REDIS_PORT`, `MINIO_API_PORT`, `MINIO_CONSOLE_PORT`, `AI_GATEWAY_PORT` (port ของ compose); `PUBLIC_DOMAIN_URL`, `LINE_OA_ADD_URL`, `LINE_OA_QR_IMAGE_URL`, `LINE_ACCOUNT_LINK_URL`, `LINE_ACCOUNT_LINK_QR_IMAGE_URL` (`infra/prod-ecs-express/deploy.sh`, compose); `TYPHOON_OCR_API_KEY`, `TYPHOON_PROCESSING_REGION` (compose และ inventory ของ secret ยุค ECS — ไม่พบ provider Typhoon ในโค้ดแอปของ commit นี้)
+ตัวแปรใน `.env.example` ที่ **ไม่พบการอ่านในโค้ดแอป** (ใช้ใน compose หรือสคริปต์ยุค ECS เท่านั้น): `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, `REDIS_PORT`, `MINIO_API_PORT`, `MINIO_CONSOLE_PORT`, `AI_GATEWAY_PORT` (port ของ compose); `PUBLIC_DOMAIN_URL`, `LINE_OA_ADD_URL`, `LINE_OA_QR_IMAGE_URL`, `LINE_ACCOUNT_LINK_URL`, `LINE_ACCOUNT_LINK_QR_IMAGE_URL` (`infra/prod-ecs-express/deploy.sh`, compose)
 
 ### 3.4 ตัวแปรของสคริปต์ปฏิบัติการ การทดสอบ และ eval (ไม่ใช่ runtime)
 

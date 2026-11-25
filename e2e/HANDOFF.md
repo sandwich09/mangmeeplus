@@ -262,4 +262,4 @@ Start from [`_reference.spec.ts`](./_reference.spec.ts) and [`TEST-CASES.md`](./
 
 - Full webhook autonomy: the local rig does not run the AI Gateway or Redis and has no usable LINE channel secret/identity chain.
 - LIFF registration: the dev auth rig cannot provide a live LINE `idToken` for LINE verification.
-- Typhoon OCR ok-path: it requires a real Typhoon key and the AI Gateway; the local no-key path remains covered separately.
+- Receipt OCR ok-path: it requires a real model credential and the AI Gateway; the local no-key path remains covered separately.

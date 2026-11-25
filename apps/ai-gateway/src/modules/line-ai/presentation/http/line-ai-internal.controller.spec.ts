@@ -162,8 +162,8 @@ describe('LineAiInternalController', () => {
   it('receipt OCR keeps PDFs on the Bedrock document channel', async () => {
     const originalFetch = globalThis.fetch;
     let thirdPartyOcrCalled = false;
-    globalThis.fetch = (async (url: any, init: any) => {
-      if (String(url).includes('api.opentyphoon.ai')) thirdPartyOcrCalled = true;
+    globalThis.fetch = (async () => {
+      thirdPartyOcrCalled = true;
       throw new Error('no network in test');
     }) as any;
 
@@ -1549,9 +1549,9 @@ describe('utility document parts from one image', () => {
 });
 
 describe('receipt OCR image re-read for missing critical printed money', () => {
-  // Typhoon reads a warped photo and loses the printed total line; stage 2 can only report an
+  // The first read of a warped photo loses the printed total line; stage 2 can only report an
   // ambiguous number, which the API's expense gate refuses. The receipt's real total is 180.00.
-  const TYPHOON_TEXT_WITHOUT_TOTAL = '# Starbucks Coffee\n| Sub Total | 160.00 |\n| Total Discount | -15.00 |';
+  const FIRST_READ_TEXT_WITHOUT_TOTAL = '# Starbucks Coffee\n| Sub Total | 160.00 |\n| Total Discount | -15.00 |';
   const BEDROCK_REREAD_TEXT = '# Starbucks Coffee\nSub Total 195.00\nTotal Discount -15.00\nTotal Amount 180.00\nPayment 180.00';
 
   const classification = (total: string, requiresClarification: boolean, contentKind = 'DOCUMENT') => ({
@@ -1563,13 +1563,9 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     contradictionSignals: [], requiresClarification,
   });
 
-  function stubTyphoon(documentText = TYPHOON_TEXT_WITHOUT_TOTAL) {
+  function stubStageTwoFetch() {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: any, init: any) => {
-      const requested = String(url);
-      if (requested.includes('api.opentyphoon.ai')) {
-        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ natural_text: documentText }) } }] }), { status: 200 });
-      }
+    globalThis.fetch = (async (_url: any, init: any) => {
       // OpenAI stage 2 over whatever text it was given.
       const input = JSON.stringify(JSON.parse(init.body).input);
       const total = input.includes('180.00') ? '180.00' : '160.00';
@@ -1600,7 +1596,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     utilityFallbackParts?: Array<Record<string, unknown>>;
     malformedUtilityExtraction?: boolean;
   } = {}) {
-    const firstReadText = options.firstReadText ?? TYPHOON_TEXT_WITHOUT_TOTAL;
+    const firstReadText = options.firstReadText ?? FIRST_READ_TEXT_WITHOUT_TOTAL;
     const rereadText = options.rereadText ?? BEDROCK_REREAD_TEXT;
     let readCount = 0;
     const firstTotal = options.firstTotal ?? '160.00';
@@ -1663,7 +1659,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
   };
 
   it('keeps a total requiring clarification without another image pass', async () => {
-    const restoreFetch = stubTyphoon();
+    const restoreFetch = stubStageTwoFetch();
     const bedrock = stubBedrock();
     try {
       const controller = new LineAiInternalController(
@@ -1690,7 +1686,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
   it('leaves an unprinted VAT amount unknown without another image pass', async () => {
     const firstText = '# Royal Pizza\nTotal 2890.00\nVAT 7% (รวม)\nPayment 2890.00';
     const rereadText = '# Royal Pizza\nTotal 2890.00\nVAT 7% (รวม) 189.07\nPayment 2890.00';
-    const restoreFetch = stubTyphoon();
+    const restoreFetch = stubStageTwoFetch();
     const bedrock = stubBedrock({
       firstReadText: firstText,
       rereadText,
@@ -1732,7 +1728,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       firstLines[0]!,
       { description: 'Cake', quantity: '1', amount: '25.00', evidenceSignal: 'Cake 1 25.00' },
     ];
-    const restoreFetch = stubTyphoon();
+    const restoreFetch = stubStageTwoFetch();
     const bedrock = stubBedrock({
       firstReadText: text, rereadText, rereadMarker: 'Image re-read', firstTotal: '65.00', secondTotal: '65.00',
       firstRequiresClarification: false, firstLines, secondLines,
@@ -1758,7 +1754,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
   });
 
   it('never returns single-expense fields or vision-rereads a multi-entry ledger', async () => {
-    const restoreFetch = stubTyphoon();
+    const restoreFetch = stubStageTwoFetch();
     const bedrock = stubBedrock({
       firstTotal: '4214',
       firstRequiresClarification: true,
@@ -1791,7 +1787,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       { role: 'BILL_DUE', period: 'กันยายน 2569', amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวมทั้งสิ้น 110.05' },
       { role: 'RECEIPT_PAID', period: 'สิงหาคม 2569', amount: '82.28', titleEvidence: 'ใบเสร็จรับเงิน', amountEvidence: 'รวมทั้งสิ้น 82.28' },
     ];
-    const restoreFetch = stubTyphoon(page);
+    const restoreFetch = stubStageTwoFetch();
     const bedrock = stubBedrock({ firstReadText: page, firstTotal: '110.05', contentKind: 'DOCUMENT', utilityDocuments });
     try {
       const controller = new LineAiInternalController(
@@ -1824,7 +1820,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     ];
     for (const lines of pages) {
       const page = lines.join('\n');
-      const restoreFetch = stubTyphoon(page);
+      const restoreFetch = stubStageTwoFetch();
       const bedrock = stubBedrock({ firstReadText: page, firstTotal: '484.00', firstRequiresClarification: false });
       try {
         const controller = new LineAiInternalController(
@@ -1851,7 +1847,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       { role: 'BILL_DUE', period: '09/69', amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวม 110.05' },
       { role: 'RECEIPT_PAID', period: '08/69', amount: '82.28', titleEvidence: 'ใบเสร็จรับเงิน/ใบกำกับภาษี', amountEvidence: 'รวม 82.28' },
     ];
-    const restoreFetch = stubTyphoon(page);
+    const restoreFetch = stubStageTwoFetch();
     const bedrock = stubBedrock({ firstReadText: page, firstTotal: '110.05', contentKind: 'DOCUMENT', utilityFallbackParts: parts });
     try {
       const controller = new LineAiInternalController(
@@ -1877,7 +1873,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       { role: 'BILL_DUE', period: '09/69', amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวม 110.05' },
       { role: 'RECEIPT_PAID', period: '08/69', amount: '82.28', titleEvidence: 'ใบเสร็จรับเงิน/ใบกำกับภาษี', amountEvidence: 'รวม 82.28' },
     ];
-    const restoreFetch = stubTyphoon(page);
+    const restoreFetch = stubStageTwoFetch();
     const bedrock = stubBedrock({ firstReadText: page, firstTotal: '110.05', malformedUtilityExtraction: true, utilityFallbackParts: parts });
     try {
       const controller = new LineAiInternalController(
@@ -1899,7 +1895,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
 
   it('does not mistake a single utility invoice saying it is not a receipt for two parts', async () => {
     const page = 'ใบแจ้งค่าน้ำประปา (ไม่ใช่ใบเสร็จรับเงิน)\nการประปาส่วนภูมิภาค\nงวด 09/65\nรวมเงินที่ต้องชำระ 454.75';
-    const restoreFetch = stubTyphoon(page);
+    const restoreFetch = stubStageTwoFetch();
     const bedrock = stubBedrock({ firstReadText: page, firstTotal: '454.75', firstRequiresClarification: false, contentKind: 'DOCUMENT' });
     try {
       const controller = new LineAiInternalController(
@@ -1919,7 +1915,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
   });
 
   it('keeps the first reading when the provider has no vision re-read', async () => {
-    const restoreFetch = stubTyphoon();
+    const restoreFetch = stubStageTwoFetch();
     try {
       const controller = new LineAiInternalController(
         {

@@ -790,8 +790,8 @@ export class LineAiInternalController {
   /**
    * Stage 1 for every document read: the configured vision model transcribes the page.
    *
-   * Owner decision 2026-08-28 ("อยากใช้ vision ai"), replacing the 2026-07-03 Typhoon-only rule
-   * after Typhoon's image endpoint hung on UAT — it answered text prompts in 0.26s while every
+   * Owner decision 2026-08-28 ("อยากใช้ vision ai"), replacing the 2026-07-03 third-party-OCR-only
+   * rule after that provider's image endpoint hung on UAT — it answered text prompts in 0.26s while every
    * image request, down to a 1x1 pixel, stalled past the 45s budget, so real receipts died at
    * stage 1 while the intake router read the SAME photo correctly on vision at 0.97 confidence.
    * PDFs already read this way, and the image re-read below has used this exact prompt and parser
@@ -1185,7 +1185,7 @@ function modelLineage(
 }
 
 /** The stage-1 read prompt for every document and media type (Owner 2026-08-28: vision reads).
- *  Keeps the {"natural_text": md} contract the Typhoon era established, so parseStageOneNaturalText
+ *  Keeps the {"natural_text": md} contract the earlier OCR provider established, so parseStageOneNaturalText
  *  and the §13 value cross-check stay identical. The verbatim-number rule is load-bearing: a
  *  reformatted figure fails the cross-check and drops the field to NEEDS_REVIEW. */
 /** Benchmarked 2026-08-28 on 37 real UAT receipts against the previous "transcribe the whole page"
@@ -1280,7 +1280,7 @@ export function shouldRereadReceiptImage(understanding: ReceiptUnderstanding, do
   return true;
 }
 
-/** Typhoon replies {"natural_text": md}; tolerate plain markdown, bound length, never return empty. */
+/** Stage 1 replies {"natural_text": md}; tolerate plain markdown, bound length, never return empty. */
 function parseStageOneNaturalText(text: string): string | null {
   let out = text.trim();
   const json = out.match(/\{[\s\S]*\}/)?.[0];

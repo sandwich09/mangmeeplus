@@ -217,12 +217,6 @@ create_random_secret "${secret_prefix}/worker-internal-token"
 create_random_secret "${secret_prefix}/watchdog-jwt-secret"
 create_random_secret "${secret_prefix}/credential-encryption-key"
 create_random_secret "${secret_prefix}/pdpa-pseudonymization-key"
-# Optional: Typhoon is the only image receipt/bank-statement OCR provider. Without this secret
-# the ai-gateway binding is dropped and image OCR returns PROVIDER_CONFIG_MISSING (PDF OCR
-# reads through Bedrock and is unaffected). Deploys cannot create it — they only describe.
-if [ -n "${TYPHOON_OCR_API_KEY:-}" ]; then
-  create_secret "${secret_prefix}/typhoon-ocr-api-key" "$TYPHOON_OCR_API_KEY"
-fi
 if ! secret_exists "${secret_prefix}/pdpa-pseudonymization-previous-keys"; then
   previous_key="$(aws_cmd secretsmanager get-secret-value --secret-id "${secret_prefix}/credential-encryption-key" --query SecretString --output text --region "$region")"
   create_secret "${secret_prefix}/pdpa-pseudonymization-previous-keys" "$previous_key"
